@@ -11,9 +11,11 @@ import logging
 import os
 import random
 import re
+import sqlite3
 import struct
 from datetime import datetime
 from html import escape
+from pathlib import Path
 from typing import Optional
 
 import aiohttp
@@ -32,6 +34,7 @@ log = logging.getLogger("jin10")
 
 TG_TOKEN   = os.getenv("TG_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
+HISTORY_DB = Path(os.getenv("HISTORY_DB", "data/jin10_history.sqlite3"))
 
 # 关键词命中时才推送（空列表 = 全推）
 KEYWORDS = [
@@ -211,6 +214,97 @@ def format_message(item: dict, high: bool) -> str:
     return "\n".join(parts)
 
 
+# ─── 本地历史库 ───────────────────────────────────────────────────────────────
+
+def item_timestamp(item: dict) -> str:
+    ts = item.get("time", "")
+    if isinstance(ts, (int, float)) or str(ts).isdigit():
+        return datetime.fromtimestamp(int(ts)).isoformat(sep=" ")
+    return str(ts)
+
+
+def init_history_db() -> None:
+    HISTORY_DB.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(HISTORY_DB) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS flash_history (
+                id TEXT PRIMARY KEY,
+                published_at TEXT,
+                title TEXT,
+                content TEXT,
+                hit INTEGER NOT NULL,
+                high INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                raw_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_published_at ON flash_history(published_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_high ON flash_history(high)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_hit ON flash_history(hit)")
+
+
+def save_history_item(item: dict, *, hit: bool, high: bool, source: str) -> None:
+    fid = str(item.get("id", ""))
+    if not fid:
+        return
+    title, content = item_text(item)
+    with sqlite3.connect(HISTORY_DB) as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO flash_history
+                (id, published_at, title, content, hit, high, source, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                fid,
+                item_timestamp(item),
+                title,
+                content,
+                int(hit),
+                int(high),
+                source,
+                json.dumps(item, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+
+
+def query_history(query: str = "", *, limit: int = 20, high_only: bool = False) -> list[tuple]:
+    clauses = []
+    params: list[object] = []
+    if query:
+        clauses.append("(title LIKE ? OR content LIKE ?)")
+        like = f"%{query}%"
+        params.extend([like, like])
+    if high_only:
+        clauses.append("high = 1")
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    params.append(limit)
+    with sqlite3.connect(HISTORY_DB) as conn:
+        return conn.execute(
+            f"""
+            SELECT published_at, high, hit, title, content
+            FROM flash_history
+            {where}
+            ORDER BY published_at DESC, created_at DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+
+
+def print_history(query: str = "", *, limit: int = 20, high_only: bool = False) -> None:
+    init_history_db()
+    rows = query_history(query, limit=limit, high_only=high_only)
+    if not rows:
+        log.info("历史库暂无匹配记录：%s", query or "(最新)")
+        return
+    for published_at, high, hit, title, content in rows:
+        icon = "🚨" if high else "📰" if hit else "·"
+        text = " ".join(part for part in [title, content] if part).strip()
+        print(f"{published_at} {icon} {text}")
+
+
 # ─── Telegram 推送 ───────────────────────────────────────────────────────────
 
 async def send_telegram(session: aiohttp.ClientSession, text: str) -> None:
@@ -281,7 +375,7 @@ async def poll_loop(session: aiohttp.ClientSession) -> None:
         items = await poll_once(session)
         for item in items:
             if is_new(item):
-                await handle_item(session, item)
+                await handle_item(session, item, source="rest")
         jitter = random.uniform(-1.5, 1.5)
         await asyncio.sleep(max(1.0, POLL_INTERVAL + jitter))
 
@@ -335,18 +429,21 @@ async def ws_loop(session: aiohttp.ClientSession) -> None:
 
                     if code in {1000, 1100} and isinstance(data, dict):
                         if data.get("action") in {1, 2} and is_new(data):
-                            await handle_item(session, data)
+                            await handle_item(session, data, source="ws")
                     elif code == 1200 and isinstance(data, list):
                         if not skipped_initial_list:
                             for item in data:
                                 if isinstance(item, dict):
                                     seen_ids.add(str(item.get("id", "")))
+                                    title, content = item_text(item)
+                                    hit, high = match_keywords(f"{title} {content}")
+                                    save_history_item(item, hit=hit, high=high, source="ws_initial")
                             skipped_initial_list = True
                             log.info("WebSocket 初始历史列表已预热去重：%d 条", len(data))
                             continue
                         for item in data:
                             if isinstance(item, dict) and item.get("action") in {1, 2} and is_new(item):
-                                await handle_item(session, item)
+                                await handle_item(session, item, source="ws")
         except Exception as e:
             log.warning("WebSocket 断线: %s，%ss 后重连", e, WS_RECONNECT_DELAY)
             await asyncio.sleep(WS_RECONNECT_DELAY)
@@ -354,11 +451,12 @@ async def ws_loop(session: aiohttp.ClientSession) -> None:
 
 # ─── 核心处理 ────────────────────────────────────────────────────────────────
 
-async def handle_item(session: aiohttp.ClientSession, item: dict) -> None:
+async def handle_item(session: aiohttp.ClientSession, item: dict, *, source: str = "unknown") -> None:
     title, content = item_text(item)
     text    = f"{title} {content}"
 
     hit, high = match_keywords(text)
+    save_history_item(item, hit=hit, high=high, source=source)
     if not hit:
         return
 
@@ -368,12 +466,13 @@ async def handle_item(session: aiohttp.ClientSession, item: dict) -> None:
 
 
 async def run_once(limit: int) -> None:
+    init_history_db()
     connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=connector) as session:
         items = await poll_once(session)
         log.info("一次性抓取完成：收到 %d 条，处理前 %d 条", len(items), min(limit, len(items)))
         for item in reversed(items[:limit]):
-            await handle_item(session, item)
+            await handle_item(session, item, source="rest_once")
 
 
 # ─── 主入口 ─────────────────────────────────────────────────────────────────
@@ -381,6 +480,7 @@ async def run_once(limit: int) -> None:
 async def main() -> None:
     log.info("=== 金十快讯监控启动 ===")
     log.info("关键词: %s 条  Telegram: %s", len(KEYWORDS), "已配置" if TG_TOKEN else "未配置（仅打印）")
+    init_history_db()
 
     connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -389,6 +489,9 @@ async def main() -> None:
         items = await poll_once(session)
         for item in items:
             seen_ids.add(str(item.get("id", "")))
+            title, content = item_text(item)
+            hit, high = match_keywords(f"{title} {content}")
+            save_history_item(item, hit=hit, high=high, source="cold_start")
         log.info("预加载完成，已忽略 %d 条旧快讯", len(seen_ids))
 
         # 并发运行 WS + 轮询（双保险）
@@ -402,13 +505,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="金十快讯监控 + Telegram 推送")
     parser.add_argument("--once", action="store_true", help="只抓取一次 REST 快讯，用于本地验证")
     parser.add_argument("--limit", type=int, default=20, help="--once 模式处理的最大条数")
+    parser.add_argument("--history", nargs="?", const="", help="查询本地历史库，省略关键词时显示最新记录")
+    parser.add_argument("--history-limit", type=int, default=20, help="历史查询返回条数")
+    parser.add_argument("--history-high", action="store_true", help="历史查询只显示高优先级记录")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     try:
         args = parse_args()
-        if args.once:
+        if args.history is not None:
+            print_history(args.history, limit=max(1, args.history_limit), high_only=args.history_high)
+        elif args.once:
             asyncio.run(run_once(max(1, args.limit)))
         else:
             asyncio.run(main())
