@@ -44,6 +44,7 @@ APP_IDS = [
     for app_id in os.getenv("JIN10_APP_IDS", "bVBF4FyRTn5NJF5n,SO1EJGmNgCtmpcPF").split(",")
     if app_id.strip()
 ]
+PUSH_IMPORTANT = os.getenv("PUSH_IMPORTANT", "1").lower() not in {"0", "false", "no", "off"}
 
 # 关键词命中时才推送（空列表 = 全推）
 KEYWORDS = [
@@ -61,6 +62,8 @@ KEYWORDS = [
     # 重要机构
     "特朗普", "Trump", "拜登", "美国", "中国", "欧央行",
     "世界银行", "IMF", "G7", "G20",
+    # 重点公司 / 人物观察
+    "巴菲特", "伯克希尔", "BRK", "Anthropic",
 ]
 
 # 高优先级关键词（命中后用 🚨 标头，而非普通 📰）
@@ -118,8 +121,7 @@ def get_ws_connect_kwargs() -> dict:
     """兼容 websockets 12/13 的 extra_headers 和 14+ 的 additional_headers。"""
     kwargs = {
         "origin": "https://www.jin10.com",
-        "ping_interval": 20,
-        "ping_timeout": 10,
+        "ping_interval": None,
         "open_timeout": 10,
     }
     try:
@@ -740,6 +742,9 @@ async def handle_item(session: aiohttp.ClientSession, item: dict, *, source: str
     text    = f"{title} {content}"
 
     hit, high = match_keywords(text)
+    if PUSH_IMPORTANT and is_important(item):
+        hit = True
+        high = True
     save_history_item(item, hit=hit, high=high, source=source)
     if not hit:
         return

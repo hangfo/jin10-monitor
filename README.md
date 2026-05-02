@@ -41,6 +41,7 @@ TG_CHAT_ID=你的 Telegram chat_id
 - `WS_URLS`：WebSocket 地址列表，逗号分隔。默认使用本机已验证可解析的 `wss://wss-flash-2.jin10.com/`。
 - `HISTORY_DB`：本地历史库路径，默认 `data/jin10_history.sqlite3`。
 - `JIN10_APP_IDS`：REST 请求头 app id 列表，逗号分隔。默认先用当前页面常见 app id，再自动降级到旧 app id。
+- `PUSH_IMPORTANT`：是否直接推送金十红色重要消息，默认 `1`。设为 `0` 时只按关键词推送。
 
 ## 历史留存
 
