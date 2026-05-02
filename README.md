@@ -11,6 +11,7 @@ pip install -r requirements.txt
 cp .env.example .env
 python jin10_monitor.py --once --limit 20
 python jin10_monitor.py --history 伊朗 --history-limit 20
+python jin10_monitor.py --lookup-date 2026-05-02 --lookup-start 20:05 --lookup-end 20:20
 python jin10_monitor.py
 ```
 
@@ -28,6 +29,7 @@ TG_CHAT_ID=你的 Telegram chat_id
 - `python jin10_monitor.py --once --limit 20`：一次性抓取最近快讯，用于验证接口、关键词和 Telegram 推送。
 - `python jin10_monitor.py --history 伊朗 --history-limit 20`：查询本地历史库。
 - `python jin10_monitor.py --history --history-high`：查看最近高优先级记录。
+- `python jin10_monitor.py --lookup-date 2026-05-02 --lookup-start 20:05 --lookup-end 20:20`：直接从金十 REST 回溯指定时间窗口。
 - `python jin10_monitor.py`：常驻运行，WebSocket + REST 双路。
 
 ## 配置
@@ -38,10 +40,11 @@ TG_CHAT_ID=你的 Telegram chat_id
 - `WS_RECONNECT_DELAY`：WebSocket 断线重连间隔，默认 5 秒。
 - `WS_URLS`：WebSocket 地址列表，逗号分隔。默认使用本机已验证可解析的 `wss://wss-flash-2.jin10.com/`。
 - `HISTORY_DB`：本地历史库路径，默认 `data/jin10_history.sqlite3`。
+- `JIN10_APP_IDS`：REST 请求头 app id 列表，逗号分隔。默认先用当前页面常见 app id，再自动降级到旧 app id。
 
 ## 历史留存
 
-脚本会把冷启动、REST、WebSocket 收到的快讯写入 SQLite，本地数据库默认不提交到 Git。字段包括快讯 ID、发布时间、标题、正文、关键词命中、高优先级标记、来源和原始 JSON。
+脚本会把冷启动、REST、WebSocket 收到的快讯写入 SQLite，本地数据库默认不提交到 Git。字段包括快讯 ID、发布时间、标题、正文、关键词命中、高优先级标记、金十重要标记、HTML 加粗标记、来源和原始 JSON。
 
 ## 说明
 

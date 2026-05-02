@@ -13,8 +13,12 @@ import random
 import re
 import sqlite3
 import struct
-from datetime import datetime
-from html import escape
+import time
+import urllib.parse
+import urllib.request
+from collections import OrderedDict
+from datetime import datetime, timedelta
+from html import escape, unescape
 from pathlib import Path
 from typing import Optional
 
@@ -35,6 +39,11 @@ log = logging.getLogger("jin10")
 TG_TOKEN   = os.getenv("TG_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
 HISTORY_DB = Path(os.getenv("HISTORY_DB", "data/jin10_history.sqlite3"))
+APP_IDS = [
+    app_id.strip()
+    for app_id in os.getenv("JIN10_APP_IDS", "bVBF4FyRTn5NJF5n,SO1EJGmNgCtmpcPF").split(",")
+    if app_id.strip()
+]
 
 # 关键词命中时才推送（空列表 = 全推）
 KEYWORDS = [
@@ -84,14 +93,17 @@ BASE_HEADERS = {
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-site",
-    "x-app-id": "SO1EJGmNgCtmpcPF",
     "x-version": "1.0.0",
 }
 
 # ─── 工具函数 ────────────────────────────────────────────────────────────────
 
-def get_headers() -> dict:
-    return {**BASE_HEADERS, "User-Agent": random.choice(UA_POOL)}
+def get_headers(app_id: Optional[str] = None) -> dict:
+    return {
+        **BASE_HEADERS,
+        "User-Agent": random.choice(UA_POOL),
+        "x-app-id": app_id or APP_IDS[0],
+    }
 
 
 def get_ws_headers() -> dict:
@@ -123,8 +135,15 @@ def item_text(item: dict) -> tuple[str, str]:
     data = item.get("data", {})
     if not isinstance(data, dict):
         data = {}
-    title = clean_html(str(data.get("title") or item.get("title") or ""))
-    content = clean_html(str(data.get("content") or item.get("content") or ""))
+    raw_title = str(data.get("title") or item.get("title") or "")
+    raw_content = str(data.get("content") or item.get("content") or "")
+    title = clean_html(raw_title)
+    content = clean_html(raw_content)
+    if not title:
+        match = re.match(r"\s*(?:<b>)?【(?:<b>)?(.+?)(?:</b>)?】(?:</b>)?(.*)", raw_content, re.S)
+        if match:
+            title = clean_html(match.group(1))
+            content = clean_html(match.group(2))
     return title, content
 
 
@@ -138,7 +157,32 @@ def match_keywords(text: str) -> tuple[bool, bool]:
 
 
 def clean_html(raw: str) -> str:
-    return re.sub(r"<[^>]+>", "", raw).strip()
+    text = re.sub(r"<br\s*/?>", "\n", raw, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
+    return unescape(text).strip()
+
+
+def is_important(item: dict) -> bool:
+    return bool(item.get("important"))
+
+
+def has_html_bold(item: dict) -> bool:
+    data = item.get("data", {})
+    if not isinstance(data, dict):
+        data = {}
+    raw = f"{data.get('title') or ''} {data.get('content') or ''}"
+    return bool(re.search(r"</?b\b", raw, re.I))
+
+
+def style_flags(item: dict, *, high: bool) -> str:
+    flags = []
+    if is_important(item):
+        flags.append("important")
+    if has_html_bold(item):
+        flags.append("bold")
+    if high:
+        flags.append("keyword_high")
+    return ",".join(flags)
 
 
 def pack_str(value: str) -> bytes:
@@ -214,7 +258,59 @@ def format_message(item: dict, high: bool) -> str:
     return "\n".join(parts)
 
 
+ANSI_RED = "\033[31m"
+ANSI_BOLD = "\033[1m"
+ANSI_RESET = "\033[0m"
+
+
+def apply_console_style(text: str, *, important: bool = False, bold: bool = False) -> str:
+    prefixes = []
+    if important:
+        prefixes.append(ANSI_RED)
+    if bold:
+        prefixes.append(ANSI_BOLD)
+    if not prefixes:
+        return text
+    return "".join(prefixes) + text + ANSI_RESET
+
+
+def format_console_message(item: dict, *, high: bool) -> str:
+    title, content = item_text(item)
+    important = is_important(item)
+    bold = has_html_bold(item)
+    ts = item.get("time", "")
+    icon = "🚨" if high or important else "📰"
+    labels = []
+    if important:
+        labels.append("重要")
+    if bold:
+        labels.append("加粗")
+    label_text = f" [{' '.join(labels)}]" if labels else ""
+    lines = [f"{icon} {ts}{label_text}"]
+    if title:
+        lines.append(apply_console_style(title, important=important, bold=True))
+    if content:
+        lines.append(apply_console_style(content, important=important, bold=bold and not title))
+    return "\n".join(lines)
+
+
 # ─── 本地历史库 ───────────────────────────────────────────────────────────────
+
+_db_conn: Optional[sqlite3.Connection] = None
+
+
+def get_db() -> sqlite3.Connection:
+    global _db_conn
+    if _db_conn is None:
+        HISTORY_DB.parent.mkdir(parents=True, exist_ok=True)
+        _db_conn = sqlite3.connect(HISTORY_DB, check_same_thread=False)
+    return _db_conn
+
+
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 def item_timestamp(item: dict) -> str:
     ts = item.get("time", "")
@@ -224,24 +320,31 @@ def item_timestamp(item: dict) -> str:
 
 
 def init_history_db() -> None:
-    HISTORY_DB.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(HISTORY_DB) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS flash_history (
-                id TEXT PRIMARY KEY,
-                published_at TEXT,
-                title TEXT,
-                content TEXT,
-                hit INTEGER NOT NULL,
-                high INTEGER NOT NULL,
-                source TEXT NOT NULL,
-                raw_json TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_published_at ON flash_history(published_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_high ON flash_history(high)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_hit ON flash_history(hit)")
+    conn = get_db()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS flash_history (
+            id TEXT PRIMARY KEY,
+            published_at TEXT,
+            title TEXT,
+            content TEXT,
+            hit INTEGER NOT NULL,
+            high INTEGER NOT NULL,
+            important INTEGER NOT NULL DEFAULT 0,
+            has_bold INTEGER NOT NULL DEFAULT 0,
+            style_flags TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL,
+            raw_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    ensure_column(conn, "flash_history", "important", "important INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "flash_history", "has_bold", "has_bold INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "flash_history", "style_flags", "style_flags TEXT NOT NULL DEFAULT ''")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_published_at ON flash_history(published_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_high ON flash_history(high)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_hit ON flash_history(hit)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_important ON flash_history(important)")
+    conn.commit()
 
 
 def save_history_item(item: dict, *, hit: bool, high: bool, source: str) -> None:
@@ -249,24 +352,41 @@ def save_history_item(item: dict, *, hit: bool, high: bool, source: str) -> None
     if not fid:
         return
     title, content = item_text(item)
-    with sqlite3.connect(HISTORY_DB) as conn:
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO flash_history
-                (id, published_at, title, content, hit, high, source, raw_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                fid,
-                item_timestamp(item),
-                title,
-                content,
-                int(hit),
-                int(high),
-                source,
-                json.dumps(item, ensure_ascii=False, sort_keys=True),
-            ),
-        )
+    important = int(is_important(item))
+    bold = int(has_html_bold(item))
+    flags = style_flags(item, high=high)
+    conn = get_db()
+    values = (
+        fid,
+        item_timestamp(item),
+        title,
+        content,
+        int(hit),
+        int(high),
+        important,
+        bold,
+        flags,
+        source,
+        json.dumps(item, ensure_ascii=False, sort_keys=True),
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO flash_history
+            (id, published_at, title, content, hit, high, important, has_bold, style_flags, source, raw_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+    conn.execute(
+        """
+        UPDATE flash_history
+        SET published_at = ?, title = ?, content = ?, hit = ?, high = ?,
+            important = ?, has_bold = ?, style_flags = ?, source = ?, raw_json = ?
+        WHERE id = ?
+        """,
+        values[1:] + (fid,),
+    )
+    conn.commit()
 
 
 def query_history(query: str = "", *, limit: int = 20, high_only: bool = False) -> list[tuple]:
@@ -280,17 +400,16 @@ def query_history(query: str = "", *, limit: int = 20, high_only: bool = False) 
         clauses.append("high = 1")
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     params.append(limit)
-    with sqlite3.connect(HISTORY_DB) as conn:
-        return conn.execute(
-            f"""
-            SELECT published_at, high, hit, title, content
-            FROM flash_history
-            {where}
-            ORDER BY published_at DESC, created_at DESC
-            LIMIT ?
-            """,
-            params,
-        ).fetchall()
+    return get_db().execute(
+        f"""
+        SELECT published_at, high, hit, important, has_bold, style_flags, title, content
+        FROM flash_history
+        {where}
+        ORDER BY published_at DESC, created_at DESC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
 
 
 def print_history(query: str = "", *, limit: int = 20, high_only: bool = False) -> None:
@@ -299,10 +418,19 @@ def print_history(query: str = "", *, limit: int = 20, high_only: bool = False) 
     if not rows:
         log.info("历史库暂无匹配记录：%s", query or "(最新)")
         return
-    for published_at, high, hit, title, content in rows:
-        icon = "🚨" if high else "📰" if hit else "·"
-        text = " ".join(part for part in [title, content] if part).strip()
-        print(f"{published_at} {icon} {text}")
+    for published_at, high, hit, important, bold, flags, title, content in rows:
+        icon = "🚨" if high or important else "📰" if hit else "·"
+        labels = []
+        if important:
+            labels.append("重要")
+        if bold:
+            labels.append("加粗")
+        label_text = f" [{' '.join(labels)}]" if labels else ""
+        print(f"{published_at} {icon}{label_text}")
+        if title:
+            print(apply_console_style(f"  {title}", important=bool(important), bold=True))
+        if content:
+            print(apply_console_style(f"  {content}", important=bool(important), bold=bool(bold) and not title))
 
 
 # ─── Telegram 推送 ───────────────────────────────────────────────────────────
@@ -328,18 +456,17 @@ async def send_telegram(session: aiohttp.ClientSession, text: str) -> None:
 
 # ─── 去重 + 已处理 ID 集合 ───────────────────────────────────────────────────
 
-seen_ids: set[str] = set()
+seen_ids: OrderedDict[str, None] = OrderedDict()
 
 
 def is_new(item: dict) -> bool:
     fid = str(item.get("id", ""))
     if not fid or fid in seen_ids:
         return False
-    seen_ids.add(fid)
+    seen_ids[fid] = None
     if len(seen_ids) > 2000:          # 防止无限增长
-        oldest = list(seen_ids)[:500]
-        for i in oldest:
-            seen_ids.discard(i)
+        for _ in range(500):
+            seen_ids.popitem(last=False)
     return True
 
 
@@ -348,24 +475,179 @@ def is_new(item: dict) -> bool:
 FLASH_API = "https://flash-api.jin10.com/get_flash_list"
 
 
+def flash_params(*, mode: str, max_time: Optional[str] = None) -> dict:
+    if mode == "channel":
+        params = {
+            "channel": "-8200",
+            "vip": "1",
+            "t": str(int(time.time() * 1000)),
+        }
+        if max_time:
+            params["max_time"] = max_time
+        return params
+    return {"category": "-1", "id": "0", "vip": "0"}
+
+
 async def poll_once(session: aiohttp.ClientSession) -> list[dict]:
-    params = {"category": "-1", "id": "0", "vip": "0"}
-    try:
-        async with session.get(
-            FLASH_API,
-            params=params,
-            headers=get_headers(),
-            timeout=aiohttp.ClientTimeout(total=8),
-        ) as resp:
-            if resp.status == 200:
-                data = await resp.json(content_type=None)
-                return data.get("data", [])
-            log.warning("REST 状态码: %s", resp.status)
-    except asyncio.TimeoutError:
-        log.warning("REST 超时")
-    except Exception as e:
-        log.warning("REST 异常: %s", e)
+    attempts = [("channel", app_id) for app_id in APP_IDS]
+    attempts.extend(("legacy", app_id) for app_id in APP_IDS)
+    for mode, app_id in attempts:
+        try:
+            async with session.get(
+                FLASH_API,
+                params=flash_params(mode=mode),
+                headers=get_headers(app_id),
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    return data.get("data", [])
+                log.warning("REST 状态码: %s (mode=%s app_id=%s)", resp.status, mode, app_id)
+        except asyncio.TimeoutError:
+            log.warning("REST 超时 (mode=%s app_id=%s)", mode, app_id)
+        except Exception as e:
+            log.warning("REST 异常: %s (mode=%s app_id=%s)", e, mode, app_id)
     return []
+
+
+def parse_item_time(item: dict) -> Optional[datetime]:
+    value = item.get("time")
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(str(value), fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def fetch_page_sync(max_time: str, app_id: str, timeout: int = 12) -> list[dict]:
+    params = flash_params(mode="channel", max_time=max_time)
+    url = f"{FLASH_API}?{urllib.parse.urlencode(params)}"
+    headers = get_headers(app_id)
+    headers.pop("Accept-Encoding", None)
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = json.loads(resp.read().decode("utf-8", "replace"))
+    data = raw.get("data")
+    if not isinstance(data, list):
+        raise RuntimeError(f"意外响应格式: {str(raw)[:200]}")
+    return data
+
+
+def score_keywords(text: str, keywords: list[str]) -> tuple[int, list[str]]:
+    lower = text.lower()
+    hits = []
+    for keyword in keywords:
+        keyword = keyword.strip()
+        if keyword and keyword.lower() in lower:
+            hits.append(keyword)
+    return len(hits), hits
+
+
+def crawl_window(
+    start_dt: datetime,
+    end_dt: datetime,
+    keywords: list[str],
+    *,
+    max_pages: int = 12,
+    sleep_s: float = 0.3,
+) -> dict:
+    cursor = (end_dt + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+    last_error = None
+    for app_id in APP_IDS:
+        seen: set[str] = set()
+        rows = []
+        pages = 0
+        oldest_seen = None
+        try:
+            while pages < max_pages:
+                page = fetch_page_sync(cursor, app_id)
+                pages += 1
+                if not page:
+                    break
+
+                dated = []
+                for item in page:
+                    item_dt = parse_item_time(item)
+                    if item_dt is None:
+                        continue
+                    dated.append((item_dt, item))
+                    if oldest_seen is None or item_dt < oldest_seen:
+                        oldest_seen = item_dt
+
+                    fid = str(item.get("id") or f"{item_dt}-{item_text(item)}")
+                    if fid in seen:
+                        continue
+                    seen.add(fid)
+
+                    if start_dt <= item_dt <= end_dt:
+                        title, content = item_text(item)
+                        full_text = " ".join(part for part in [title, content] if part).strip()
+                        score, hits = score_keywords(full_text, keywords)
+                        rows.append({
+                            "id": item.get("id"),
+                            "time_bj": item_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                            "title": title,
+                            "content": content,
+                            "important": int(is_important(item)),
+                            "has_bold": int(has_html_bold(item)),
+                            "style_flags": style_flags(item, high=bool(score)),
+                            "matched_keywords": hits,
+                            "match_score": score,
+                            "raw": item,
+                        })
+
+                if oldest_seen and oldest_seen < start_dt:
+                    break
+                if dated:
+                    cursor = dated[-1][0].strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    break
+                time.sleep(sleep_s + random.uniform(0, 0.2))
+
+            rows.sort(key=lambda row: row["time_bj"])
+            return {
+                "ok": True,
+                "app_id": app_id,
+                "window": {
+                    "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                },
+                "pages": pages,
+                "all_items": rows,
+                "matched_items": [row for row in rows if row["match_score"] > 0],
+            }
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            log.warning("lookup app_id %s 失败，尝试下一个: %s", app_id, last_error)
+    return {"ok": False, "error": last_error or "未知错误"}
+
+
+def print_lookup(result: dict) -> None:
+    window = result.get("window", {})
+    print(f"金十快讯窗口: {window.get('start')} -> {window.get('end')} ok={result.get('ok')}")
+    if not result.get("ok"):
+        print(f"错误: {result.get('error')}")
+        return
+    rows = result.get("all_items") or []
+    for row in rows:
+        icon = "🚨" if row["important"] or row["match_score"] else "📰"
+        labels = []
+        if row["important"]:
+            labels.append("重要")
+        if row["has_bold"]:
+            labels.append("加粗")
+        if row["matched_keywords"]:
+            labels.append(",".join(row["matched_keywords"]))
+        label_text = f" [{' '.join(labels)}]" if labels else ""
+        print(f"{icon} {row['time_bj']}{label_text}")
+        if row["title"]:
+            print(apply_console_style(f"  {row['title']}", important=bool(row["important"]), bold=True))
+        if row["content"]:
+            print(apply_console_style(f"  {row['content']}", important=bool(row["important"]), bold=bool(row["has_bold"]) and not row["title"]))
+    print(f"\n共 {len(rows)} 条，关键词命中 {len(result.get('matched_items') or [])} 条")
 
 
 async def poll_loop(session: aiohttp.ClientSession) -> None:
@@ -434,7 +716,9 @@ async def ws_loop(session: aiohttp.ClientSession) -> None:
                         if not skipped_initial_list:
                             for item in data:
                                 if isinstance(item, dict):
-                                    seen_ids.add(str(item.get("id", "")))
+                                    fid = str(item.get("id", ""))
+                                    if fid:
+                                        seen_ids[fid] = None
                                     title, content = item_text(item)
                                     hit, high = match_keywords(f"{title} {content}")
                                     save_history_item(item, hit=hit, high=high, source="ws_initial")
@@ -460,7 +744,7 @@ async def handle_item(session: aiohttp.ClientSession, item: dict, *, source: str
     if not hit:
         return
 
-    log.info("[%s] %s", "🚨HIGH" if high else "INFO", text[:80])
+    log.info("\n%s", format_console_message(item, high=high))
     msg = format_message(item, high)
     await send_telegram(session, msg)
 
@@ -488,7 +772,9 @@ async def main() -> None:
         log.info("冷启动：预加载已有快讯 ID …")
         items = await poll_once(session)
         for item in items:
-            seen_ids.add(str(item.get("id", "")))
+            fid = str(item.get("id", ""))
+            if fid:
+                seen_ids[fid] = None
             title, content = item_text(item)
             hit, high = match_keywords(f"{title} {content}")
             save_history_item(item, hit=hit, high=high, source="cold_start")
@@ -508,13 +794,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--history", nargs="?", const="", help="查询本地历史库，省略关键词时显示最新记录")
     parser.add_argument("--history-limit", type=int, default=20, help="历史查询返回条数")
     parser.add_argument("--history-high", action="store_true", help="历史查询只显示高优先级记录")
+    parser.add_argument("--lookup-date", help="回溯查询日期 YYYY-MM-DD")
+    parser.add_argument("--lookup-start", help="回溯开始时间 HH:MM，北京时间")
+    parser.add_argument("--lookup-end", help="回溯结束时间 HH:MM，北京时间")
+    parser.add_argument("--lookup-keywords", default=",".join(KEYWORDS), help="回溯高亮关键词，逗号分隔")
+    parser.add_argument("--lookup-max-pages", type=int, default=12, help="回溯最多翻页数")
+    parser.add_argument("--lookup-format", choices=["text", "json"], default="text", help="回溯输出格式")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     try:
         args = parse_args()
-        if args.history is not None:
+        if args.lookup_date or args.lookup_start or args.lookup_end:
+            if not (args.lookup_date and args.lookup_start and args.lookup_end):
+                raise SystemExit("--lookup-date、--lookup-start、--lookup-end 需要同时提供")
+            start_dt = datetime.strptime(f"{args.lookup_date} {args.lookup_start}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{args.lookup_date} {args.lookup_end}", "%Y-%m-%d %H:%M")
+            if end_dt < start_dt:
+                raise SystemExit("--lookup-end 必须晚于 --lookup-start")
+            keywords = [kw.strip() for kw in args.lookup_keywords.split(",") if kw.strip()]
+            result = crawl_window(start_dt, end_dt, keywords, max_pages=args.lookup_max_pages)
+            if args.lookup_format == "json":
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                print_lookup(result)
+        elif args.history is not None:
             print_history(args.history, limit=max(1, args.history_limit), high_only=args.history_high)
         elif args.once:
             asyncio.run(run_once(max(1, args.limit)))
