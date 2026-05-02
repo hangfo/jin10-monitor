@@ -1,6 +1,6 @@
 # Jin10-Monitor 操作协议（核心版）
 
-> 完整规则见 PROTOCOL.md，遇到复杂情况时引用。
+> 默认只按本文件执行。仅当任务涉及核心链路改动、大改动、异常处理、配置/依赖变化时，才读取 PROTOCOL.md 相关章节，不要全文读取。
 
 ---
 
@@ -97,6 +97,7 @@ type(scope): 简短描述
 type 只能用：`fix` / `feat` / `refactor` / `chore` / `docs` / `test` / `perf`
 
 commit body 四段缺一不可，缺失视为不合格 commit。
+例外：`docs` / `chore` 类型只需"修改"和"影响"两段。
 
 ---
 
