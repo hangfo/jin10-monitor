@@ -46,6 +46,24 @@ APP_IDS = [
 ]
 PUSH_IMPORTANT = os.getenv("PUSH_IMPORTANT", "1").lower() not in {"0", "false", "no", "off"}
 
+PRIORITY_IMPORTANT = "T3_IMPORTANT"
+PRIORITY_HIGH = "T2_HIGH"
+PRIORITY_NORMAL = "T1_NORMAL"
+PRIORITY_NONE = "T0_NONE"
+
+PRIORITY_ICONS = {
+    PRIORITY_IMPORTANT: "⚡",
+    PRIORITY_HIGH: "🚨",
+    PRIORITY_NORMAL: "📰",
+    PRIORITY_NONE: "·",
+}
+PRIORITY_LABELS = {
+    PRIORITY_IMPORTANT: "金十重要",
+    PRIORITY_HIGH: "高优先级",
+    PRIORITY_NORMAL: "普通命中",
+    PRIORITY_NONE: "未推送",
+}
+
 # 关键词命中时才推送（空列表 = 全推）
 KEYWORDS = [
     # 地缘 / 宏观
@@ -134,9 +152,7 @@ def get_ws_connect_kwargs() -> dict:
 
 
 def item_text(item: dict) -> tuple[str, str]:
-    data = item.get("data", {})
-    if not isinstance(data, dict):
-        data = {}
+    data = item_data(item)
     raw_title = str(data.get("title") or item.get("title") or "")
     raw_content = str(data.get("content") or item.get("content") or "")
     title = clean_html(raw_title)
@@ -147,6 +163,11 @@ def item_text(item: dict) -> tuple[str, str]:
             title = clean_html(match.group(1))
             content = clean_html(match.group(2))
     return title, content
+
+
+def item_data(item: dict) -> dict:
+    data = item.get("data", {})
+    return data if isinstance(data, dict) else {}
 
 
 def match_keywords(text: str) -> tuple[bool, bool]:
@@ -169,19 +190,56 @@ def is_important(item: dict) -> bool:
 
 
 def has_html_bold(item: dict) -> bool:
-    data = item.get("data", {})
-    if not isinstance(data, dict):
-        data = {}
+    data = item_data(item)
     raw = f"{data.get('title') or ''} {data.get('content') or ''}"
     return bool(re.search(r"</?b\b", raw, re.I))
 
 
-def style_flags(item: dict, *, high: bool) -> str:
+def item_metadata(item: dict) -> dict:
+    title, _ = item_text(item)
+    data = item_data(item)
+    pic_url = str(data.get("pic") or "").strip()
+    news_source = clean_html(str(data.get("source") or ""))
+    source_url = str(data.get("source_link") or data.get("link") or data.get("url") or "").strip()
+    return {
+        "has_title": bool(title),
+        "has_pic": bool(pic_url),
+        "pic_url": pic_url,
+        "news_source": news_source,
+        "source_url": source_url,
+    }
+
+
+def classify_priority(item: dict, *, hit: bool, high: bool) -> str:
+    if is_important(item):
+        return PRIORITY_IMPORTANT
+    if high:
+        return PRIORITY_HIGH
+    if hit:
+        return PRIORITY_NORMAL
+    return PRIORITY_NONE
+
+
+def should_push(priority_level: str, *, hit: bool) -> bool:
+    return hit or (PUSH_IMPORTANT and priority_level == PRIORITY_IMPORTANT)
+
+
+def style_flags(item: dict, *, high: bool, priority_level: Optional[str] = None) -> str:
+    metadata = item_metadata(item)
     flags = []
+    flags.append(priority_level or classify_priority(item, hit=False, high=high))
     if is_important(item):
         flags.append("important")
     if has_html_bold(item):
         flags.append("bold")
+    if metadata["has_title"]:
+        flags.append("title")
+    if metadata["has_pic"]:
+        flags.append("pic")
+    if metadata["news_source"]:
+        flags.append("source")
+    if metadata["source_url"]:
+        flags.append("source_url")
     if high:
         flags.append("keyword_high")
     return ",".join(flags)
@@ -243,20 +301,34 @@ def parse_ws_packet(payload: bytes) -> tuple[int, object]:
     return code, None
 
 
-def format_message(item: dict, high: bool) -> str:
-    icon    = "🚨" if high else "📰"
+def format_message(item: dict, priority_level: str) -> str:
+    icon = PRIORITY_ICONS.get(priority_level, "📰")
+    priority_label = PRIORITY_LABELS.get(priority_level, priority_level)
     title, content = item_text(item)
+    metadata = item_metadata(item)
+    bold = has_html_bold(item)
     ts      = item.get("time", "")
     try:
         ts = datetime.fromtimestamp(int(ts)).strftime("%H:%M:%S")
     except Exception:
         pass
 
-    parts = [f"{icon} <b>金十快讯</b>  {ts}"]
+    parts = [f"{icon} <b>金十快讯</b> <b>{escape(priority_label)}</b>  {ts}"]
     if title:
         parts.append(f"<b>{escape(title)}</b>")
     if content:
-        parts.append(escape(content))
+        safe_content = escape(content)
+        parts.append(f"<b>{safe_content}</b>" if bold and not title else safe_content)
+    source = metadata["news_source"]
+    source_url = metadata["source_url"]
+    if source and source_url:
+        parts.append(f"来源：<a href=\"{escape(source_url, quote=True)}\">{escape(source)}</a>")
+    elif source:
+        parts.append(f"来源：{escape(source)}")
+    elif source_url:
+        parts.append(f"来源链接：<a href=\"{escape(source_url, quote=True)}\">查看</a>")
+    if metadata["pic_url"]:
+        parts.append(f"图片：<a href=\"{escape(metadata['pic_url'], quote=True)}\">查看</a>")
     return "\n".join(parts)
 
 
@@ -276,23 +348,32 @@ def apply_console_style(text: str, *, important: bool = False, bold: bool = Fals
     return "".join(prefixes) + text + ANSI_RESET
 
 
-def format_console_message(item: dict, *, high: bool) -> str:
+def format_console_message(item: dict, *, priority_level: str) -> str:
     title, content = item_text(item)
     important = is_important(item)
     bold = has_html_bold(item)
+    metadata = item_metadata(item)
     ts = item.get("time", "")
-    icon = "🚨" if high or important else "📰"
-    labels = []
+    icon = PRIORITY_ICONS.get(priority_level, "📰")
+    labels = [PRIORITY_LABELS.get(priority_level, priority_level)]
     if important:
         labels.append("重要")
     if bold:
         labels.append("加粗")
+    if metadata["has_pic"]:
+        labels.append("有图")
     label_text = f" [{' '.join(labels)}]" if labels else ""
     lines = [f"{icon} {ts}{label_text}"]
     if title:
         lines.append(apply_console_style(title, important=important, bold=True))
     if content:
         lines.append(apply_console_style(content, important=important, bold=bold and not title))
+    if metadata["news_source"]:
+        lines.append(f"来源：{metadata['news_source']}")
+    if metadata["source_url"]:
+        lines.append(f"来源链接：{metadata['source_url']}")
+    if metadata["pic_url"]:
+        lines.append(f"图片：{metadata['pic_url']}")
     return "\n".join(lines)
 
 
@@ -309,10 +390,12 @@ def get_db() -> sqlite3.Connection:
     return _db_conn
 
 
-def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> bool:
     columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+        return True
+    return False
 
 def item_timestamp(item: dict) -> str:
     ts = item.get("time", "")
@@ -333,30 +416,109 @@ def init_history_db() -> None:
             high INTEGER NOT NULL,
             important INTEGER NOT NULL DEFAULT 0,
             has_bold INTEGER NOT NULL DEFAULT 0,
+            priority_level TEXT NOT NULL DEFAULT 'T0_NONE',
+            has_title INTEGER NOT NULL DEFAULT 0,
+            has_pic INTEGER NOT NULL DEFAULT 0,
+            pic_url TEXT NOT NULL DEFAULT '',
+            news_source TEXT NOT NULL DEFAULT '',
+            source_url TEXT NOT NULL DEFAULT '',
             style_flags TEXT NOT NULL DEFAULT '',
             source TEXT NOT NULL,
             raw_json TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    ensure_column(conn, "flash_history", "important", "important INTEGER NOT NULL DEFAULT 0")
-    ensure_column(conn, "flash_history", "has_bold", "has_bold INTEGER NOT NULL DEFAULT 0")
-    ensure_column(conn, "flash_history", "style_flags", "style_flags TEXT NOT NULL DEFAULT ''")
+    migrated = False
+    migrated |= ensure_column(conn, "flash_history", "important", "important INTEGER NOT NULL DEFAULT 0")
+    migrated |= ensure_column(conn, "flash_history", "has_bold", "has_bold INTEGER NOT NULL DEFAULT 0")
+    migrated |= ensure_column(conn, "flash_history", "priority_level", "priority_level TEXT NOT NULL DEFAULT 'T0_NONE'")
+    migrated |= ensure_column(conn, "flash_history", "has_title", "has_title INTEGER NOT NULL DEFAULT 0")
+    migrated |= ensure_column(conn, "flash_history", "has_pic", "has_pic INTEGER NOT NULL DEFAULT 0")
+    migrated |= ensure_column(conn, "flash_history", "pic_url", "pic_url TEXT NOT NULL DEFAULT ''")
+    migrated |= ensure_column(conn, "flash_history", "news_source", "news_source TEXT NOT NULL DEFAULT ''")
+    migrated |= ensure_column(conn, "flash_history", "source_url", "source_url TEXT NOT NULL DEFAULT ''")
+    migrated |= ensure_column(conn, "flash_history", "style_flags", "style_flags TEXT NOT NULL DEFAULT ''")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_published_at ON flash_history(published_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_high ON flash_history(high)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_hit ON flash_history(hit)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_important ON flash_history(important)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_priority_level ON flash_history(priority_level)")
+    if migrated or needs_history_metadata_backfill(conn):
+        backfill_history_metadata(conn)
     conn.commit()
 
 
-def save_history_item(item: dict, *, hit: bool, high: bool, source: str) -> None:
+def needs_history_metadata_backfill(conn: sqlite3.Connection) -> bool:
+    return bool(conn.execute(
+        """
+        SELECT 1
+        FROM flash_history
+        WHERE (priority_level = ? AND (hit = 1 OR high = 1 OR important = 1))
+           OR (style_flags = '' AND raw_json != '')
+        LIMIT 1
+        """,
+        (PRIORITY_NONE,),
+    ).fetchone())
+
+
+def backfill_history_metadata(conn: sqlite3.Connection, *, limit: int = 5000) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, hit, high, source, raw_json
+        FROM flash_history
+        WHERE raw_json != ''
+        ORDER BY published_at DESC, created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    for fid, hit, high, ingest_source, raw_json in rows:
+        try:
+            item = json.loads(raw_json)
+        except Exception:
+            continue
+        title, content = item_text(item)
+        important = int(is_important(item))
+        bold = int(has_html_bold(item))
+        metadata = item_metadata(item)
+        priority = classify_priority(item, hit=bool(hit), high=bool(high))
+        flags = style_flags(item, high=bool(high), priority_level=priority)
+        conn.execute(
+            """
+            UPDATE flash_history
+            SET title = ?, content = ?, important = ?, has_bold = ?,
+                priority_level = ?, has_title = ?, has_pic = ?, pic_url = ?,
+                news_source = ?, source_url = ?, style_flags = ?, source = ?
+            WHERE id = ?
+            """,
+            (
+                title,
+                content,
+                important,
+                bold,
+                priority,
+                int(metadata["has_title"]),
+                int(metadata["has_pic"]),
+                metadata["pic_url"],
+                metadata["news_source"],
+                metadata["source_url"],
+                flags,
+                ingest_source,
+                fid,
+            ),
+        )
+
+
+def save_history_item(item: dict, *, hit: bool, high: bool, source: str, priority_level: Optional[str] = None) -> None:
     fid = str(item.get("id", ""))
     if not fid:
         return
     title, content = item_text(item)
     important = int(is_important(item))
     bold = int(has_html_bold(item))
-    flags = style_flags(item, high=high)
+    metadata = item_metadata(item)
+    priority = priority_level or classify_priority(item, hit=hit, high=high)
+    flags = style_flags(item, high=high, priority_level=priority)
     conn = get_db()
     values = (
         fid,
@@ -367,6 +529,12 @@ def save_history_item(item: dict, *, hit: bool, high: bool, source: str) -> None
         int(high),
         important,
         bold,
+        priority,
+        int(metadata["has_title"]),
+        int(metadata["has_pic"]),
+        metadata["pic_url"],
+        metadata["news_source"],
+        metadata["source_url"],
         flags,
         source,
         json.dumps(item, ensure_ascii=False, sort_keys=True),
@@ -374,8 +542,10 @@ def save_history_item(item: dict, *, hit: bool, high: bool, source: str) -> None
     conn.execute(
         """
         INSERT OR IGNORE INTO flash_history
-            (id, published_at, title, content, hit, high, important, has_bold, style_flags, source, raw_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, published_at, title, content, hit, high, important, has_bold,
+             priority_level, has_title, has_pic, pic_url, news_source, source_url,
+             style_flags, source, raw_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         values,
     )
@@ -383,7 +553,9 @@ def save_history_item(item: dict, *, hit: bool, high: bool, source: str) -> None
         """
         UPDATE flash_history
         SET published_at = ?, title = ?, content = ?, hit = ?, high = ?,
-            important = ?, has_bold = ?, style_flags = ?, source = ?, raw_json = ?
+            important = ?, has_bold = ?, priority_level = ?, has_title = ?,
+            has_pic = ?, pic_url = ?, news_source = ?, source_url = ?,
+            style_flags = ?, source = ?, raw_json = ?
         WHERE id = ?
         """,
         values[1:] + (fid,),
@@ -399,12 +571,14 @@ def query_history(query: str = "", *, limit: int = 20, high_only: bool = False) 
         like = f"%{query}%"
         params.extend([like, like])
     if high_only:
-        clauses.append("high = 1")
+        clauses.append("(high = 1 OR priority_level = ?)")
+        params.append(PRIORITY_IMPORTANT)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     params.append(limit)
     return get_db().execute(
         f"""
-        SELECT published_at, high, hit, important, has_bold, style_flags, title, content
+        SELECT published_at, high, hit, important, has_bold, priority_level,
+               has_pic, pic_url, news_source, source_url, style_flags, title, content
         FROM flash_history
         {where}
         ORDER BY published_at DESC, created_at DESC
@@ -420,19 +594,25 @@ def print_history(query: str = "", *, limit: int = 20, high_only: bool = False) 
     if not rows:
         log.info("历史库暂无匹配记录：%s", query or "(最新)")
         return
-    for published_at, high, hit, important, bold, flags, title, content in rows:
-        icon = "🚨" if high or important else "📰" if hit else "·"
-        labels = []
-        if important:
-            labels.append("重要")
+    for published_at, high, hit, important, bold, priority, has_pic, pic_url, news_source, source_url, flags, title, content in rows:
+        icon = PRIORITY_ICONS.get(priority, "·" if not hit else "📰")
+        labels = [PRIORITY_LABELS.get(priority, priority)]
         if bold:
             labels.append("加粗")
+        if has_pic:
+            labels.append("有图")
         label_text = f" [{' '.join(labels)}]" if labels else ""
         print(f"{published_at} {icon}{label_text}")
         if title:
             print(apply_console_style(f"  {title}", important=bool(important), bold=True))
         if content:
             print(apply_console_style(f"  {content}", important=bool(important), bold=bool(bold) and not title))
+        if news_source:
+            print(f"  来源：{news_source}")
+        if source_url:
+            print(f"  来源链接：{source_url}")
+        if pic_url:
+            print(f"  图片：{pic_url}")
 
 
 # ─── Telegram 推送 ───────────────────────────────────────────────────────────
@@ -588,6 +768,9 @@ def crawl_window(
                         title, content = item_text(item)
                         full_text = " ".join(part for part in [title, content] if part).strip()
                         score, hits = score_keywords(full_text, keywords)
+                        _, high = match_keywords(full_text)
+                        priority_level = classify_priority(item, hit=bool(score), high=high)
+                        metadata = item_metadata(item)
                         rows.append({
                             "id": item.get("id"),
                             "time_bj": item_dt.strftime("%Y-%m-%d %H:%M:%S"),
@@ -595,7 +778,12 @@ def crawl_window(
                             "content": content,
                             "important": int(is_important(item)),
                             "has_bold": int(has_html_bold(item)),
-                            "style_flags": style_flags(item, high=bool(score)),
+                            "priority_level": priority_level,
+                            "has_pic": int(metadata["has_pic"]),
+                            "pic_url": metadata["pic_url"],
+                            "news_source": metadata["news_source"],
+                            "source_url": metadata["source_url"],
+                            "style_flags": style_flags(item, high=high, priority_level=priority_level),
                             "matched_keywords": hits,
                             "match_score": score,
                             "raw": item,
@@ -635,12 +823,12 @@ def print_lookup(result: dict) -> None:
         return
     rows = result.get("all_items") or []
     for row in rows:
-        icon = "🚨" if row["important"] or row["match_score"] else "📰"
-        labels = []
-        if row["important"]:
-            labels.append("重要")
+        icon = PRIORITY_ICONS.get(row.get("priority_level"), "📰")
+        labels = [PRIORITY_LABELS.get(row.get("priority_level"), row.get("priority_level", ""))]
         if row["has_bold"]:
             labels.append("加粗")
+        if row.get("has_pic"):
+            labels.append("有图")
         if row["matched_keywords"]:
             labels.append(",".join(row["matched_keywords"]))
         label_text = f" [{' '.join(labels)}]" if labels else ""
@@ -649,6 +837,12 @@ def print_lookup(result: dict) -> None:
             print(apply_console_style(f"  {row['title']}", important=bool(row["important"]), bold=True))
         if row["content"]:
             print(apply_console_style(f"  {row['content']}", important=bool(row["important"]), bold=bool(row["has_bold"]) and not row["title"]))
+        if row.get("news_source"):
+            print(f"  来源：{row['news_source']}")
+        if row.get("source_url"):
+            print(f"  来源链接：{row['source_url']}")
+        if row.get("pic_url"):
+            print(f"  图片：{row['pic_url']}")
     print(f"\n共 {len(rows)} 条，关键词命中 {len(result.get('matched_items') or [])} 条")
 
 
@@ -742,15 +936,13 @@ async def handle_item(session: aiohttp.ClientSession, item: dict, *, source: str
     text    = f"{title} {content}"
 
     hit, high = match_keywords(text)
-    if PUSH_IMPORTANT and is_important(item):
-        hit = True
-        high = True
-    save_history_item(item, hit=hit, high=high, source=source)
-    if not hit:
+    priority_level = classify_priority(item, hit=hit, high=high)
+    save_history_item(item, hit=hit, high=high, source=source, priority_level=priority_level)
+    if not should_push(priority_level, hit=hit):
         return
 
-    log.info("\n%s", format_console_message(item, high=high))
-    msg = format_message(item, high)
+    log.info("\n%s", format_console_message(item, priority_level=priority_level))
+    msg = format_message(item, priority_level)
     await send_telegram(session, msg)
 
 
