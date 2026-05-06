@@ -20,7 +20,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from html import escape, unescape
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import aiohttp
 import websockets
@@ -45,6 +45,13 @@ APP_IDS = [
     if app_id.strip()
 ]
 PUSH_IMPORTANT = os.getenv("PUSH_IMPORTANT", "1").lower() not in {"0", "false", "no", "off"}
+AUTO_CATCHUP = os.getenv("AUTO_CATCHUP", "1").lower() not in {"0", "false", "no", "off"}
+CATCHUP_TELEGRAM = os.getenv("CATCHUP_TELEGRAM", "1").lower() not in {"0", "false", "no", "off"}
+CATCHUP_MAX_HOURS = int(os.getenv("CATCHUP_MAX_HOURS", "24"))
+CATCHUP_MAX_STORE = int(os.getenv("CATCHUP_MAX_STORE", "1000"))
+CATCHUP_MAX_SEND = int(os.getenv("CATCHUP_MAX_SEND", "120"))
+CATCHUP_SEND_INTERVAL = float(os.getenv("CATCHUP_SEND_INTERVAL", "0.5"))
+ALLOW_TMP_TELEGRAM = os.getenv("ALLOW_TMP_TELEGRAM", "0").lower() in {"1", "true", "yes", "on"}
 
 PRIORITY_IMPORTANT = "T3_IMPORTANT"
 PRIORITY_HIGH = "T2_HIGH"
@@ -179,6 +186,11 @@ def match_keywords(text: str) -> tuple[bool, bool]:
     return hit, hi
 
 
+def item_full_text(item: dict) -> str:
+    title, content = item_text(item)
+    return " ".join(part for part in [title, content] if part).strip()
+
+
 def clean_html(raw: str) -> str:
     text = re.sub(r"<br\s*/?>", "\n", raw, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
@@ -301,7 +313,7 @@ def parse_ws_packet(payload: bytes) -> tuple[int, object]:
     return code, None
 
 
-def format_message(item: dict, priority_level: str) -> str:
+def format_message(item: dict, priority_level: str, *, catchup: bool = False) -> str:
     icon = PRIORITY_ICONS.get(priority_level, "📰")
     priority_label = PRIORITY_LABELS.get(priority_level, priority_level)
     title, content = item_text(item)
@@ -313,7 +325,10 @@ def format_message(item: dict, priority_level: str) -> str:
     except Exception:
         pass
 
-    parts = [f"{icon} <b>金十快讯</b> <b>{escape(priority_label)}</b>  {ts}"]
+    prefix = "金十快讯 [补拉]" if catchup else "金十快讯"
+    parts = [f"{icon} <b>{prefix}</b> <b>{escape(priority_label)}</b>  {ts}"]
+    if catchup:
+        parts.append(f"发生时间：{escape(str(item.get('time', ts)))}")
     if title:
         parts.append(f"<b>{escape(title)}</b>")
     if content:
@@ -443,9 +458,126 @@ def init_history_db() -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_hit ON flash_history(hit)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_important ON flash_history(important)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_history_priority_level ON flash_history(priority_level)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS runtime_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS delivery_log (
+            message_id TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (message_id, channel, mode)
+        )
+    """)
     if migrated or needs_history_metadata_backfill(conn):
         backfill_history_metadata(conn)
+    bootstrap_runtime_state(conn)
     conn.commit()
+
+
+def get_state(conn: sqlite3.Connection, key: str, default: str = "") -> str:
+    row = conn.execute("SELECT value FROM runtime_state WHERE key = ?", (key,)).fetchone()
+    return str(row[0]) if row else default
+
+
+def set_state(conn: sqlite3.Connection, key: str, value: Any) -> None:
+    conn.execute(
+        """
+        INSERT INTO runtime_state (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (key, "" if value is None else str(value)),
+    )
+
+
+def latest_history_cursor(conn: sqlite3.Connection) -> tuple[str, str]:
+    row = conn.execute(
+        """
+        SELECT published_at, id
+        FROM flash_history
+        WHERE published_at IS NOT NULL AND published_at != ''
+        ORDER BY published_at DESC, created_at DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    if not row:
+        return "", ""
+    return str(row[0] or ""), str(row[1] or "")
+
+
+def bootstrap_runtime_state(conn: sqlite3.Connection) -> None:
+    last_at, last_id = latest_history_cursor(conn)
+    if last_at and not get_state(conn, "last_ingested_at"):
+        set_state(conn, "last_ingested_at", last_at)
+    if last_id and not get_state(conn, "last_ingested_id"):
+        set_state(conn, "last_ingested_id", last_id)
+
+
+def update_ingest_cursor(item: dict) -> None:
+    fid = str(item.get("id", ""))
+    published_at = item_timestamp(item)
+    if not fid or not published_at:
+        return
+    conn = get_db()
+    current_at = get_state(conn, "last_ingested_at")
+    if not current_at or published_at >= current_at:
+        set_state(conn, "last_ingested_at", published_at)
+        set_state(conn, "last_ingested_id", fid)
+
+
+def record_startup(startup_at: datetime) -> None:
+    conn = get_db()
+    set_state(conn, "last_startup_at", startup_at.isoformat(sep=" ", timespec="seconds"))
+    conn.commit()
+
+
+def history_item_exists(conn: sqlite3.Connection, message_id: str) -> bool:
+    return bool(conn.execute(
+        "SELECT 1 FROM flash_history WHERE id = ? LIMIT 1",
+        (message_id,),
+    ).fetchone())
+
+
+def has_delivery(conn: sqlite3.Connection, message_id: str, *, channel: str, mode: str) -> bool:
+    return bool(conn.execute(
+        """
+        SELECT 1
+        FROM delivery_log
+        WHERE message_id = ? AND channel = ? AND mode = ?
+        LIMIT 1
+        """,
+        (message_id, channel, mode),
+    ).fetchone())
+
+
+def has_any_delivery(conn: sqlite3.Connection, message_id: str, *, channel: str) -> bool:
+    return bool(conn.execute(
+        """
+        SELECT 1
+        FROM delivery_log
+        WHERE message_id = ? AND channel = ?
+        LIMIT 1
+        """,
+        (message_id, channel),
+    ).fetchone())
+
+
+def mark_delivery(conn: sqlite3.Connection, message_id: str, *, channel: str, mode: str) -> None:
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO delivery_log (message_id, channel, mode, sent_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        (message_id, channel, mode),
+    )
 
 
 def needs_history_metadata_backfill(conn: sqlite3.Connection) -> bool:
@@ -509,7 +641,15 @@ def backfill_history_metadata(conn: sqlite3.Connection, *, limit: int = 5000) ->
         )
 
 
-def save_history_item(item: dict, *, hit: bool, high: bool, source: str, priority_level: Optional[str] = None) -> None:
+def save_history_item(
+    item: dict,
+    *,
+    hit: bool,
+    high: bool,
+    source: str,
+    priority_level: Optional[str] = None,
+    advance_cursor: bool = False,
+) -> None:
     fid = str(item.get("id", ""))
     if not fid:
         return
@@ -560,6 +700,8 @@ def save_history_item(item: dict, *, hit: bool, high: bool, source: str, priorit
         """,
         values[1:] + (fid,),
     )
+    if advance_cursor:
+        update_ingest_cursor(item)
     conn.commit()
 
 
@@ -617,10 +759,31 @@ def print_history(query: str = "", *, limit: int = 20, high_only: bool = False) 
 
 # ─── Telegram 推送 ───────────────────────────────────────────────────────────
 
-async def send_telegram(session: aiohttp.ClientSession, text: str) -> None:
+def is_temp_history_db() -> bool:
+    try:
+        db_path = HISTORY_DB.expanduser().resolve(strict=False)
+    except Exception:
+        db_path = HISTORY_DB.expanduser().absolute()
+    db_text = str(db_path)
+    return db_text.startswith(("/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/"))
+
+
+def telegram_skip_reason() -> str:
     if not TG_TOKEN or not TG_CHAT_ID:
-        log.warning("Telegram 未配置，仅打印到控制台：\n%s", text)
-        return
+        return "Telegram 未配置"
+    if is_temp_history_db() and not ALLOW_TMP_TELEGRAM:
+        return (
+            f"HISTORY_DB={HISTORY_DB} 是临时测试库，已跳过真实 Telegram 发送；"
+            "如需强制发送，设置 ALLOW_TMP_TELEGRAM=1"
+        )
+    return ""
+
+
+async def send_telegram(session: aiohttp.ClientSession, text: str) -> bool:
+    skip_reason = telegram_skip_reason()
+    if skip_reason:
+        log.warning("Telegram 已跳过：%s\n%s", skip_reason, text)
+        return False
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
     payload = {
         "chat_id": TG_CHAT_ID,
@@ -632,8 +795,11 @@ async def send_telegram(session: aiohttp.ClientSession, text: str) -> None:
         async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status != 200:
                 log.error("Telegram 发送失败: %s", await resp.text())
+                return False
+            return True
     except Exception as e:
         log.error("Telegram 异常: %s", e)
+    return False
 
 
 # ─── 去重 + 已处理 ID 集合 ───────────────────────────────────────────────────
@@ -704,6 +870,15 @@ def parse_item_time(item: dict) -> Optional[datetime]:
     return None
 
 
+def parse_cli_datetime(value: str, *, label: str) -> datetime:
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    raise SystemExit(f"{label} 格式应为 YYYY-MM-DD HH:MM 或 YYYY-MM-DD HH:MM:SS")
+
+
 def fetch_page_sync(max_time: str, app_id: str, timeout: int = 12) -> list[dict]:
     params = flash_params(mode="channel", max_time=max_time)
     url = f"{FLASH_API}?{urllib.parse.urlencode(params)}"
@@ -716,6 +891,162 @@ def fetch_page_sync(max_time: str, app_id: str, timeout: int = 12) -> list[dict]
     if not isinstance(data, list):
         raise RuntimeError(f"意外响应格式: {str(raw)[:200]}")
     return data
+
+
+def classify_item_for_push(item: dict) -> tuple[bool, bool, str]:
+    text = item_full_text(item)
+    hit, high = match_keywords(text)
+    return hit, high, classify_priority(item, hit=hit, high=high)
+
+
+def select_catchup_send_candidates(rows: list[dict], max_send: int) -> list[dict]:
+    """Keep Telegram catch-up bounded while preserving time order for selected messages."""
+    if max_send <= 0:
+        return []
+    selected_ids: set[str] = set()
+    for priority in (PRIORITY_IMPORTANT, PRIORITY_HIGH, PRIORITY_NORMAL):
+        for row in rows:
+            if len(selected_ids) >= max_send:
+                break
+            if row["should_push"] and not row["already_delivered"] and row["priority_level"] == priority:
+                selected_ids.add(row["id"])
+        if len(selected_ids) >= max_send:
+            break
+    return [row for row in rows if row["id"] in selected_ids]
+
+
+def catch_up_window(
+    start_dt: datetime,
+    end_dt: datetime,
+    *,
+    source: str,
+    max_store: int = CATCHUP_MAX_STORE,
+    max_send: int = CATCHUP_MAX_SEND,
+    sleep_s: float = 0.3,
+) -> dict:
+    """Backfill a fixed offline window before realtime starts, so old and live messages do not interleave."""
+    if end_dt <= start_dt:
+        return {
+            "ok": True,
+            "source": source,
+            "window": {"start": start_dt, "end": end_dt},
+            "scanned": 0,
+            "stored": 0,
+            "push_candidates": 0,
+            "priority_counts": {},
+            "already_stored": 0,
+            "already_delivered": 0,
+            "send_candidates": [],
+            "send_candidate_count": 0,
+            "truncated": False,
+            "error": "",
+        }
+
+    cursor = (end_dt + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+    max_pages = max(1, min(200, (max_store // 20) + 10))
+    last_error = None
+    for app_id in APP_IDS:
+        seen: set[str] = set()
+        collected: list[tuple[datetime, dict]] = []
+        pages = 0
+        oldest_seen = None
+        truncated = False
+        try:
+            while pages < max_pages and len(collected) < max_store:
+                page = fetch_page_sync(cursor, app_id)
+                pages += 1
+                if not page:
+                    break
+
+                dated = []
+                for item in page:
+                    item_dt = parse_item_time(item)
+                    if item_dt is None:
+                        continue
+                    dated.append((item_dt, item))
+                    if oldest_seen is None or item_dt < oldest_seen:
+                        oldest_seen = item_dt
+
+                    fid = str(item.get("id") or "")
+                    if not fid or fid in seen:
+                        continue
+                    seen.add(fid)
+
+                    if start_dt < item_dt <= end_dt:
+                        collected.append((item_dt, item))
+                        if len(collected) >= max_store:
+                            truncated = True
+                            break
+
+                if truncated or (oldest_seen and oldest_seen <= start_dt):
+                    break
+                if dated:
+                    cursor = dated[-1][0].strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    break
+                time.sleep(sleep_s + random.uniform(0, 0.2))
+
+            collected.sort(key=lambda pair: pair[0])
+            conn = get_db()
+            rows = []
+            for item_dt, item in collected:
+                fid = str(item.get("id") or "")
+                hit, high, priority_level = classify_item_for_push(item)
+                should = should_push(priority_level, hit=hit)
+                already_stored = history_item_exists(conn, fid)
+                already_delivered = has_any_delivery(conn, fid, channel="telegram")
+                if not already_stored:
+                    save_history_item(
+                        item,
+                        hit=hit,
+                        high=high,
+                        source=source,
+                        priority_level=priority_level,
+                        advance_cursor=True,
+                    )
+                rows.append({
+                    "id": fid,
+                    "time": item_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "item": item,
+                    "hit": hit,
+                    "high": high,
+                    "priority_level": priority_level,
+                    "should_push": should,
+                    "already_stored": already_stored,
+                    "already_delivered": already_delivered,
+                })
+
+            send_candidates = select_catchup_send_candidates(rows, max_send)
+            priority_counts = {
+                priority: sum(1 for row in rows if row["should_push"] and row["priority_level"] == priority)
+                for priority in (PRIORITY_IMPORTANT, PRIORITY_HIGH, PRIORITY_NORMAL)
+            }
+            set_state(conn, "last_catchup_at", datetime.now().replace(microsecond=0).isoformat(sep=" "))
+            conn.commit()
+            return {
+                "ok": True,
+                "source": source,
+                "app_id": app_id,
+                "window": {
+                    "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                },
+                "pages": pages,
+                "scanned": len(rows),
+                "stored": sum(1 for row in rows if not row["already_stored"]),
+                "push_candidates": sum(1 for row in rows if row["should_push"]),
+                "priority_counts": priority_counts,
+                "already_stored": sum(1 for row in rows if row["already_stored"]),
+                "already_delivered": sum(1 for row in rows if row["already_delivered"]),
+                "send_candidates": send_candidates,
+                "send_candidate_count": len(send_candidates),
+                "truncated": truncated,
+                "error": "",
+            }
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            log.warning("catch-up app_id %s 失败，尝试下一个: %s", app_id, last_error)
+    return {"ok": False, "error": last_error or "未知错误", "send_candidates": []}
 
 
 def score_keywords(text: str, keywords: list[str]) -> tuple[int, list[str]]:
@@ -846,6 +1177,154 @@ def print_lookup(result: dict) -> None:
     print(f"\n共 {len(rows)} 条，关键词命中 {len(result.get('matched_items') or [])} 条")
 
 
+def print_catchup_summary(result: dict) -> None:
+    window = result.get("window", {})
+    print(f"离线补拉窗口: {window.get('start')} -> {window.get('end')} ok={result.get('ok')}")
+    if not result.get("ok"):
+        print(f"错误: {result.get('error')}")
+        return
+    print(f"入库: {result.get('stored', 0)} 条")
+    if result.get("already_stored"):
+        print(f"已存在未重复入库: {result.get('already_stored', 0)} 条")
+    print(f"命中推送条件: {result.get('push_candidates', 0)} 条")
+    print(f"已推送过未重复发送: {result.get('already_delivered', 0)} 条")
+    print(f"本次候选发送: {result.get('send_candidate_count', 0)} 条")
+    if result.get("telegram_enabled"):
+        print(f"Telegram 已发送: {result.get('telegram_sent', 0)} 条")
+        if result.get("telegram_skipped"):
+            print(f"Telegram 已跳过: {result.get('telegram_skipped', 0)} 条")
+            print(f"跳过原因: {result.get('telegram_skip_reason', '')}")
+        print(f"Telegram 发送失败: {result.get('telegram_failed', 0)} 条")
+    if result.get("truncated"):
+        print("注意: 补拉入库达到上限，窗口可能被截断。")
+
+
+def format_catchup_summary_message(result: dict) -> str:
+    window = result.get("window", {})
+    counts = result.get("priority_counts") or {}
+    lines = [
+        "📦 <b>金十离线补拉完成</b>",
+        f"窗口：{escape(str(window.get('start', '')))} → {escape(str(window.get('end', '')))}",
+        f"入库：{int(result.get('stored') or 0)} 条",
+        f"已存在未重复入库：{int(result.get('already_stored') or 0)} 条",
+        f"命中推送条件：{int(result.get('push_candidates') or 0)} 条",
+        (
+            "分级："
+            f"⚡ {int(counts.get(PRIORITY_IMPORTANT) or 0)} / "
+            f"🚨 {int(counts.get(PRIORITY_HIGH) or 0)} / "
+            f"📰 {int(counts.get(PRIORITY_NORMAL) or 0)}"
+        ),
+        "自动补拉只入库和摘要，不逐条推送历史消息。",
+    ]
+    if result.get("limited_by_max_hours"):
+        lines.append(f"已按 CATCHUP_MAX_HOURS={CATCHUP_MAX_HOURS} 截断较早窗口。")
+    if result.get("truncated"):
+        lines.append(f"入库达到 CATCHUP_MAX_STORE={CATCHUP_MAX_STORE} 上限，窗口可能未完全覆盖。")
+    return "\n".join(lines)
+
+
+async def run_catch_up(
+    start_dt: datetime,
+    end_dt: datetime,
+    *,
+    telegram_enabled: bool,
+    max_store: int,
+    max_send: int,
+    send_interval: float,
+) -> dict:
+    init_history_db()
+    result = catch_up_window(
+        start_dt,
+        end_dt,
+        source="catchup_manual",
+        max_store=max_store,
+        max_send=max_send,
+    )
+    result["telegram_enabled"] = telegram_enabled
+    result["telegram_sent"] = 0
+    result["telegram_failed"] = 0
+    result["telegram_skipped"] = 0
+    result["telegram_skip_reason"] = ""
+    if not result.get("ok") or not telegram_enabled:
+        return result
+
+    skip_reason = telegram_skip_reason()
+    if skip_reason:
+        result["telegram_skipped"] = len(result.get("send_candidates") or [])
+        result["telegram_skip_reason"] = skip_reason
+        log.warning("补拉 Telegram 测试已走到发送环节，但被保护规则跳过：%s", skip_reason)
+        return result
+
+    connector = aiohttp.TCPConnector(limit=5, ttl_dns_cache=300)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        conn = get_db()
+        for row in result.get("send_candidates") or []:
+            item = row["item"]
+            priority = row["priority_level"]
+            msg = format_message(item, priority, catchup=True)
+            sent = await send_telegram(session, msg)
+            if sent:
+                mark_delivery(conn, row["id"], channel="telegram", mode="catchup")
+                result["telegram_sent"] += 1
+            else:
+                result["telegram_failed"] += 1
+            if send_interval > 0:
+                await asyncio.sleep(send_interval)
+        conn.commit()
+    return result
+
+
+async def run_auto_catch_up(session: aiohttp.ClientSession, startup_at: datetime) -> dict:
+    """Store the offline gap before realtime starts; only send a compact Telegram summary."""
+    conn = get_db()
+    last_at = get_state(conn, "last_ingested_at")
+    if not last_at:
+        return {"ok": True, "skipped": True, "reason": "暂无 last_ingested_at"}
+
+    try:
+        start_dt = parse_cli_datetime(last_at, label="last_ingested_at")
+    except SystemExit as exc:
+        return {"ok": False, "error": str(exc)}
+
+    limited_by_max_hours = False
+    floor_dt = startup_at - timedelta(hours=max(1, CATCHUP_MAX_HOURS))
+    if start_dt < floor_dt:
+        start_dt = floor_dt
+        limited_by_max_hours = True
+
+    if startup_at <= start_dt:
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "没有离线窗口",
+            "window": {
+                "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "end": startup_at.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+        }
+
+    result = catch_up_window(
+        start_dt,
+        startup_at,
+        source="catchup_auto",
+        max_store=CATCHUP_MAX_STORE,
+        max_send=0,
+    )
+    result["limited_by_max_hours"] = limited_by_max_hours
+    result["telegram_summary_sent"] = False
+    result["telegram_summary_skipped"] = False
+    result["telegram_skip_reason"] = ""
+    if result.get("ok") and CATCHUP_TELEGRAM and (result.get("stored") or result.get("truncated")):
+        skip_reason = telegram_skip_reason()
+        if skip_reason:
+            result["telegram_summary_skipped"] = True
+            result["telegram_skip_reason"] = skip_reason
+            log.warning("自动补拉摘要已生成，但被保护规则跳过 Telegram：%s", skip_reason)
+        else:
+            result["telegram_summary_sent"] = await send_telegram(session, format_catchup_summary_message(result))
+    return result
+
+
 async def poll_loop(session: aiohttp.ClientSession) -> None:
     """轮询模式：每隔 POLL_INTERVAL 秒拉一次，仅处理新条目"""
     log.info("▶ 启动 REST 轮询（间隔 %ss）", POLL_INTERVAL)
@@ -937,13 +1416,23 @@ async def handle_item(session: aiohttp.ClientSession, item: dict, *, source: str
 
     hit, high = match_keywords(text)
     priority_level = classify_priority(item, hit=hit, high=high)
-    save_history_item(item, hit=hit, high=high, source=source, priority_level=priority_level)
+    save_history_item(
+        item,
+        hit=hit,
+        high=high,
+        source=source,
+        priority_level=priority_level,
+        advance_cursor=source in {"ws", "rest", "catchup_auto", "catchup_manual"},
+    )
     if not should_push(priority_level, hit=hit):
         return
 
     log.info("\n%s", format_console_message(item, priority_level=priority_level))
     msg = format_message(item, priority_level)
-    await send_telegram(session, msg)
+    if await send_telegram(session, msg):
+        conn = get_db()
+        mark_delivery(conn, str(item.get("id", "")), channel="telegram", mode="realtime")
+        conn.commit()
 
 
 async def run_once(limit: int) -> None:
@@ -962,13 +1451,44 @@ async def main() -> None:
     log.info("=== 金十快讯监控启动 ===")
     log.info("关键词: %s 条  Telegram: %s", len(KEYWORDS), "已配置" if TG_TOKEN else "未配置（仅打印）")
     init_history_db()
+    startup_at = datetime.now().replace(microsecond=0)
+    record_startup(startup_at)
 
     connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=connector) as session:
+        if AUTO_CATCHUP:
+            log.info("离线补拉：检查上次入库到本次启动之间的窗口 …")
+            try:
+                catchup_result = await run_auto_catch_up(session, startup_at)
+                if catchup_result.get("skipped"):
+                    log.info("离线补拉：跳过（%s）", catchup_result.get("reason", "无需补拉"))
+                elif catchup_result.get("ok"):
+                    window = catchup_result.get("window", {})
+                    log.info(
+                        "离线补拉完成：%s -> %s，入库 %s 条，命中 %s 条，摘要 %s",
+                        window.get("start"),
+                        window.get("end"),
+                        catchup_result.get("stored", 0),
+                        catchup_result.get("push_candidates", 0),
+                        "已发送" if catchup_result.get("telegram_summary_sent") else "未发送",
+                    )
+                    if catchup_result.get("truncated"):
+                        log.warning("离线补拉达到入库上限，窗口可能被截断")
+                else:
+                    log.warning("离线补拉失败，继续启动实时监控：%s", catchup_result.get("error"))
+            except Exception as exc:
+                log.warning("离线补拉异常，继续启动实时监控：%s", exc)
+
         # 冷启动：先拉一批历史条目填充 seen_ids（不推送），避免重启后刷屏
         log.info("冷启动：预加载已有快讯 ID …")
         items = await poll_once(session)
+        pending_realtime = []
         for item in items:
+            item_dt = parse_item_time(item)
+            if item_dt and item_dt > startup_at:
+                pending_realtime.append(item)
+                continue
+
             fid = str(item.get("id", ""))
             if fid:
                 seen_ids[fid] = None
@@ -976,6 +1496,11 @@ async def main() -> None:
             hit, high = match_keywords(f"{title} {content}")
             save_history_item(item, hit=hit, high=high, source="cold_start")
         log.info("预加载完成，已忽略 %d 条旧快讯", len(seen_ids))
+        for item in reversed(pending_realtime):
+            if is_new(item):
+                await handle_item(session, item, source="rest")
+        if pending_realtime:
+            log.info("冷启动期间新增 %d 条快讯，已按实时消息处理", len(pending_realtime))
 
         # 并发运行 WS + 轮询（双保险）
         await asyncio.gather(
@@ -997,17 +1522,48 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lookup-keywords", default=",".join(KEYWORDS), help="回溯高亮关键词，逗号分隔")
     parser.add_argument("--lookup-max-pages", type=int, default=12, help="回溯最多翻页数")
     parser.add_argument("--lookup-format", choices=["text", "json"], default="text", help="回溯输出格式")
+    parser.add_argument("--catch-up", action="store_true", help="手动补拉离线窗口消息")
+    parser.add_argument("--from", dest="catchup_from", help="补拉开始时间 YYYY-MM-DD HH:MM[:SS]")
+    parser.add_argument("--to", dest="catchup_to", help="补拉结束时间 YYYY-MM-DD HH:MM[:SS]")
+    parser.add_argument("--catch-up-telegram", dest="catchup_telegram", action="store_true", default=None, help="补拉后发送 Telegram")
+    parser.add_argument("--no-catch-up-telegram", dest="catchup_telegram", action="store_false", help="补拉只入库和终端显示，不发送 Telegram")
+    parser.add_argument("--catch-up-max-store", type=int, default=CATCHUP_MAX_STORE, help="补拉最多入库条数")
+    parser.add_argument("--catch-up-max-send", type=int, default=CATCHUP_MAX_SEND, help="补拉最多发送 Telegram 条数")
+    parser.add_argument("--catch-up-send-interval", type=float, default=CATCHUP_SEND_INTERVAL, help="补拉 Telegram 发送间隔秒数")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     try:
         args = parse_args()
-        if args.lookup_date or args.lookup_start or args.lookup_end:
+        if args.catch_up:
+            init_history_db()
+            conn = get_db()
+            if args.catchup_from:
+                start_dt = parse_cli_datetime(args.catchup_from, label="--from")
+            else:
+                last_at = get_state(conn, "last_ingested_at")
+                if not last_at:
+                    raise SystemExit("暂无 last_ingested_at，请使用 --from 指定补拉开始时间")
+                start_dt = parse_cli_datetime(last_at, label="last_ingested_at")
+            end_dt = parse_cli_datetime(args.catchup_to, label="--to") if args.catchup_to else datetime.now().replace(microsecond=0)
+            if end_dt <= start_dt:
+                raise SystemExit("--to 必须晚于 --from / last_ingested_at")
+            telegram_enabled = CATCHUP_TELEGRAM if args.catchup_telegram is None else bool(args.catchup_telegram)
+            result = asyncio.run(run_catch_up(
+                start_dt,
+                end_dt,
+                telegram_enabled=telegram_enabled,
+                max_store=max(1, args.catch_up_max_store),
+                max_send=max(0, args.catch_up_max_send),
+                send_interval=max(0.0, args.catch_up_send_interval),
+            ))
+            print_catchup_summary(result)
+        elif args.lookup_date or args.lookup_start or args.lookup_end:
             if not (args.lookup_date and args.lookup_start and args.lookup_end):
                 raise SystemExit("--lookup-date、--lookup-start、--lookup-end 需要同时提供")
-            start_dt = datetime.strptime(f"{args.lookup_date} {args.lookup_start}", "%Y-%m-%d %H:%M")
-            end_dt = datetime.strptime(f"{args.lookup_date} {args.lookup_end}", "%Y-%m-%d %H:%M")
+            start_dt = parse_cli_datetime(f"{args.lookup_date} {args.lookup_start}", label="lookup start")
+            end_dt = parse_cli_datetime(f"{args.lookup_date} {args.lookup_end}", label="lookup end")
             if end_dt < start_dt:
                 raise SystemExit("--lookup-end 必须晚于 --lookup-start")
             keywords = [kw.strip() for kw in args.lookup_keywords.split(",") if kw.strip()]
