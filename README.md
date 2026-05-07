@@ -12,6 +12,7 @@ cp .env.example .env
 python jin10_monitor.py --once --limit 20
 python jin10_monitor.py --history 伊朗 --history-limit 20
 python jin10_monitor.py --lookup-date 2026-05-02 --lookup-start 20:05 --lookup-end 20:20
+python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --no-catch-up-telegram
 python jin10_monitor.py
 ```
 
@@ -30,6 +31,8 @@ TG_CHAT_ID=你的 Telegram chat_id
 - `python jin10_monitor.py --history 伊朗 --history-limit 20`：查询本地历史库。
 - `python jin10_monitor.py --history --history-high`：查看最近高优先级记录。
 - `python jin10_monitor.py --lookup-date 2026-05-02 --lookup-start 20:05 --lookup-end 20:20`：直接从金十 REST 回溯指定时间窗口。
+- `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --no-catch-up-telegram`：手动补拉指定离线窗口，只入库不发 Telegram。
+- `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --catch-up-telegram --catch-up-max-send 10`：手动补拉并最多补发 10 条 Telegram。
 - `python jin10_monitor.py`：常驻运行，WebSocket + REST 双路。
 
 ## 配置
@@ -42,10 +45,70 @@ TG_CHAT_ID=你的 Telegram chat_id
 - `HISTORY_DB`：本地历史库路径，默认 `data/jin10_history.sqlite3`。
 - `JIN10_APP_IDS`：REST 请求头 app id 列表，逗号分隔。默认先用当前页面常见 app id，再自动降级到旧 app id。
 - `PUSH_IMPORTANT`：是否直接推送金十红色重要消息，默认 `1`。设为 `0` 时只按关键词推送。
+- `AUTO_CATCHUP`：启动时是否自动补拉离线窗口，默认 `1`。
+- `CATCHUP_TELEGRAM`：补拉是否允许发送 Telegram，默认 `1`。自动补拉只发送一条摘要，不逐条发送历史消息。
+- `CATCHUP_MAX_HOURS`：自动补拉最多回看小时数，默认 24。
+- `CATCHUP_MAX_STORE`：补拉最多入库条数，默认 1000。
+- `CATCHUP_MAX_SEND`：手动补拉最多补发 Telegram 条数，默认 120。
+- `CATCHUP_SEND_INTERVAL`：手动补发 Telegram 的发送间隔，默认 0.5 秒。
+- `ALLOW_TMP_TELEGRAM`：临时测试库是否允许真实发送 Telegram，默认 `0`。当 `HISTORY_DB=/tmp/...` 时，脚本会跳过真实 Telegram 发送并在终端显示跳过原因。
 
 ## 历史留存
 
 脚本会把冷启动、REST、WebSocket 收到的快讯写入 SQLite，本地数据库默认不提交到 Git。字段包括快讯 ID、发布时间、标题、正文、关键词命中、高优先级标记、金十重要标记、HTML 加粗标记、来源和原始 JSON。
+
+## 离线补拉
+
+脚本会在 SQLite 的 `runtime_state` 表里维护游标：
+
+- `last_ingested_at`：最新已入库消息的金十发生时间。
+- `last_ingested_id`：对应的金十消息 ID。
+- `last_startup_at`：本次启动时间。
+- `last_catchup_at`：最近一次补拉执行时间。
+
+自动补拉窗口为：
+
+```text
+(last_ingested_at, 本次启动时间]
+```
+
+也就是从上次已入库消息之后开始，到本次启动那一刻为止。自动补拉只入库并发送一条 Telegram 摘要，不逐条推送历史消息，避免补拉期间堵住实时新闻。
+
+查看游标是否正常推进：
+
+```bash
+sqlite3 data/jin10_history.sqlite3 "select key, value, updated_at from runtime_state order by key;"
+sqlite3 data/jin10_history.sqlite3 "select id,published_at,source,priority_level,title from flash_history order by published_at desc limit 5;"
+```
+
+正常情况下，`last_ingested_at` 应该接近或等于 `flash_history` 最新记录的 `published_at`。
+
+## 安全测试
+
+为了避免测试污染正式 Telegram，临时 SQLite 库默认不真实发送 Telegram：
+
+```bash
+HISTORY_DB=/tmp/jin10_tmp_tg_guard.sqlite3 python jin10_monitor.py \
+  --catch-up \
+  --from "2026-05-06 23:35" \
+  --to "2026-05-06 23:55" \
+  --catch-up-telegram \
+  --catch-up-max-send 1
+```
+
+这类测试会在终端显示：
+
+```text
+本次候选发送: 1 条
+Telegram 已发送: 0 条
+Telegram 已跳过: 1 条
+```
+
+如果确实要用临时库测试真实 Telegram 发送，需要显式设置：
+
+```bash
+ALLOW_TMP_TELEGRAM=1
+```
 
 ## 说明
 
