@@ -1,6 +1,8 @@
 .env
 .venv/
 data/
+logs/*.log
+!logs/.gitkeep
 __pycache__/
 *.py[cod]
 .DS_Store

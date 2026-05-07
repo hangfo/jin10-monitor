@@ -110,6 +110,28 @@ Telegram 已跳过: 1 条
 ALLOW_TMP_TELEGRAM=1
 ```
 
+## 后台常驻
+
+macOS 本地后台常驻推荐使用 `launchd`。本仓库提供模板，但不会自动安装服务：
+
+- 启动脚本：`scripts/run_monitor.sh`
+- launchd 模板：`scripts/launchd/com.rich.jin10-monitor.plist`
+- 操作文档：`docs/operations/001-launchd.md`
+
+先确认脚本能手动运行，再按文档复制 plist 到 `~/Library/LaunchAgents/`：
+
+```bash
+chmod +x scripts/run_monitor.sh
+open docs/operations/001-launchd.md
+```
+
+日志默认写入：
+
+```text
+logs/jin10-monitor.out.log
+logs/jin10-monitor.err.log
+```
+
 ## 说明
 
 本项目只访问公开接口，不包含绕过登录、验证码、付费墙或其他访问控制的逻辑。实时消息可以辅助观察市场，但不构成交易建议；正式交易前建议结合行情源、风控和延迟监控一起使用。

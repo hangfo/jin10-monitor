@@ -10,3 +10,4 @@
 - 新增补拉去重与发送记录：同一金十消息 ID 不重复入库，已推送过的 Telegram 消息不重复补发。
 - 新增临时测试库保护：`HISTORY_DB=/tmp/...` 默认跳过真实 Telegram 发送，并在终端记录跳过原因。
 - 补充 README 与 `.env.example`：记录离线补拉配置、手动补拉命令、SQLite 游标检查和临时库 Telegram 保护。
+- 新增 macOS `launchd` 运维模板：提供后台常驻启动脚本、plist 模板、日志目录和迁移/排查文档。
