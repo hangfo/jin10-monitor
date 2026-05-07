@@ -11,3 +11,5 @@
 - 新增临时测试库保护：`HISTORY_DB=/tmp/...` 默认跳过真实 Telegram 发送，并在终端记录跳过原因。
 - 补充 README 与 `.env.example`：记录离线补拉配置、手动补拉命令、SQLite 游标检查和临时库 Telegram 保护。
 - 新增 macOS `launchd` 运维模板：提供后台常驻启动脚本、plist 模板、日志目录和迁移/排查文档。
+- 调整 `launchd` 日志说明：stdout/stderr 合并到 `logs/jin10-monitor.log`，首次安装只执行 `bootstrap`。
+- 新增 `scripts/launchd/manage.sh`：封装检查、安装、重载、状态、日志、停止和卸载命令，降低手动操作难度。

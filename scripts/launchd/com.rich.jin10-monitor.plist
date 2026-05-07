@@ -21,10 +21,10 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Users/rich/jin10-monitor/logs/jin10-monitor.out.log</string>
+  <string>/Users/rich/jin10-monitor/logs/jin10-monitor.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/rich/jin10-monitor/logs/jin10-monitor.err.log</string>
+  <string>/Users/rich/jin10-monitor/logs/jin10-monitor.log</string>
 
   <key>EnvironmentVariables</key>
   <dict>
