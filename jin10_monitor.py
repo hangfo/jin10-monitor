@@ -169,12 +169,53 @@ def item_text(item: dict) -> tuple[str, str]:
         if match:
             title = clean_html(match.group(1))
             content = clean_html(match.group(2))
+    if not title and not content:
+        title, content = indicator_item_text(item)
     return title, content
 
 
 def item_data(item: dict) -> dict:
     data = item.get("data", {})
     return data if isinstance(data, dict) else {}
+
+
+def clean_number(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in {"", "none", "null"} else text
+
+
+def indicator_item_text(item: dict) -> tuple[str, str]:
+    """Format non-news indicator/earnings packets that do not carry title/content."""
+    if item.get("type") != 1:
+        return "", ""
+    data = item_data(item)
+    name = clean_html(str(data.get("name") or ""))
+    measure = clean_html(str(data.get("measure") or ""))
+    period = clean_html(str(data.get("time_period") or ""))
+    if not name and not measure:
+        return "", ""
+
+    title = " ".join(part for part in [name, period, measure] if part)
+    actual = clean_number(data.get("actual"))
+    unit = clean_html(str(data.get("unit") or ""))
+    consensus = clean_number(data.get("consensus"))
+    previous = clean_number(data.get("previous"))
+    revised = clean_number(data.get("revised"))
+
+    lines = []
+    if actual:
+        lines.append(f"公布值：{actual}{unit}")
+    if consensus:
+        lines.append(f"预期：{consensus}{unit}")
+    if previous:
+        lines.append(f"前值：{previous}{unit}")
+    if revised:
+        lines.append(f"修正：{revised}{unit}")
+    if data.get("country"):
+        lines.append(f"市场：{clean_html(str(data.get('country')))}")
+    return title, "\n".join(lines)
 
 
 def match_keywords(text: str) -> tuple[bool, bool]:
@@ -1425,6 +1466,9 @@ async def handle_item(session: aiohttp.ClientSession, item: dict, *, source: str
         advance_cursor=source in {"ws", "rest", "catchup_auto", "catchup_manual"},
     )
     if not should_push(priority_level, hit=hit):
+        return
+    if not item_full_text(item):
+        log.info("跳过无可显示内容的推送：id=%s type=%s priority=%s", item.get("id", ""), item.get("type", ""), priority_level)
         return
 
     log.info("\n%s", format_console_message(item, priority_level=priority_level))
