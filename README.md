@@ -134,6 +134,18 @@ open docs/operations/001-launchd.md
 logs/jin10-monitor.log
 ```
 
+### 日常运维速查
+
+```bash
+cd /Users/rich/jin10-monitor
+./scripts/launchd/manage.sh status   # 看后台是否在运行
+./scripts/launchd/manage.sh logs     # 看实时日志，Ctrl+C 只退出看日志
+./scripts/launchd/manage.sh reload   # 更新代码或配置后重启后台服务
+./scripts/launchd/manage.sh stop     # 临时停止后台服务
+./scripts/launchd/manage.sh install  # 首次安装后台服务
+./scripts/launchd/manage.sh uninstall # 停止并取消后台自启
+```
+
 ## 说明
 
 本项目只访问公开接口，不包含绕过登录、验证码、付费墙或其他访问控制的逻辑。实时消息可以辅助观察市场，但不构成交易建议；正式交易前建议结合行情源、风控和延迟监控一起使用。

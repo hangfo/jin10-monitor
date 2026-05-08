@@ -14,3 +14,4 @@
 - 调整 `launchd` 日志说明：stdout/stderr 合并到 `logs/jin10-monitor.log`，首次安装只执行 `bootstrap`。
 - 新增 `scripts/launchd/manage.sh`：封装检查、安装、重载、状态、日志、停止和卸载命令，降低手动操作难度。
 - 修复数据类消息空推送：为财报/指标类 WebSocket 消息生成可读标题和数值正文，并跳过无法显示内容的未知消息。
+- 补充 README 日常运维速查：集中列出后台状态、日志、重载、停止、安装和卸载命令。
