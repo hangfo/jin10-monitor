@@ -52,6 +52,8 @@ CATCHUP_MAX_STORE = int(os.getenv("CATCHUP_MAX_STORE", "1000"))
 CATCHUP_MAX_SEND = int(os.getenv("CATCHUP_MAX_SEND", "120"))
 CATCHUP_SEND_INTERVAL = float(os.getenv("CATCHUP_SEND_INTERVAL", "0.5"))
 ALLOW_TMP_TELEGRAM = os.getenv("ALLOW_TMP_TELEGRAM", "0").lower() in {"1", "true", "yes", "on"}
+TELEGRAM_TIMEOUT = aiohttp.ClientTimeout(total=10)
+TELEGRAM_RETRY_DELAYS = (1.0, 3.0)
 
 PRIORITY_IMPORTANT = "T3_IMPORTANT"
 PRIORITY_HIGH = "T2_HIGH"
@@ -328,7 +330,7 @@ def build_ws_login(key: str, last_id: Optional[str] = None) -> bytes:
         pack_str("chrome"),
         struct.pack("<i", 0),        # 普通用户
         pack_str("web"),
-        pack_str(last_id) if last_id else b"",
+        pack_str(last_id or ""),
     ])
     return xor_payload(payload, key)
 
@@ -680,6 +682,7 @@ def backfill_history_metadata(conn: sqlite3.Connection, *, limit: int = 5000) ->
                 fid,
             ),
         )
+    conn.commit()
 
 
 def save_history_item(
@@ -832,14 +835,54 @@ async def send_telegram(session: aiohttp.ClientSession, text: str) -> bool:
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
-    try:
-        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status != 200:
-                log.error("Telegram 发送失败: %s", await resp.text())
+    max_attempts = 1 + len(TELEGRAM_RETRY_DELAYS)
+    retry_statuses = {500, 502, 503, 504}
+    retry_exceptions = (
+        aiohttp.ClientConnectorError,
+        aiohttp.ClientOSError,
+        aiohttp.ServerDisconnectedError,
+    )
+    for attempt in range(1, max_attempts + 1):
+        try:
+            async with session.post(url, json=payload, timeout=TELEGRAM_TIMEOUT) as resp:
+                body = await resp.text()
+                if resp.status == 200:
+                    return True
+                should_retry = resp.status in retry_statuses and attempt < max_attempts
+                log_fn = log.warning if should_retry else log.error
+                log_fn("Telegram 发送失败: status=%s attempt=%s/%s body=%s", resp.status, attempt, max_attempts, body[:500])
+                if not should_retry:
+                    return False
+        except asyncio.TimeoutError as exc:
+            log.error(
+                "Telegram 超时，送达状态未知，未自动重试以避免重复: attempt=%s/%s error=%s",
+                attempt,
+                max_attempts,
+                repr(exc),
+            )
+            return False
+        except retry_exceptions as exc:
+            should_retry = attempt < max_attempts
+            log_fn = log.warning if should_retry else log.error
+            log_fn(
+                "Telegram 网络异常: type=%s attempt=%s/%s error=%s",
+                type(exc).__name__,
+                attempt,
+                max_attempts,
+                repr(exc),
+            )
+            if not should_retry:
                 return False
-            return True
-    except Exception as e:
-        log.error("Telegram 异常: %s", e)
+        except Exception as exc:
+            log.error(
+                "Telegram 异常: type=%s attempt=%s/%s error=%s",
+                type(exc).__name__,
+                attempt,
+                max_attempts,
+                repr(exc),
+            )
+            return False
+        await asyncio.sleep(TELEGRAM_RETRY_DELAYS[attempt - 1])
     return False
 
 
