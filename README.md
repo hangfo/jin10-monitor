@@ -39,6 +39,8 @@ TG_CHAT_ID=你的 Telegram chat_id
 
 - `KEYWORDS`：命中后才推送。空列表表示全部推送。
 - `HIGH_PRIORITY`：命中后使用高优先级标头。
+- `KEYWORDS_FILE`：可选，普通推送关键词文件路径，一行一个关键词，支持 `#` 注释。未配置、文件不存在或文件为空时使用内置默认关键词。
+- `HIGH_PRIORITY_FILE`：可选，高优先级关键词文件路径，一行一个关键词，支持 `#` 注释。未配置、文件不存在或文件为空时使用内置默认关键词。
 - `POLL_INTERVAL`：REST 兜底轮询间隔，默认 3 秒。
 - `WS_RECONNECT_DELAY`：WebSocket 断线重连间隔，默认 5 秒。
 - `WS_URLS`：WebSocket 地址列表，逗号分隔。默认使用本机已验证可解析的 `wss://wss-flash-2.jin10.com/`。
@@ -52,6 +54,28 @@ TG_CHAT_ID=你的 Telegram chat_id
 - `CATCHUP_MAX_SEND`：手动补拉最多补发 Telegram 条数，默认 120。
 - `CATCHUP_SEND_INTERVAL`：手动补发 Telegram 的发送间隔，默认 0.5 秒。
 - `ALLOW_TMP_TELEGRAM`：临时测试库是否允许真实发送 Telegram，默认 `0`。当 `HISTORY_DB=/tmp/...` 时，脚本会跳过真实 Telegram 发送并在终端显示跳过原因。
+
+### 关键词文件
+
+如果想在不改代码的情况下调整关键词，可以复制示例文件：
+
+```bash
+cp config/keywords.example.txt config/keywords.txt
+cp config/high_priority.example.txt config/high_priority.txt
+```
+
+然后在 `.env` 里启用：
+
+```bash
+KEYWORDS_FILE=config/keywords.txt
+HIGH_PRIORITY_FILE=config/high_priority.txt
+```
+
+`config/*.txt` 默认不提交到 Git，适合保存个人关键词；`config/*.example.txt` 会留在仓库里作为模板。后台服务修改关键词后需要重载：
+
+```bash
+./scripts/launchd/manage.sh reload
+```
 
 ## 历史留存
 

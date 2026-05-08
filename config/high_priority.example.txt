@@ -1,0 +1,16 @@
+# 一行一个高优先级关键词。
+# 复制为 config/high_priority.txt 后，在 .env 设置：
+# HIGH_PRIORITY_FILE=config/high_priority.txt
+
+战争
+核
+制裁
+加息
+降息
+Bitcoin
+BTC
+ETH
+以太坊
+比特币
+伊朗
+以色列

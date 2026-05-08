@@ -73,8 +73,33 @@ PRIORITY_LABELS = {
     PRIORITY_NONE: "未推送",
 }
 
+def load_keyword_file(env_name: str, fallback: list[str]) -> list[str]:
+    """Load one-keyword-per-line config files while keeping built-in defaults safe."""
+    file_value = os.getenv(env_name, "").strip()
+    if not file_value:
+        return list(fallback)
+
+    path = Path(file_value).expanduser()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        log.warning("%s=%s 读取失败，继续使用内置关键词: %s", env_name, file_value, exc)
+        return list(fallback)
+
+    keywords = []
+    for line in lines:
+        value = line.strip()
+        if value and not value.startswith("#"):
+            keywords.append(value)
+    if not keywords:
+        log.warning("%s=%s 没有有效关键词，继续使用内置关键词", env_name, file_value)
+        return list(fallback)
+    log.info("%s 已加载：%s 条（%s）", env_name, len(keywords), path)
+    return keywords
+
+
 # 关键词命中时才推送（空列表 = 全推）
-KEYWORDS = [
+DEFAULT_KEYWORDS = [
     # 地缘 / 宏观
     "伊朗", "以色列", "俄罗斯", "乌克兰", "朝鲜", "台湾",
     "制裁", "战争", "军事", "核", "冲突",
@@ -94,11 +119,14 @@ KEYWORDS = [
 ]
 
 # 高优先级关键词（命中后用 🚨 标头，而非普通 📰）
-HIGH_PRIORITY = [
+DEFAULT_HIGH_PRIORITY = [
     "战争", "核", "制裁", "加息", "降息",
     "Bitcoin", "BTC", "ETH", "以太坊", "比特币",
     "伊朗", "以色列",
 ]
+
+KEYWORDS = load_keyword_file("KEYWORDS_FILE", DEFAULT_KEYWORDS)
+HIGH_PRIORITY = load_keyword_file("HIGH_PRIORITY_FILE", DEFAULT_HIGH_PRIORITY)
 
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "3"))          # 轮询间隔（秒）
 WS_RECONNECT_DELAY = float(os.getenv("WS_RECONNECT_DELAY", "5")) # WebSocket 断线重连间隔（秒）

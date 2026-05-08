@@ -1,0 +1,30 @@
+# 一行一个普通推送关键词。
+# 复制为 config/keywords.txt 后，在 .env 设置：
+# KEYWORDS_FILE=config/keywords.txt
+
+伊朗
+以色列
+俄罗斯
+乌克兰
+制裁
+战争
+美联储
+Fed
+降息
+加息
+CPI
+PCE
+非农
+石油
+原油
+黄金
+比特币
+BTC
+以太坊
+ETH
+特朗普
+美国
+中国
+巴菲特
+伯克希尔
+Anthropic

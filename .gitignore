@@ -3,6 +3,8 @@
 data/
 logs/*.log
 !logs/.gitkeep
+config/*.txt
+!config/*.example.txt
 __pycache__/
 *.py[cod]
 .DS_Store
