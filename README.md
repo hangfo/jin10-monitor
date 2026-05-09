@@ -53,6 +53,7 @@ TG_CHAT_ID=你的 Telegram chat_id
 - `CATCHUP_MAX_STORE`：补拉最多入库条数，默认 1000。
 - `CATCHUP_MAX_SEND`：手动补拉最多补发 Telegram 条数，默认 120。
 - `CATCHUP_SEND_INTERVAL`：手动补发 Telegram 的发送间隔，默认 0.5 秒。
+- `AUTO_CATCHUP_GAP_SECONDS`：常驻进程检测到 REST 轮询停顿超过该秒数后，会自动补拉一次摘要，默认 300；设为 `0` 可关闭。
 - `ALLOW_TMP_TELEGRAM`：临时测试库是否允许真实发送 Telegram，默认 `0`。当 `HISTORY_DB=/tmp/...` 时，脚本会跳过真实 Telegram 发送并在终端显示跳过原因。
 
 ### 关键词文件
@@ -97,6 +98,8 @@ HIGH_PRIORITY_FILE=config/high_priority.txt
 ```
 
 也就是从上次已入库消息之后开始，到本次启动那一刻为止。自动补拉只入库并发送一条 Telegram 摘要，不逐条推送历史消息，避免补拉期间堵住实时新闻。
+
+常驻运行时，如果 Mac 睡眠、网络长时间断开或进程被系统暂停，脚本会检测 REST 轮询是否停顿超过 `AUTO_CATCHUP_GAP_SECONDS`。恢复后会用同样的规则从 `last_ingested_at` 补到恢复时刻，并只发送一条“自愈补拉”摘要。摘要会列出最多 10 条 T3/T2 重点标题，方便快速判断是否需要手动逐条补发。
 
 查看游标是否正常推进：
 

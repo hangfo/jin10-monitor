@@ -51,6 +51,7 @@ CATCHUP_MAX_HOURS = int(os.getenv("CATCHUP_MAX_HOURS", "24"))
 CATCHUP_MAX_STORE = int(os.getenv("CATCHUP_MAX_STORE", "1000"))
 CATCHUP_MAX_SEND = int(os.getenv("CATCHUP_MAX_SEND", "120"))
 CATCHUP_SEND_INTERVAL = float(os.getenv("CATCHUP_SEND_INTERVAL", "0.5"))
+AUTO_CATCHUP_GAP_SECONDS = int(os.getenv("AUTO_CATCHUP_GAP_SECONDS", "300"))
 ALLOW_TMP_TELEGRAM = os.getenv("ALLOW_TMP_TELEGRAM", "0").lower() in {"1", "true", "yes", "on"}
 TELEGRAM_TIMEOUT = aiohttp.ClientTimeout(total=10)
 TELEGRAM_RETRY_DELAYS = (1.0, 3.0)
@@ -266,6 +267,13 @@ def clean_html(raw: str) -> str:
     text = re.sub(r"<br\s*/?>", "\n", raw, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
     return unescape(text).strip()
+
+
+def compact_text(text: str, limit: int = 42) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)].rstrip() + "…"
 
 
 def is_important(item: dict) -> bool:
@@ -936,14 +944,20 @@ async def send_telegram(session: aiohttp.ClientSession, text: str) -> bool:
 seen_ids: OrderedDict[str, None] = OrderedDict()
 
 
-def is_new(item: dict) -> bool:
-    fid = str(item.get("id", ""))
-    if not fid or fid in seen_ids:
-        return False
+def remember_seen_id(fid: str) -> None:
+    if not fid:
+        return
     seen_ids[fid] = None
     if len(seen_ids) > 2000:          # 防止无限增长
         for _ in range(500):
             seen_ids.popitem(last=False)
+
+
+def is_new(item: dict) -> bool:
+    fid = str(item.get("id", ""))
+    if not fid or fid in seen_ids:
+        return False
+    remember_seen_id(fid)
     return True
 
 
@@ -1036,6 +1050,26 @@ def select_catchup_send_candidates(rows: list[dict], max_send: int) -> list[dict
     return [row for row in rows if row["id"] in selected_ids]
 
 
+def build_catchup_summary_items(rows: list[dict], limit: int = 10) -> list[dict]:
+    priority_order = {PRIORITY_IMPORTANT: 0, PRIORITY_HIGH: 1}
+    candidates = [
+        row for row in rows
+        if row["should_push"] and row["priority_level"] in priority_order
+    ]
+    candidates.sort(key=lambda row: (priority_order[row["priority_level"]], row["time"]))
+
+    items = []
+    for row in candidates[:limit]:
+        title, content = item_text(row["item"])
+        text = title or content or str(row["id"])
+        items.append({
+            "time": row["time"],
+            "priority_level": row["priority_level"],
+            "text": compact_text(text),
+        })
+    return items
+
+
 def catch_up_window(
     start_dt: datetime,
     end_dt: datetime,
@@ -1059,6 +1093,8 @@ def catch_up_window(
             "already_delivered": 0,
             "send_candidates": [],
             "send_candidate_count": 0,
+            "summary_items": [],
+            "seen_item_ids": [],
             "truncated": False,
             "error": "",
         }
@@ -1138,6 +1174,7 @@ def catch_up_window(
                 })
 
             send_candidates = select_catchup_send_candidates(rows, max_send)
+            summary_items = build_catchup_summary_items(rows)
             priority_counts = {
                 priority: sum(1 for row in rows if row["should_push"] and row["priority_level"] == priority)
                 for priority in (PRIORITY_IMPORTANT, PRIORITY_HIGH, PRIORITY_NORMAL)
@@ -1161,13 +1198,15 @@ def catch_up_window(
                 "already_delivered": sum(1 for row in rows if row["already_delivered"]),
                 "send_candidates": send_candidates,
                 "send_candidate_count": len(send_candidates),
+                "summary_items": summary_items,
+                "seen_item_ids": [row["id"] for row in rows if row["id"]],
                 "truncated": truncated,
                 "error": "",
             }
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             log.warning("catch-up app_id %s 失败，尝试下一个: %s", app_id, last_error)
-    return {"ok": False, "error": last_error or "未知错误", "send_candidates": []}
+    return {"ok": False, "error": last_error or "未知错误", "send_candidates": [], "summary_items": [], "seen_item_ids": []}
 
 
 def score_keywords(text: str, keywords: list[str]) -> tuple[int, list[str]]:
@@ -1318,13 +1357,21 @@ def print_catchup_summary(result: dict) -> None:
         print(f"Telegram 发送失败: {result.get('telegram_failed', 0)} 条")
     if result.get("truncated"):
         print("注意: 补拉入库达到上限，窗口可能被截断。")
+    summary_items = result.get("summary_items") or []
+    if summary_items:
+        print("重点消息:")
+        for index, row in enumerate(summary_items, 1):
+            icon = PRIORITY_ICONS.get(row.get("priority_level"), "📰")
+            print(f"{index}. {icon} {row.get('time', '')} {row.get('text', '')}")
 
 
 def format_catchup_summary_message(result: dict) -> str:
     window = result.get("window", {})
     counts = result.get("priority_counts") or {}
+    trigger = result.get("trigger", "startup")
+    title = "金十自愈补拉完成" if trigger == "gap" else "金十离线补拉完成"
     lines = [
-        "📦 <b>金十离线补拉完成</b>",
+        f"📦 <b>{title}</b>",
         f"窗口：{escape(str(window.get('start', '')))} → {escape(str(window.get('end', '')))}",
         f"入库：{int(result.get('stored') or 0)} 条",
         f"已存在未重复入库：{int(result.get('already_stored') or 0)} 条",
@@ -1337,6 +1384,16 @@ def format_catchup_summary_message(result: dict) -> str:
         ),
         "自动补拉只入库和摘要，不逐条推送历史消息。",
     ]
+    summary_items = result.get("summary_items") or []
+    if summary_items:
+        lines.append("")
+        lines.append("<b>重点消息：</b>")
+        for index, row in enumerate(summary_items, 1):
+            icon = PRIORITY_ICONS.get(row.get("priority_level"), "📰")
+            lines.append(
+                f"{index}. {icon} {escape(str(row.get('time', '')))} "
+                f"{escape(str(row.get('text', '')))}"
+            )
     if result.get("limited_by_max_hours"):
         lines.append(f"已按 CATCHUP_MAX_HOURS={CATCHUP_MAX_HOURS} 截断较早窗口。")
     if result.get("truncated"):
@@ -1395,42 +1452,52 @@ async def run_catch_up(
     return result
 
 
-async def run_auto_catch_up(session: aiohttp.ClientSession, startup_at: datetime) -> dict:
-    """Store the offline gap before realtime starts; only send a compact Telegram summary."""
+async def run_auto_catch_up(
+    session: aiohttp.ClientSession,
+    end_at: datetime,
+    *,
+    trigger: str = "startup",
+) -> dict:
+    """Store a missed window; auto mode sends one compact Telegram summary, not every item."""
     conn = get_db()
     last_at = get_state(conn, "last_ingested_at")
     if not last_at:
-        return {"ok": True, "skipped": True, "reason": "暂无 last_ingested_at"}
+        return {"ok": True, "skipped": True, "reason": "暂无 last_ingested_at", "trigger": trigger}
 
     try:
         start_dt = parse_cli_datetime(last_at, label="last_ingested_at")
     except SystemExit as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": str(exc), "trigger": trigger}
 
     limited_by_max_hours = False
-    floor_dt = startup_at - timedelta(hours=max(1, CATCHUP_MAX_HOURS))
+    floor_dt = end_at - timedelta(hours=max(1, CATCHUP_MAX_HOURS))
     if start_dt < floor_dt:
         start_dt = floor_dt
         limited_by_max_hours = True
 
-    if startup_at <= start_dt:
+    if end_at <= start_dt:
         return {
             "ok": True,
             "skipped": True,
             "reason": "没有离线窗口",
+            "trigger": trigger,
             "window": {
                 "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                "end": startup_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "end": end_at.strftime("%Y-%m-%d %H:%M:%S"),
             },
         }
 
     result = catch_up_window(
         start_dt,
-        startup_at,
+        end_at,
         source="catchup_auto",
         max_store=CATCHUP_MAX_STORE,
         max_send=0,
     )
+    if result.get("ok"):
+        for fid in result.get("seen_item_ids") or []:
+            remember_seen_id(str(fid))
+    result["trigger"] = trigger
     result["limited_by_max_hours"] = limited_by_max_hours
     result["telegram_summary_sent"] = False
     result["telegram_summary_skipped"] = False
@@ -1449,7 +1516,36 @@ async def run_auto_catch_up(session: aiohttp.ClientSession, startup_at: datetime
 async def poll_loop(session: aiohttp.ClientSession) -> None:
     """轮询模式：每隔 POLL_INTERVAL 秒拉一次，仅处理新条目"""
     log.info("▶ 启动 REST 轮询（间隔 %ss）", POLL_INTERVAL)
+    last_loop_at = datetime.now().replace(microsecond=0)
     while True:
+        now = datetime.now().replace(microsecond=0)
+        gap_seconds = (now - last_loop_at).total_seconds()
+        if AUTO_CATCHUP and AUTO_CATCHUP_GAP_SECONDS > 0 and gap_seconds >= AUTO_CATCHUP_GAP_SECONDS:
+            log.warning(
+                "检测到轮询停顿 %.0fs，执行自愈补拉摘要（阈值 %ss）",
+                gap_seconds,
+                AUTO_CATCHUP_GAP_SECONDS,
+            )
+            try:
+                catchup_result = await run_auto_catch_up(session, now, trigger="gap")
+                if catchup_result.get("skipped"):
+                    log.info("自愈补拉：跳过（%s）", catchup_result.get("reason", "无需补拉"))
+                elif catchup_result.get("ok"):
+                    window = catchup_result.get("window", {})
+                    log.info(
+                        "自愈补拉完成：%s -> %s，入库 %s 条，命中 %s 条，摘要 %s",
+                        window.get("start"),
+                        window.get("end"),
+                        catchup_result.get("stored", 0),
+                        catchup_result.get("push_candidates", 0),
+                        "已发送" if catchup_result.get("telegram_summary_sent") else "未发送",
+                    )
+                else:
+                    log.warning("自愈补拉失败，继续实时监控：%s", catchup_result.get("error"))
+            except Exception as exc:
+                log.warning("自愈补拉异常，继续实时监控：%s", exc)
+
+        last_loop_at = datetime.now().replace(microsecond=0)
         items = await poll_once(session)
         for item in items:
             if is_new(item):
@@ -1514,7 +1610,7 @@ async def ws_loop(session: aiohttp.ClientSession) -> None:
                                 if isinstance(item, dict):
                                     fid = str(item.get("id", ""))
                                     if fid:
-                                        seen_ids[fid] = None
+                                        remember_seen_id(fid)
                                     title, content = item_text(item)
                                     hit, high = match_keywords(f"{title} {content}")
                                     save_history_item(item, hit=hit, high=high, source="ws_initial")
@@ -1615,7 +1711,7 @@ async def main() -> None:
 
             fid = str(item.get("id", ""))
             if fid:
-                seen_ids[fid] = None
+                remember_seen_id(fid)
             title, content = item_text(item)
             hit, high = match_keywords(f"{title} {content}")
             save_history_item(item, hit=hit, high=high, source="cold_start")
