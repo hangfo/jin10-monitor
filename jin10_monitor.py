@@ -390,16 +390,12 @@ def format_message(item: dict, priority_level: str, *, catchup: bool = False) ->
     title, content = item_text(item)
     metadata = item_metadata(item)
     bold = has_html_bold(item)
-    ts      = item.get("time", "")
-    try:
-        ts = datetime.fromtimestamp(int(ts)).strftime("%H:%M:%S")
-    except Exception:
-        pass
+    ts = item_timestamp(item)
 
     prefix = "金十快讯 [补拉]" if catchup else "金十快讯"
     parts = [f"{icon} <b>{prefix}</b> <b>{escape(priority_label)}</b>  {ts}"]
     if catchup:
-        parts.append(f"发生时间：{escape(str(item.get('time', ts)))}")
+        parts.append(f"发生时间：{escape(ts)}")
     if title:
         parts.append(f"<b>{escape(title)}</b>")
     if content:
@@ -439,7 +435,7 @@ def format_console_message(item: dict, *, priority_level: str) -> str:
     important = is_important(item)
     bold = has_html_bold(item)
     metadata = item_metadata(item)
-    ts = item.get("time", "")
+    ts = item_timestamp(item)
     icon = PRIORITY_ICONS.get(priority_level, "📰")
     labels = [PRIORITY_LABELS.get(priority_level, priority_level)]
     if important:
@@ -483,11 +479,32 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -
         return True
     return False
 
+def item_datetime(item: dict) -> Optional[datetime]:
+    """Normalize Jin10 WS unix timestamps and REST time strings."""
+    value = item.get("time")
+    if value in (None, ""):
+        return None
+
+    text = str(value).strip()
+    if isinstance(value, (int, float)) or text.isdigit():
+        seconds = float(value)
+        if seconds > 1_000_000_000_000:
+            seconds /= 1000
+        return datetime.fromtimestamp(seconds).replace(microsecond=0)
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def item_timestamp(item: dict) -> str:
-    ts = item.get("time", "")
-    if isinstance(ts, (int, float)) or str(ts).isdigit():
-        return datetime.fromtimestamp(int(ts)).isoformat(sep=" ")
-    return str(ts)
+    dt = item_datetime(item)
+    if dt:
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    return str(item.get("time", ""))
 
 
 def init_history_db() -> None:
@@ -971,15 +988,7 @@ async def poll_once(session: aiohttp.ClientSession) -> list[dict]:
 
 
 def parse_item_time(item: dict) -> Optional[datetime]:
-    value = item.get("time")
-    if not value:
-        return None
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-        try:
-            return datetime.strptime(str(value), fmt)
-        except ValueError:
-            continue
-    return None
+    return item_datetime(item)
 
 
 def parse_cli_datetime(value: str, *, label: str) -> datetime:
