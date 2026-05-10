@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 增强 `launchd` 管理脚本健壮性：`install` 和 `reload` 现在会自动执行 `launchctl enable`，并在 `bootstrap` 失败时提示下一步排查命令，减少 `Bootstrap failed: 5` 后需要手工恢复的情况。
+- 补充 `launchd` 运维文档：手动安装流程加入 `launchctl enable`，并说明 `reload` 的实际重载步骤与 disabled 状态排查方法。
 - 新增项目状态摘要 005：记录额度友好的迁移方式、当前运行状态判断和下一步优先任务，便于切换新 session 后低成本续接。
 - 新增长时间停顿自愈补拉：常驻进程从睡眠或长时间断网恢复后，会自动补齐停顿窗口并发送一条摘要。
 - 增强补拉摘要：自动补拉摘要列出最多 10 条 T3/T2 重点标题，便于快速判断是否需要手动补发。

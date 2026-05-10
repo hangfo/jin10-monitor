@@ -125,10 +125,11 @@ cp scripts/launchd/com.rich.jin10-monitor.plist ~/Library/LaunchAgents/
 加载服务：
 
 ```bash
+launchctl enable gui/$(id -u)/com.rich.jin10-monitor
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.rich.jin10-monitor.plist
 ```
 
-首次安装时只执行 `bootstrap`。因为 plist 里已经设置了 `RunAtLoad=true`，`bootstrap` 会自动启动服务。`kickstart -k` 只用于后续重启，首次安装时不要紧跟着执行，避免刚启动又被重启一次。
+首次安装时先 `enable` 再 `bootstrap`。这样即使服务之前被标记成 disabled，也能直接恢复，不需要额外手工执行恢复命令。因为 plist 里已经设置了 `RunAtLoad=true`，`bootstrap` 会自动启动服务。`kickstart -k` 只用于后续重启，首次安装时不要紧跟着执行，避免刚启动又被重启一次。
 
 查看状态：
 
@@ -170,6 +171,13 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.rich.jin10-monitor.p
 ./scripts/launchd/manage.sh reload
 ```
 
+`reload` 会自动执行以下动作：
+
+1. 重新检查脚本、plist 和本地依赖。
+2. 复制最新 plist 到 `~/Library/LaunchAgents/`。
+3. 显式执行 `launchctl enable gui/$(id -u)/com.rich.jin10-monitor`。
+4. 如果旧服务仍在运行，先 `bootout`，再重新 `bootstrap`。
+
 重启后检查：
 
 ```bash
@@ -193,4 +201,5 @@ sqlite3 /Users/rich/jin10-monitor/data/jin10_history.sqlite3 "select key, value,
 1. 先手动运行 `python jin10_monitor.py --once --limit 3`。
 2. 再看 `logs/jin10-monitor.log`。
 3. 再看 `launchctl print gui/$(id -u)/com.rich.jin10-monitor`。
-4. 最后检查 `.env`、`.venv`、路径是否迁移后未更新。
+4. 再看 `launchctl print-disabled gui/$(id -u)`，确认 `com.rich.jin10-monitor` 不是 disabled。
+5. 最后检查 `.env`、`.venv`、路径是否迁移后未更新。

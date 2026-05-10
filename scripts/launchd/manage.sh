@@ -7,6 +7,7 @@ set -eu
 PROJECT_DIR="/Users/rich/jin10-monitor"
 LABEL="com.rich.jin10-monitor"
 DOMAIN="gui/$(id -u)"
+SERVICE_TARGET="$DOMAIN/$LABEL"
 SOURCE_PLIST="$PROJECT_DIR/scripts/launchd/$LABEL.plist"
 TARGET_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_FILE="$PROJECT_DIR/logs/jin10-monitor.log"
@@ -28,7 +29,54 @@ EOF
 }
 
 is_loaded() {
-  launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1
+  launchctl print "$SERVICE_TARGET" >/dev/null 2>&1
+}
+
+is_disabled() {
+  launchctl print-disabled "$DOMAIN" 2>/dev/null | grep -F "\"$LABEL\" => disabled" >/dev/null 2>&1
+}
+
+print_recovery_hint() {
+  echo "Next checks:"
+  echo "  launchctl print-disabled $DOMAIN"
+  echo "  launchctl print $SERVICE_TARGET"
+  echo "  tail -n 80 $LOG_FILE"
+}
+
+prepare_files() {
+  mkdir -p "$HOME/Library/LaunchAgents" "$PROJECT_DIR/logs"
+  cp "$SOURCE_PLIST" "$TARGET_PLIST"
+}
+
+enable_service() {
+  if is_disabled; then
+    echo "Service was disabled in launchd. Re-enabling ..."
+  else
+    echo "Ensuring launchd service is enabled ..."
+  fi
+  launchctl enable "$SERVICE_TARGET"
+}
+
+bootstrap_service() {
+  local output
+  if ! output=$(launchctl bootstrap "$DOMAIN" "$TARGET_PLIST" 2>&1); then
+    echo "ERROR: launchctl bootstrap failed."
+    echo "$output"
+    if is_disabled; then
+      echo "Service still appears disabled after enable attempt."
+    fi
+    print_recovery_hint
+    exit 1
+  fi
+}
+
+bootout_service() {
+  local output
+  if ! output=$(launchctl bootout "$DOMAIN" "$TARGET_PLIST" 2>&1); then
+    echo "WARN: launchctl bootout did not complete cleanly."
+    echo "$output"
+    echo "Continuing with plist refresh and bootstrap ..."
+  fi
 }
 
 check() {
@@ -49,27 +97,27 @@ install() {
     echo "  $0 reload"
     exit 1
   fi
-  mkdir -p "$HOME/Library/LaunchAgents" "$PROJECT_DIR/logs"
-  cp "$SOURCE_PLIST" "$TARGET_PLIST"
-  launchctl bootstrap "$DOMAIN" "$TARGET_PLIST"
+  prepare_files
+  enable_service
+  bootstrap_service
   echo "OK: service installed and started."
   echo "Next: $0 logs"
 }
 
 reload() {
   check
-  mkdir -p "$HOME/Library/LaunchAgents" "$PROJECT_DIR/logs"
+  prepare_files
+  enable_service
   if is_loaded; then
-    launchctl bootout "$DOMAIN" "$TARGET_PLIST"
+    bootout_service
   fi
-  cp "$SOURCE_PLIST" "$TARGET_PLIST"
-  launchctl bootstrap "$DOMAIN" "$TARGET_PLIST"
+  bootstrap_service
   echo "OK: service reloaded with latest plist."
   echo "Next: $0 logs"
 }
 
 status() {
-  launchctl print "$DOMAIN/$LABEL"
+  launchctl print "$SERVICE_TARGET"
 }
 
 logs() {

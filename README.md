@@ -173,6 +173,8 @@ cd /Users/rich/jin10-monitor
 ./scripts/launchd/manage.sh uninstall # 停止并取消后台自启
 ```
 
+`install` 和 `reload` 会自动执行 `launchctl enable`，用于恢复之前被标记为 disabled 的服务，减少 `Bootstrap failed: 5` 后还要手工补救的情况。
+
 ## 说明
 
 本项目只访问公开接口，不包含绕过登录、验证码、付费墙或其他访问控制的逻辑。实时消息可以辅助观察市场，但不构成交易建议；正式交易前建议结合行情源、风控和延迟监控一起使用。
