@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 新增延迟提示配置：`SHOW_DELAY_IF_SECONDS` 支持在消息发生时间落后当前时间超过阈值时，在 Telegram 和终端显示 `延迟：Xs`，默认 60 秒，便于快速识别推送是否变慢。
 - 增强 `launchd` 管理脚本健壮性：`install` 和 `reload` 现在会自动执行 `launchctl enable`，并在 `bootstrap` 失败时提示下一步排查命令，减少 `Bootstrap failed: 5` 后需要手工恢复的情况。
 - 补充 `launchd` 运维文档：手动安装流程加入 `launchctl enable`，并说明 `reload` 的实际重载步骤与 disabled 状态排查方法。
 - 新增项目状态摘要 005：记录额度友好的迁移方式、当前运行状态判断和下一步优先任务，便于切换新 session 后低成本续接。

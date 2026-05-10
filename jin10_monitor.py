@@ -52,6 +52,7 @@ CATCHUP_MAX_STORE = int(os.getenv("CATCHUP_MAX_STORE", "1000"))
 CATCHUP_MAX_SEND = int(os.getenv("CATCHUP_MAX_SEND", "120"))
 CATCHUP_SEND_INTERVAL = float(os.getenv("CATCHUP_SEND_INTERVAL", "0.5"))
 AUTO_CATCHUP_GAP_SECONDS = int(os.getenv("AUTO_CATCHUP_GAP_SECONDS", "300"))
+SHOW_DELAY_IF_SECONDS = max(0, int(os.getenv("SHOW_DELAY_IF_SECONDS", "60")))
 ALLOW_TMP_TELEGRAM = os.getenv("ALLOW_TMP_TELEGRAM", "0").lower() in {"1", "true", "yes", "on"}
 TELEGRAM_TIMEOUT = aiohttp.ClientTimeout(total=10)
 TELEGRAM_RETRY_DELAYS = (1.0, 3.0)
@@ -399,11 +400,14 @@ def format_message(item: dict, priority_level: str, *, catchup: bool = False) ->
     metadata = item_metadata(item)
     bold = has_html_bold(item)
     ts = item_timestamp(item)
+    delay_text = format_delay_text(item)
 
     prefix = "金十快讯 [补拉]" if catchup else "金十快讯"
     parts = [f"{icon} <b>{prefix}</b> <b>{escape(priority_label)}</b>  {ts}"]
     if catchup:
         parts.append(f"发生时间：{escape(ts)}")
+    if delay_text:
+        parts.append(escape(delay_text))
     if title:
         parts.append(f"<b>{escape(title)}</b>")
     if content:
@@ -444,6 +448,7 @@ def format_console_message(item: dict, *, priority_level: str) -> str:
     bold = has_html_bold(item)
     metadata = item_metadata(item)
     ts = item_timestamp(item)
+    delay_text = format_delay_text(item)
     icon = PRIORITY_ICONS.get(priority_level, "📰")
     labels = [PRIORITY_LABELS.get(priority_level, priority_level)]
     if important:
@@ -454,6 +459,8 @@ def format_console_message(item: dict, *, priority_level: str) -> str:
         labels.append("有图")
     label_text = f" [{' '.join(labels)}]" if labels else ""
     lines = [f"{icon} {ts}{label_text}"]
+    if delay_text:
+        lines.append(delay_text)
     if title:
         lines.append(apply_console_style(title, important=important, bold=True))
     if content:
@@ -513,6 +520,24 @@ def item_timestamp(item: dict) -> str:
     if dt:
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     return str(item.get("time", ""))
+
+
+def format_delay_text(
+    item: dict,
+    *,
+    now: Optional[datetime] = None,
+    threshold_seconds: int = SHOW_DELAY_IF_SECONDS,
+) -> str:
+    if threshold_seconds <= 0:
+        return ""
+    item_dt = item_datetime(item)
+    if item_dt is None:
+        return ""
+    current = now or datetime.now().replace(microsecond=0)
+    delay_seconds = int((current - item_dt).total_seconds())
+    if delay_seconds < threshold_seconds:
+        return ""
+    return f"延迟：{delay_seconds}s"
 
 
 def init_history_db() -> None:

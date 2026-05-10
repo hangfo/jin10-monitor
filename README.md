@@ -54,6 +54,7 @@ TG_CHAT_ID=你的 Telegram chat_id
 - `CATCHUP_MAX_SEND`：手动补拉最多补发 Telegram 条数，默认 120。
 - `CATCHUP_SEND_INTERVAL`：手动补发 Telegram 的发送间隔，默认 0.5 秒。
 - `AUTO_CATCHUP_GAP_SECONDS`：常驻进程检测到 REST 轮询停顿超过该秒数后，会自动补拉一次摘要，默认 300；设为 `0` 可关闭。
+- `SHOW_DELAY_IF_SECONDS`：消息发生时间距当前超过该秒数时，在 Telegram 和终端显示 `延迟：Xs`，默认 60；设为 `0` 可关闭。
 - `ALLOW_TMP_TELEGRAM`：临时测试库是否允许真实发送 Telegram，默认 `0`。当 `HISTORY_DB=/tmp/...` 时，脚本会跳过真实 Telegram 发送并在终端显示跳过原因。
 
 ### 关键词文件
