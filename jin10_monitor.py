@@ -1127,12 +1127,14 @@ def catch_up_window(
     cursor = (end_dt + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
     max_pages = max(1, min(200, (max_store // 20) + 10))
     last_error = None
+    conn = get_db()
     for app_id in APP_IDS:
         seen: set[str] = set()
-        collected: list[tuple[datetime, dict]] = []
+        collected: list[dict[str, Any]] = []
         pages = 0
         oldest_seen = None
         truncated = False
+        existing_total = 0
         try:
             while pages < max_pages and len(collected) < max_store:
                 page = fetch_page_sync(cursor, app_id)
@@ -1141,6 +1143,8 @@ def catch_up_window(
                     break
 
                 dated = []
+                page_window_hits = 0
+                page_existing_hits = 0
                 for item in page:
                     item_dt = parse_item_time(item)
                     if item_dt is None:
@@ -1155,10 +1159,32 @@ def catch_up_window(
                     seen.add(fid)
 
                     if start_dt < item_dt <= end_dt:
-                        collected.append((item_dt, item))
+                        already_stored = history_item_exists(conn, fid)
+                        already_delivered = has_any_delivery(conn, fid, channel="telegram")
+                        collected.append({
+                            "item_dt": item_dt,
+                            "item": item,
+                            "already_stored": already_stored,
+                            "already_delivered": already_delivered,
+                        })
+                        page_window_hits += 1
+                        if already_stored:
+                            page_existing_hits += 1
                         if len(collected) >= max_store:
                             truncated = True
                             break
+
+                existing_total += page_existing_hits
+                if page_window_hits > 0 or pages > 1:
+                    log.info(
+                        "catch-up page=%s source=%s app_id=%s window_hits=%s collected=%s existing=%s",
+                        pages,
+                        source,
+                        app_id,
+                        page_window_hits,
+                        len(collected),
+                        existing_total,
+                    )
 
                 if truncated or (oldest_seen and oldest_seen <= start_dt):
                     break
@@ -1168,15 +1194,16 @@ def catch_up_window(
                     break
                 time.sleep(sleep_s + random.uniform(0, 0.2))
 
-            collected.sort(key=lambda pair: pair[0])
-            conn = get_db()
+            collected.sort(key=lambda row: row["item_dt"])
             rows = []
-            for item_dt, item in collected:
+            for entry in collected:
+                item_dt = entry["item_dt"]
+                item = entry["item"]
                 fid = str(item.get("id") or "")
                 hit, high, priority_level = classify_item_for_push(item)
                 should = should_push(priority_level, hit=hit)
-                already_stored = history_item_exists(conn, fid)
-                already_delivered = has_any_delivery(conn, fid, channel="telegram")
+                already_stored = bool(entry["already_stored"])
+                already_delivered = bool(entry["already_delivered"])
                 if not already_stored:
                     save_history_item(
                         item,

@@ -102,6 +102,13 @@ HIGH_PRIORITY_FILE=config/high_priority.txt
 
 常驻运行时，如果 Mac 睡眠、网络长时间断开或进程被系统暂停，脚本会检测 REST 轮询是否停顿超过 `AUTO_CATCHUP_GAP_SECONDS`。恢复后会用同样的规则从 `last_ingested_at` 补到恢复时刻，并只发送一条“自愈补拉”摘要。摘要会列出最多 10 条 T3/T2 重点标题，方便快速判断是否需要手动逐条补发。
 
+补拉跨多页时，终端会输出轻量进度日志，例如：
+
+```text
+catch-up page=1 source=catchup_auto window_hits=20 collected=20 existing=5
+catch-up page=2 source=catchup_auto window_hits=23 collected=43 existing=18
+```
+
 查看游标是否正常推进：
 
 ```bash
