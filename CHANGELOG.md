@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 修复补拉游标安全：`last_ingested_at` 改用解析后的时间比较，跳过未来时间消息推进游标，并让自动补拉起点回退 120 秒，降低乱序和异常时间导致漏补拉的风险。
 - 增强补拉可观测性：补拉跨多页时会输出 `catch-up page=...` 进度日志，便于观察扫描页数、命中窗口条数、累计入库候选和已存在条数。
 - 新增延迟提示配置：`SHOW_DELAY_IF_SECONDS` 支持在消息发生时间落后当前时间超过阈值时，在 Telegram 和终端显示 `延迟：Xs`，默认 60 秒，便于快速识别推送是否变慢。
 - 增强 `launchd` 管理脚本健壮性：`install` 和 `reload` 现在会自动执行 `launchctl enable`，并在 `bootstrap` 失败时提示下一步排查命令，减少 `Bootstrap failed: 5` 后需要手工恢复的情况。

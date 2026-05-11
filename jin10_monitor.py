@@ -56,6 +56,8 @@ SHOW_DELAY_IF_SECONDS = max(0, int(os.getenv("SHOW_DELAY_IF_SECONDS", "60")))
 ALLOW_TMP_TELEGRAM = os.getenv("ALLOW_TMP_TELEGRAM", "0").lower() in {"1", "true", "yes", "on"}
 TELEGRAM_TIMEOUT = aiohttp.ClientTimeout(total=10)
 TELEGRAM_RETRY_DELAYS = (1.0, 3.0)
+CURSOR_FUTURE_GRACE_SECONDS = 120
+AUTO_CATCHUP_START_BUFFER_SECONDS = 120
 
 PRIORITY_IMPORTANT = "T3_IMPORTANT"
 PRIORITY_HIGH = "T2_HIGH"
@@ -522,6 +524,20 @@ def item_timestamp(item: dict) -> str:
     return str(item.get("time", ""))
 
 
+def format_cursor_datetime(value: datetime) -> str:
+    return value.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def parse_cursor_datetime(value: str) -> Optional[datetime]:
+    text = str(value or "").strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def format_delay_text(
     item: dict,
     *,
@@ -619,19 +635,34 @@ def set_state(conn: sqlite3.Connection, key: str, value: Any) -> None:
     )
 
 
-def latest_history_cursor(conn: sqlite3.Connection) -> tuple[str, str]:
-    row = conn.execute(
+def latest_history_cursor(
+    conn: sqlite3.Connection,
+    *,
+    now: Optional[datetime] = None,
+) -> tuple[str, str]:
+    ceiling_dt = (
+        (now or datetime.now()).replace(microsecond=0)
+        + timedelta(seconds=CURSOR_FUTURE_GRACE_SECONDS)
+    )
+    rows = conn.execute(
         """
         SELECT published_at, id
         FROM flash_history
         WHERE published_at IS NOT NULL AND published_at != ''
-        ORDER BY published_at DESC, created_at DESC
-        LIMIT 1
-        """
-    ).fetchone()
-    if not row:
-        return "", ""
-    return str(row[0] or ""), str(row[1] or "")
+        ORDER BY created_at DESC
+        """,
+    ).fetchall()
+    best: tuple[datetime, str, str] | None = None
+    for published_at, fid in rows:
+        published_text = str(published_at or "")
+        published_dt = parse_cursor_datetime(published_text)
+        if published_dt is None or published_dt > ceiling_dt:
+            continue
+        if best is None or published_dt > best[0]:
+            best = (published_dt, published_text, str(fid or ""))
+    if best:
+        return best[1], best[2]
+    return "", ""
 
 
 def bootstrap_runtime_state(conn: sqlite3.Connection) -> None:
@@ -644,13 +675,35 @@ def bootstrap_runtime_state(conn: sqlite3.Connection) -> None:
 
 def update_ingest_cursor(item: dict) -> None:
     fid = str(item.get("id", ""))
-    published_at = item_timestamp(item)
-    if not fid or not published_at:
+    item_dt = item_datetime(item)
+    if not fid or item_dt is None:
         return
+    item_dt = item_dt.replace(microsecond=0)
+    now = datetime.now().replace(microsecond=0)
+    future_limit = now + timedelta(seconds=CURSOR_FUTURE_GRACE_SECONDS)
+    if item_dt > future_limit:
+        log.warning(
+            "跳过推进 last_ingested_at：消息时间 %s 超过当前时间保护阈值 %s（id=%s）",
+            format_cursor_datetime(item_dt),
+            format_cursor_datetime(future_limit),
+            fid,
+        )
+        return
+
     conn = get_db()
     current_at = get_state(conn, "last_ingested_at")
-    if not current_at or published_at >= current_at:
-        set_state(conn, "last_ingested_at", published_at)
+    current_dt = parse_cursor_datetime(current_at)
+    if current_at and current_dt is None:
+        log.warning("last_ingested_at=%s 无法解析，将用当前有效消息修复游标", current_at)
+    elif current_dt and current_dt > future_limit:
+        log.warning(
+            "last_ingested_at=%s 超过当前时间保护阈值 %s，将用当前有效消息修复游标",
+            current_at,
+            format_cursor_datetime(future_limit),
+        )
+
+    if not current_dt or current_dt > future_limit or item_dt >= current_dt:
+        set_state(conn, "last_ingested_at", format_cursor_datetime(item_dt))
         set_state(conn, "last_ingested_id", fid)
 
 
@@ -1520,6 +1573,31 @@ async def run_auto_catch_up(
         start_dt = parse_cli_datetime(last_at, label="last_ingested_at")
     except SystemExit as exc:
         return {"ok": False, "error": str(exc), "trigger": trigger}
+
+    future_limit = end_at.replace(microsecond=0) + timedelta(seconds=CURSOR_FUTURE_GRACE_SECONDS)
+    if start_dt > future_limit:
+        history_at, history_id = latest_history_cursor(conn, now=end_at)
+        history_dt = parse_cursor_datetime(history_at)
+        if not history_dt:
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": f"last_ingested_at 位于未来且暂无可恢复历史游标：{last_at}",
+                "trigger": trigger,
+            }
+        log.warning(
+            "last_ingested_at=%s 超过自动补拉保护阈值 %s，回退到历史库最新有效游标 %s",
+            last_at,
+            format_cursor_datetime(future_limit),
+            history_at,
+        )
+        set_state(conn, "last_ingested_at", history_at)
+        if history_id:
+            set_state(conn, "last_ingested_id", history_id)
+        conn.commit()
+        start_dt = history_dt
+
+    start_dt = start_dt - timedelta(seconds=AUTO_CATCHUP_START_BUFFER_SECONDS)
 
     limited_by_max_hours = False
     floor_dt = end_at - timedelta(hours=max(1, CATCHUP_MAX_HOURS))
