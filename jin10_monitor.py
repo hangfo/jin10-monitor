@@ -18,6 +18,7 @@ import time
 import urllib.parse
 import urllib.request
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from html import escape, unescape
 from pathlib import Path
@@ -66,6 +67,11 @@ PRIORITY_HIGH = "T2_HIGH"
 PRIORITY_NORMAL = "T1_NORMAL"
 PRIORITY_NONE = "T0_NONE"
 
+TELEGRAM_STATUS_SENT = "sent"
+TELEGRAM_STATUS_FAILED = "failed"
+TELEGRAM_STATUS_UNKNOWN_TIMEOUT = "unknown_timeout"
+TELEGRAM_STATUS_SKIPPED = "skipped"
+
 PRIORITY_ICONS = {
     PRIORITY_IMPORTANT: "⚡",
     PRIORITY_HIGH: "🚨",
@@ -78,6 +84,16 @@ PRIORITY_LABELS = {
     PRIORITY_NORMAL: "普通命中",
     PRIORITY_NONE: "未推送",
 }
+
+
+@dataclass(frozen=True)
+class TelegramSendResult:
+    status: str
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.status == TELEGRAM_STATUS_SENT
 
 def load_keyword_file(env_name: str, fallback: list[str]) -> list[str]:
     """Load one-keyword-per-line config files while keeping built-in defaults safe."""
@@ -620,6 +636,17 @@ def init_history_db() -> None:
             PRIMARY KEY (message_id, channel, mode)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_delivery_status (
+            message_id TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            status TEXT NOT NULL,
+            detail TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (message_id, channel, mode)
+        )
+    """)
     if migrated or needs_history_metadata_backfill(conn):
         backfill_history_metadata(conn)
     bootstrap_runtime_state(conn)
@@ -760,6 +787,30 @@ def mark_delivery(conn: sqlite3.Connection, message_id: str, *, channel: str, mo
         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
         """,
         (message_id, channel, mode),
+    )
+
+
+def record_telegram_delivery_status(
+    conn: sqlite3.Connection,
+    message_id: str,
+    *,
+    mode: str,
+    status: str,
+    detail: str = "",
+    channel: str = "telegram",
+) -> None:
+    if not message_id:
+        return
+    conn.execute(
+        """
+        INSERT INTO telegram_delivery_status (message_id, channel, mode, status, detail, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(message_id, channel, mode) DO UPDATE SET
+            status = excluded.status,
+            detail = excluded.detail,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (message_id, channel, mode, status, detail[:500]),
     )
 
 
@@ -963,11 +1014,11 @@ def telegram_skip_reason() -> str:
     return ""
 
 
-async def send_telegram(session: aiohttp.ClientSession, text: str) -> bool:
+async def send_telegram(session: aiohttp.ClientSession, text: str) -> TelegramSendResult:
     skip_reason = telegram_skip_reason()
     if skip_reason:
         log.warning("Telegram 已跳过：%s\n%s", skip_reason, text)
-        return False
+        return TelegramSendResult(TELEGRAM_STATUS_SKIPPED, skip_reason)
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
     payload = {
         "chat_id": TG_CHAT_ID,
@@ -987,12 +1038,12 @@ async def send_telegram(session: aiohttp.ClientSession, text: str) -> bool:
             async with session.post(url, json=payload, timeout=TELEGRAM_TIMEOUT) as resp:
                 body = await resp.text()
                 if resp.status == 200:
-                    return True
+                    return TelegramSendResult(TELEGRAM_STATUS_SENT)
                 should_retry = resp.status in retry_statuses and attempt < max_attempts
                 log_fn = log.warning if should_retry else log.error
                 log_fn("Telegram 发送失败: status=%s attempt=%s/%s body=%s", resp.status, attempt, max_attempts, body[:500])
                 if not should_retry:
-                    return False
+                    return TelegramSendResult(TELEGRAM_STATUS_FAILED, f"status={resp.status} body={body[:500]}")
         except asyncio.TimeoutError as exc:
             log.error(
                 "Telegram 超时，送达状态未知，未自动重试以避免重复: attempt=%s/%s error=%s",
@@ -1000,7 +1051,7 @@ async def send_telegram(session: aiohttp.ClientSession, text: str) -> bool:
                 max_attempts,
                 repr(exc),
             )
-            return False
+            return TelegramSendResult(TELEGRAM_STATUS_UNKNOWN_TIMEOUT, repr(exc))
         except retry_exceptions as exc:
             should_retry = attempt < max_attempts
             log_fn = log.warning if should_retry else log.error
@@ -1012,7 +1063,7 @@ async def send_telegram(session: aiohttp.ClientSession, text: str) -> bool:
                 repr(exc),
             )
             if not should_retry:
-                return False
+                return TelegramSendResult(TELEGRAM_STATUS_FAILED, f"{type(exc).__name__}: {repr(exc)}")
         except Exception as exc:
             log.error(
                 "Telegram 异常: type=%s attempt=%s/%s error=%s",
@@ -1021,9 +1072,9 @@ async def send_telegram(session: aiohttp.ClientSession, text: str) -> bool:
                 max_attempts,
                 repr(exc),
             )
-            return False
+            return TelegramSendResult(TELEGRAM_STATUS_FAILED, f"{type(exc).__name__}: {repr(exc)}")
         await asyncio.sleep(TELEGRAM_RETRY_DELAYS[attempt - 1])
-    return False
+    return TelegramSendResult(TELEGRAM_STATUS_FAILED, "retry attempts exhausted")
 
 
 # ─── 去重 + 已处理 ID 集合 ───────────────────────────────────────────────────
@@ -1554,6 +1605,16 @@ async def run_catch_up(
     if skip_reason:
         result["telegram_skipped"] = len(result.get("send_candidates") or [])
         result["telegram_skip_reason"] = skip_reason
+        conn = get_db()
+        for row in result.get("send_candidates") or []:
+            record_telegram_delivery_status(
+                conn,
+                row["id"],
+                mode="catchup",
+                status=TELEGRAM_STATUS_SKIPPED,
+                detail=skip_reason,
+            )
+        conn.commit()
         log.warning("补拉 Telegram 测试已走到发送环节，但被保护规则跳过：%s", skip_reason)
         return result
 
@@ -1564,12 +1625,19 @@ async def run_catch_up(
             item = row["item"]
             priority = row["priority_level"]
             msg = format_message(item, priority, catchup=True)
-            sent = await send_telegram(session, msg)
-            if sent:
+            send_result = await send_telegram(session, msg)
+            if send_result.ok:
                 mark_delivery(conn, row["id"], channel="telegram", mode="catchup")
                 result["telegram_sent"] += 1
             else:
                 result["telegram_failed"] += 1
+            record_telegram_delivery_status(
+                conn,
+                row["id"],
+                mode="catchup",
+                status=send_result.status,
+                detail=send_result.detail,
+            )
             if send_interval > 0:
                 await asyncio.sleep(send_interval)
         conn.commit()
@@ -1659,7 +1727,7 @@ async def run_auto_catch_up(
             result["telegram_skip_reason"] = skip_reason
             log.warning("自动补拉摘要已生成，但被保护规则跳过 Telegram：%s", skip_reason)
         else:
-            result["telegram_summary_sent"] = await send_telegram(session, format_catchup_summary_message(result))
+            result["telegram_summary_sent"] = (await send_telegram(session, format_catchup_summary_message(result))).ok
     return result
 
 
@@ -1799,10 +1867,18 @@ async def handle_item(session: aiohttp.ClientSession, item: dict, *, source: str
 
     log.info("\n%s", format_console_message(item, priority_level=priority_level))
     msg = format_message(item, priority_level)
-    if await send_telegram(session, msg):
-        conn = get_db()
+    send_result = await send_telegram(session, msg)
+    conn = get_db()
+    if send_result.ok:
         mark_delivery(conn, str(item.get("id", "")), channel="telegram", mode="realtime")
-        conn.commit()
+    record_telegram_delivery_status(
+        conn,
+        str(item.get("id", "")),
+        mode="realtime",
+        status=send_result.status,
+        detail=send_result.detail,
+    )
+    conn.commit()
 
 
 async def run_once(limit: int) -> None:
