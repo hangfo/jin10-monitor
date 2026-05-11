@@ -1101,6 +1101,15 @@ def parse_cli_datetime(value: str, *, label: str) -> datetime:
     raise SystemExit(f"{label} 格式应为 YYYY-MM-DD HH:MM 或 YYYY-MM-DD HH:MM:SS")
 
 
+def previous_page_cursor(dated: list[tuple[datetime, dict]], current_cursor: str) -> str:
+    oldest_dt = min(item_dt for item_dt, _ in dated)
+    next_dt = oldest_dt - timedelta(seconds=1)
+    current_dt = parse_cursor_datetime(current_cursor)
+    if current_dt and next_dt >= current_dt:
+        next_dt = current_dt - timedelta(seconds=1)
+    return format_cursor_datetime(next_dt)
+
+
 def fetch_page_sync(max_time: str, app_id: str, timeout: int = 12) -> list[dict]:
     params = flash_params(mode="channel", max_time=max_time)
     url = f"{FLASH_API}?{urllib.parse.urlencode(params)}"
@@ -1251,7 +1260,7 @@ def catch_up_window(
                 if truncated or (oldest_seen and oldest_seen <= start_dt):
                     break
                 if dated:
-                    cursor = dated[-1][0].strftime("%Y-%m-%d %H:%M:%S")
+                    cursor = previous_page_cursor(dated, cursor)
                 else:
                     break
                 time.sleep(sleep_s + random.uniform(0, 0.2))
