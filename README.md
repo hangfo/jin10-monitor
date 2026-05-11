@@ -30,6 +30,7 @@ TG_CHAT_ID=你的 Telegram chat_id
 - `python jin10_monitor.py --once --limit 20`：一次性抓取最近快讯，用于验证接口、关键词和 Telegram 推送。
 - `python jin10_monitor.py --history 伊朗 --history-limit 20`：查询本地历史库。
 - `python jin10_monitor.py --history --history-high`：查看最近高优先级记录。
+- `python jin10_monitor.py --telegram-status`：只读查看最近需要关注的 Telegram 投递状态。
 - `python jin10_monitor.py --lookup-date 2026-05-02 --lookup-start 20:05 --lookup-end 20:20`：直接从金十 REST 回溯指定时间窗口。
 - `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --no-catch-up-telegram`：手动补拉指定离线窗口，只入库不发 Telegram。
 - `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --catch-up-telegram --catch-up-max-send 10`：手动补拉并最多补发 10 条 Telegram。
@@ -82,6 +83,17 @@ HIGH_PRIORITY_FILE=config/high_priority.txt
 ## 历史留存
 
 脚本会把冷启动、REST、WebSocket 收到的快讯写入 SQLite，本地数据库默认不提交到 Git。字段包括快讯 ID、发布时间、标题、正文、关键词命中、高优先级标记、金十重要标记、HTML 加粗标记、来源和原始 JSON。
+
+## Telegram 投递状态
+
+脚本会记录 Telegram 投递结果，便于事后诊断失败、超时未知或测试保护跳过的消息。查询入口只读，不会补发消息：
+
+```bash
+python jin10_monitor.py --telegram-status
+python jin10_monitor.py --telegram-status failed --telegram-status-limit 20
+```
+
+`--telegram-status` 默认显示 `failed`、`unknown_timeout` 和 `skipped`；也可以指定 `sent` 或 `all` 查看已发送记录。手动补拉仍只跳过已成功发送过的消息，失败、超时未知和跳过记录不会被当成“已发送”。
 
 ## 离线补拉
 

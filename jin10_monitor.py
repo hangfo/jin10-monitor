@@ -537,6 +537,17 @@ def get_db() -> sqlite3.Connection:
     return conn
 
 
+def open_readonly_history_db() -> sqlite3.Connection:
+    path = HISTORY_DB.expanduser()
+    path = path if path.is_absolute() else Path.cwd() / path
+    if not path.exists():
+        raise FileNotFoundError(str(path))
+    uri = f"file:{urllib.parse.quote(str(path), safe='/')}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> bool:
     columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
@@ -835,6 +846,57 @@ def record_telegram_delivery_status(
         """,
         (message_id, channel, mode, status, detail[:500]),
     )
+
+
+def print_telegram_delivery_status(status_filter: str, *, limit: int = 20) -> None:
+    params: list[object] = []
+    where = ""
+    if status_filter == "problem":
+        where = "WHERE t.status IN (?, ?, ?)"
+        params.extend((TELEGRAM_STATUS_FAILED, TELEGRAM_STATUS_UNKNOWN_TIMEOUT, TELEGRAM_STATUS_SKIPPED))
+    elif status_filter != "all":
+        where = "WHERE t.status = ?"
+        params.append(status_filter)
+    params.append(limit)
+    try:
+        with open_readonly_history_db() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT t.updated_at, t.status, t.mode, t.message_id, t.detail,
+                       h.published_at, h.priority_level, h.title, h.content
+                FROM telegram_delivery_status t
+                LEFT JOIN flash_history h ON h.id = t.message_id
+                {where}
+                ORDER BY t.updated_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+    except FileNotFoundError as exc:
+        log.info("历史库不存在：%s", exc)
+        return
+    except sqlite3.OperationalError as exc:
+        if "telegram_delivery_status" in str(exc):
+            log.info("暂无 Telegram 投递状态记录：%s", status_filter)
+        else:
+            log.warning("Telegram 投递状态读取失败：%s", exc)
+        return
+
+    if not rows:
+        log.info("暂无 Telegram 投递状态记录：%s", status_filter)
+        return
+
+    for row in rows:
+        text = compact_text(" ".join(part for part in [str(row["title"] or ""), str(row["content"] or "")] if part), limit=72)
+        priority = str(row["priority_level"] or "")
+        labels = [str(row["status"]), str(row["mode"])] + ([priority] if priority else [])
+        print(f"{row['updated_at']} [{' '.join(labels)}] id={row['message_id']}")
+        if row["published_at"]:
+            print(f"  消息时间：{row['published_at']}")
+        if text:
+            print(f"  内容：{text}")
+        if row["detail"]:
+            print(f"  详情：{compact_text(str(row['detail']), limit=160)}")
 
 
 def needs_history_metadata_backfill(conn: sqlite3.Connection) -> bool:
@@ -1985,6 +2047,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--history", nargs="?", const="", help="查询本地历史库，省略关键词时显示最新记录")
     parser.add_argument("--history-limit", type=int, default=20, help="历史查询返回条数")
     parser.add_argument("--history-high", action="store_true", help="历史查询只显示高优先级记录")
+    parser.add_argument("--telegram-status", nargs="?", const="problem", choices=["problem", "failed", "unknown_timeout", "skipped", "sent", "all"], help="只读查询 Telegram 投递状态，默认显示 failed/unknown_timeout/skipped")
+    parser.add_argument("--telegram-status-limit", type=int, default=20, help="Telegram 投递状态查询返回条数")
     parser.add_argument("--lookup-date", help="回溯查询日期 YYYY-MM-DD")
     parser.add_argument("--lookup-start", help="回溯开始时间 HH:MM，北京时间")
     parser.add_argument("--lookup-end", help="回溯结束时间 HH:MM，北京时间")
@@ -2005,7 +2069,9 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     try:
         args = parse_args()
-        if args.catch_up:
+        if args.telegram_status is not None:
+            print_telegram_delivery_status(args.telegram_status, limit=max(1, args.telegram_status_limit))
+        elif args.catch_up:
             init_history_db()
             conn = get_db()
             if args.catchup_from:
