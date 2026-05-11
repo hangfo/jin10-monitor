@@ -13,6 +13,7 @@ import random
 import re
 import sqlite3
 import struct
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -58,6 +59,7 @@ TELEGRAM_TIMEOUT = aiohttp.ClientTimeout(total=10)
 TELEGRAM_RETRY_DELAYS = (1.0, 3.0)
 CURSOR_FUTURE_GRACE_SECONDS = 120
 AUTO_CATCHUP_START_BUFFER_SECONDS = 120
+SQLITE_BUSY_TIMEOUT_MS = 5000
 
 PRIORITY_IMPORTANT = "T3_IMPORTANT"
 PRIORITY_HIGH = "T2_HIGH"
@@ -478,15 +480,22 @@ def format_console_message(item: dict, *, priority_level: str) -> str:
 
 # ─── 本地历史库 ───────────────────────────────────────────────────────────────
 
-_db_conn: Optional[sqlite3.Connection] = None
+_db_local = threading.local()
+
+
+def configure_db_connection(conn: sqlite3.Connection) -> sqlite3.Connection:
+    conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    conn.execute("PRAGMA journal_mode = WAL")
+    return conn
 
 
 def get_db() -> sqlite3.Connection:
-    global _db_conn
-    if _db_conn is None:
+    conn = getattr(_db_local, "conn", None)
+    if conn is None:
         HISTORY_DB.parent.mkdir(parents=True, exist_ok=True)
-        _db_conn = sqlite3.connect(HISTORY_DB, check_same_thread=False)
-    return _db_conn
+        conn = configure_db_connection(sqlite3.connect(HISTORY_DB))
+        _db_local.conn = conn
+    return conn
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> bool:
@@ -1516,7 +1525,8 @@ async def run_catch_up(
     send_interval: float,
 ) -> dict:
     init_history_db()
-    result = catch_up_window(
+    result = await asyncio.to_thread(
+        catch_up_window,
         start_dt,
         end_dt,
         source="catchup_manual",
@@ -1617,7 +1627,8 @@ async def run_auto_catch_up(
             },
         }
 
-    result = catch_up_window(
+    result = await asyncio.to_thread(
+        catch_up_window,
         start_dt,
         end_at,
         source="catchup_auto",
