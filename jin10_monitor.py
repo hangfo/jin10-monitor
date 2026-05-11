@@ -38,6 +38,29 @@ log = logging.getLogger("jin10")
 
 # ─── 配置 ───────────────────────────────────────────────────────────────────
 
+
+def env_int(name: str, default: int) -> int:
+    value = os.getenv(name, "")
+    if not value.strip():
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        log.warning("%s=%r 不是有效整数，使用默认值 %s", name, value, default)
+        return default
+
+
+def env_float(name: str, default: float) -> float:
+    value = os.getenv(name, "")
+    if not value.strip():
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        log.warning("%s=%r 不是有效数字，使用默认值 %s", name, value, default)
+        return default
+
+
 TG_TOKEN   = os.getenv("TG_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
 HISTORY_DB = Path(os.getenv("HISTORY_DB", "data/jin10_history.sqlite3"))
@@ -49,12 +72,12 @@ APP_IDS = [
 PUSH_IMPORTANT = os.getenv("PUSH_IMPORTANT", "1").lower() not in {"0", "false", "no", "off"}
 AUTO_CATCHUP = os.getenv("AUTO_CATCHUP", "1").lower() not in {"0", "false", "no", "off"}
 CATCHUP_TELEGRAM = os.getenv("CATCHUP_TELEGRAM", "1").lower() not in {"0", "false", "no", "off"}
-CATCHUP_MAX_HOURS = int(os.getenv("CATCHUP_MAX_HOURS", "24"))
-CATCHUP_MAX_STORE = int(os.getenv("CATCHUP_MAX_STORE", "1000"))
-CATCHUP_MAX_SEND = int(os.getenv("CATCHUP_MAX_SEND", "120"))
-CATCHUP_SEND_INTERVAL = float(os.getenv("CATCHUP_SEND_INTERVAL", "0.5"))
-AUTO_CATCHUP_GAP_SECONDS = int(os.getenv("AUTO_CATCHUP_GAP_SECONDS", "300"))
-SHOW_DELAY_IF_SECONDS = max(0, int(os.getenv("SHOW_DELAY_IF_SECONDS", "60")))
+CATCHUP_MAX_HOURS = env_int("CATCHUP_MAX_HOURS", 24)
+CATCHUP_MAX_STORE = env_int("CATCHUP_MAX_STORE", 1000)
+CATCHUP_MAX_SEND = env_int("CATCHUP_MAX_SEND", 120)
+CATCHUP_SEND_INTERVAL = env_float("CATCHUP_SEND_INTERVAL", 0.5)
+AUTO_CATCHUP_GAP_SECONDS = env_int("AUTO_CATCHUP_GAP_SECONDS", 300)
+SHOW_DELAY_IF_SECONDS = max(0, env_int("SHOW_DELAY_IF_SECONDS", 60))
 ALLOW_TMP_TELEGRAM = os.getenv("ALLOW_TMP_TELEGRAM", "0").lower() in {"1", "true", "yes", "on"}
 TELEGRAM_TIMEOUT = aiohttp.ClientTimeout(total=10)
 TELEGRAM_RETRY_DELAYS = (1.0, 3.0)
@@ -150,8 +173,8 @@ DEFAULT_HIGH_PRIORITY = [
 KEYWORDS = load_keyword_file("KEYWORDS_FILE", DEFAULT_KEYWORDS)
 HIGH_PRIORITY = load_keyword_file("HIGH_PRIORITY_FILE", DEFAULT_HIGH_PRIORITY)
 
-POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "3"))          # 轮询间隔（秒）
-WS_RECONNECT_DELAY = float(os.getenv("WS_RECONNECT_DELAY", "5")) # WebSocket 断线重连间隔（秒）
+POLL_INTERVAL = env_float("POLL_INTERVAL", 3)                   # 轮询间隔（秒）
+WS_RECONNECT_DELAY = env_float("WS_RECONNECT_DELAY", 5)         # WebSocket 断线重连间隔（秒）
 
 # ─── 请求头池 ────────────────────────────────────────────────────────────────
 
