@@ -93,7 +93,7 @@ python jin10_monitor.py --telegram-status
 python jin10_monitor.py --telegram-status failed --telegram-status-limit 20
 ```
 
-`--telegram-status` 默认显示 `failed`、`unknown_timeout` 和 `skipped`；也可以指定 `sent` 或 `all` 查看已发送记录。手动补拉仍只跳过已成功发送过的消息，失败、超时未知和跳过记录不会被当成“已发送”。
+`--telegram-status` 默认显示 `failed`、`unknown_timeout` 和 `skipped`；也可以指定 `sent` 或 `all` 查看已发送记录。自动补拉摘要也会记录在这个只读视图里；手动补拉仍只跳过已成功发送过的消息，失败、超时未知、摘要状态和跳过记录不会被当成“已发送”。
 
 ## 离线补拉
 

@@ -848,6 +848,23 @@ def record_telegram_delivery_status(
     )
 
 
+def catchup_summary_status_id(result: dict) -> str:
+    window = result.get("window") or {}
+    trigger = str(result.get("trigger") or "startup")
+    start = str(window.get("start") or "")
+    end = str(window.get("end") or "")
+    return f"catchup_summary:{trigger}:{start}:{end}"
+
+
+def catchup_summary_delivery_detail(result: dict, detail: str = "") -> str:
+    return (
+        f"stored={int(result.get('stored') or 0)} "
+        f"push_candidates={int(result.get('push_candidates') or 0)} "
+        f"truncated={bool(result.get('truncated'))}"
+        + (f" detail={detail}" if detail else "")
+    )
+
+
 def print_telegram_delivery_status(status_filter: str, *, limit: int = 20) -> None:
     params: list[object] = []
     where = ""
@@ -1810,9 +1827,26 @@ async def run_auto_catch_up(
         if skip_reason:
             result["telegram_summary_skipped"] = True
             result["telegram_skip_reason"] = skip_reason
+            record_telegram_delivery_status(
+                conn,
+                catchup_summary_status_id(result),
+                mode="catchup_summary",
+                status=TELEGRAM_STATUS_SKIPPED,
+                detail=catchup_summary_delivery_detail(result, skip_reason),
+            )
+            conn.commit()
             log.warning("自动补拉摘要已生成，但被保护规则跳过 Telegram：%s", skip_reason)
         else:
-            result["telegram_summary_sent"] = (await send_telegram(session, format_catchup_summary_message(result))).ok
+            send_result = await send_telegram(session, format_catchup_summary_message(result))
+            result["telegram_summary_sent"] = send_result.ok
+            record_telegram_delivery_status(
+                conn,
+                catchup_summary_status_id(result),
+                mode="catchup_summary",
+                status=send_result.status,
+                detail=catchup_summary_delivery_detail(result, send_result.detail),
+            )
+            conn.commit()
     return result
 
 
