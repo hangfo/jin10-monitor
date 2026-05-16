@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -410,3 +411,93 @@ def test_format_catchup_summary_message_escapes_text_and_marks_gap(monkeypatch):
     assert "1. ⚡ 2026-05-17 10:02:00 A &lt; B &amp; C" in message
     assert "已按 CATCHUP_MAX_HOURS=12 截断较早窗口。" in message
     assert "入库达到 CATCHUP_MAX_STORE=3 上限，窗口可能未完全覆盖。" in message
+
+
+def test_run_auto_catch_up_gap_summary_respects_cooldown(temp_history_db, monkeypatch):
+    conn = jm.get_db()
+    jm.set_state(conn, "last_ingested_at", "2026-05-17 10:00:00")
+    jm.set_state(conn, "last_gap_summary_telegram_at", "2026-05-17 10:08:00")
+    conn.commit()
+
+    def fake_catch_up_window(*args, **kwargs):
+        return {
+            "ok": True,
+            "stored": 1,
+            "truncated": False,
+            "seen_item_ids": ["gap-item"],
+            "window": {
+                "start": "2026-05-17 09:58:00",
+                "end": "2026-05-17 10:10:00",
+            },
+            "push_candidates": 1,
+            "priority_counts": {},
+            "summary_items": [],
+        }
+
+    async def fail_send_telegram(session, text):
+        raise AssertionError("gap summary should be throttled")
+
+    monkeypatch.setattr(jm, "CATCHUP_TELEGRAM", True)
+    monkeypatch.setattr(jm, "AUTO_CATCHUP_SUMMARY_COOLDOWN_SECONDS", 1800)
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+    monkeypatch.setattr(jm, "send_telegram", fail_send_telegram)
+
+    result = asyncio.run(jm.run_auto_catch_up(object(), datetime(2026, 5, 17, 10, 10, 0), trigger="gap"))
+
+    assert result["ok"] is True
+    assert result["telegram_summary_sent"] is False
+    assert result["telegram_summary_skipped"] is False
+    assert state_value(conn, "last_gap_summary_telegram_at") == "2026-05-17 10:08:00"
+
+
+def test_run_auto_catch_up_gap_summary_after_cooldown_updates_status(temp_history_db, monkeypatch):
+    conn = jm.get_db()
+    jm.set_state(conn, "last_ingested_at", "2026-05-17 10:00:00")
+    jm.set_state(conn, "last_gap_summary_telegram_at", "2026-05-17 09:00:00")
+    conn.commit()
+
+    def fake_catch_up_window(*args, **kwargs):
+        return {
+            "ok": True,
+            "stored": 1,
+            "truncated": False,
+            "seen_item_ids": ["gap-item"],
+            "window": {
+                "start": "2026-05-17 09:58:00",
+                "end": "2026-05-17 10:10:00",
+            },
+            "push_candidates": 1,
+            "priority_counts": {},
+            "summary_items": [],
+        }
+
+    sent_messages = []
+
+    async def fake_send_telegram(session, text):
+        sent_messages.append(text)
+        return jm.TelegramSendResult(jm.TELEGRAM_STATUS_SENT)
+
+    monkeypatch.setattr(jm, "CATCHUP_TELEGRAM", True)
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+    monkeypatch.setattr(jm, "telegram_skip_reason", lambda: "")
+
+    result = asyncio.run(jm.run_auto_catch_up(object(), datetime(2026, 5, 17, 10, 10, 0), trigger="gap"))
+
+    assert result["ok"] is True
+    assert result["telegram_summary_sent"] is True
+    assert len(sent_messages) == 1
+    assert state_value(conn, "last_gap_summary_telegram_at") == "2026-05-17 10:10:00"
+    status = conn.execute(
+        """
+        SELECT status, detail
+        FROM telegram_delivery_status
+        WHERE message_id = ? AND channel = ? AND mode = ?
+        """,
+        (
+            "catchup_summary:gap:2026-05-17 09:58:00:2026-05-17 10:10:00",
+            "telegram",
+            "catchup_summary",
+        ),
+    ).fetchone()
+    assert status == (jm.TELEGRAM_STATUS_SENT, "stored=1 push_candidates=1 truncated=False")

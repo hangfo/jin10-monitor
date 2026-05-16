@@ -4,6 +4,7 @@
 
 ## 2026-05-17
 
+- 增强自愈补拉摘要冷却回归测试：用临时历史库和 fake Telegram 覆盖 gap 摘要冷却中不发送、冷却后发送并写入投递状态，避免真实 REST 和真实 Telegram。
 - 修复回溯查询翻页 cursor 边界：`crawl_window` 复用补拉窗口的上一页 cursor 计算，避免重复时间戳导致下一页重复扫描；新增无网络 mock REST 测试覆盖窗口过滤、关键词评分、高优先级分类和跨页 cursor。
 - 扩展 Telegram 发送结果 fake session 测试：覆盖 200 成功、500 失败和 timeout 送达未知分支，继续保持不联网、不触碰真实 Telegram。
 - 增强 Telegram 发送结果轻量回归测试：覆盖未配置凭据、临时测试库保护跳过和 `TelegramSendResult.ok` 判定，确保无真实网络和无真实 Telegram 即可保护发送结果边界。
