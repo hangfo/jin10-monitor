@@ -1,6 +1,12 @@
+import asyncio
 from datetime import datetime, timedelta
 
 import jin10_monitor as jm
+
+
+class NoNetworkSession:
+    def post(self, *args, **kwargs):
+        raise AssertionError("send_telegram should not call Telegram API")
 
 
 def news_item(**overrides):
@@ -55,6 +61,42 @@ def test_classify_priority_returns_normal_for_keyword_hit():
 
 def test_classify_priority_returns_none_without_hit():
     assert jm.classify_priority({}, hit=False, high=False) == jm.PRIORITY_NONE
+
+
+def test_telegram_send_result_ok_only_for_sent_status():
+    assert jm.TelegramSendResult(jm.TELEGRAM_STATUS_SENT).ok is True
+
+    for status in (
+        jm.TELEGRAM_STATUS_FAILED,
+        jm.TELEGRAM_STATUS_UNKNOWN_TIMEOUT,
+        jm.TELEGRAM_STATUS_SKIPPED,
+    ):
+        assert jm.TelegramSendResult(status).ok is False
+
+
+def test_send_telegram_skips_when_credentials_are_missing(monkeypatch):
+    monkeypatch.setattr(jm, "TG_TOKEN", "")
+    monkeypatch.setattr(jm, "TG_CHAT_ID", "")
+    monkeypatch.setattr(jm, "HISTORY_DB", jm.Path("data/test.sqlite3"))
+
+    result = asyncio.run(jm.send_telegram(NoNetworkSession(), "test message"))
+
+    assert result.status == jm.TELEGRAM_STATUS_SKIPPED
+    assert result.ok is False
+    assert result.detail == "Telegram 未配置"
+
+
+def test_send_telegram_skips_temp_history_db_without_override(tmp_path, monkeypatch):
+    monkeypatch.setattr(jm, "TG_TOKEN", "test-token")
+    monkeypatch.setattr(jm, "TG_CHAT_ID", "test-chat")
+    monkeypatch.setattr(jm, "HISTORY_DB", tmp_path / "history.sqlite3")
+    monkeypatch.setattr(jm, "ALLOW_TMP_TELEGRAM", False)
+
+    result = asyncio.run(jm.send_telegram(NoNetworkSession(), "test message"))
+
+    assert result.status == jm.TELEGRAM_STATUS_SKIPPED
+    assert result.ok is False
+    assert "临时测试库" in result.detail
 
 
 def test_previous_page_cursor_moves_before_oldest_item():
