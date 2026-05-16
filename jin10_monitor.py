@@ -83,6 +83,7 @@ TELEGRAM_TIMEOUT = aiohttp.ClientTimeout(total=10)
 TELEGRAM_RETRY_DELAYS = (1.0, 3.0)
 CURSOR_FUTURE_GRACE_SECONDS = 120
 AUTO_CATCHUP_START_BUFFER_SECONDS = 120
+AUTO_CATCHUP_SUMMARY_COOLDOWN_SECONDS = 1800
 SQLITE_BUSY_TIMEOUT_MS = 5000
 
 PRIORITY_IMPORTANT = "T3_IMPORTANT"
@@ -1822,7 +1823,20 @@ async def run_auto_catch_up(
     result["telegram_summary_sent"] = False
     result["telegram_summary_skipped"] = False
     result["telegram_skip_reason"] = ""
-    if result.get("ok") and CATCHUP_TELEGRAM and (result.get("stored") or result.get("truncated")):
+    should_send_summary = result.get("ok") and CATCHUP_TELEGRAM and (result.get("stored") or result.get("truncated"))
+    if should_send_summary and trigger == "gap":
+        last_summary_at = get_state(conn, "last_gap_summary_telegram_at")
+        last_summary_dt = parse_cursor_datetime(last_summary_at)
+        if last_summary_dt:
+            since_last = (end_at.replace(microsecond=0) - last_summary_dt).total_seconds()
+            if since_last < AUTO_CATCHUP_SUMMARY_COOLDOWN_SECONDS:
+                should_send_summary = False
+                log.info(
+                    "自愈补拉摘要不发送：距离上次摘要 %.0fs，小于冷却 %ss",
+                    since_last,
+                    AUTO_CATCHUP_SUMMARY_COOLDOWN_SECONDS,
+                )
+    if should_send_summary:
         skip_reason = telegram_skip_reason()
         if skip_reason:
             result["telegram_summary_skipped"] = True
@@ -1839,6 +1853,8 @@ async def run_auto_catch_up(
         else:
             send_result = await send_telegram(session, format_catchup_summary_message(result))
             result["telegram_summary_sent"] = send_result.ok
+            if trigger == "gap":
+                set_state(conn, "last_gap_summary_telegram_at", end_at.replace(microsecond=0).isoformat(sep=" "))
             record_telegram_delivery_status(
                 conn,
                 catchup_summary_status_id(result),
