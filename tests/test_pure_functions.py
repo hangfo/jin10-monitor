@@ -9,6 +9,34 @@ class NoNetworkSession:
         raise AssertionError("send_telegram should not call Telegram API")
 
 
+class FakeTelegramResponse:
+    def __init__(self, status, body=""):
+        self.status = status
+        self.body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def text(self):
+        return self.body
+
+
+class FakeTelegramSession:
+    def __init__(self, response=None, exc=None):
+        self.response = response
+        self.exc = exc
+        self.calls = []
+
+    def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        if self.exc:
+            raise self.exc
+        return self.response
+
+
 def news_item(**overrides):
     item = {
         "id": "test-1",
@@ -97,6 +125,49 @@ def test_send_telegram_skips_temp_history_db_without_override(tmp_path, monkeypa
     assert result.status == jm.TELEGRAM_STATUS_SKIPPED
     assert result.ok is False
     assert "临时测试库" in result.detail
+
+
+def test_send_telegram_returns_sent_for_200_response(monkeypatch):
+    monkeypatch.setattr(jm, "TG_TOKEN", "test-token")
+    monkeypatch.setattr(jm, "TG_CHAT_ID", "test-chat")
+    monkeypatch.setattr(jm, "HISTORY_DB", jm.Path("data/test.sqlite3"))
+    session = FakeTelegramSession(FakeTelegramResponse(200, '{"ok":true}'))
+
+    result = asyncio.run(jm.send_telegram(session, "test message"))
+
+    assert result.status == jm.TELEGRAM_STATUS_SENT
+    assert result.ok is True
+    assert len(session.calls) == 1
+    assert session.calls[0][1]["json"]["text"] == "test message"
+
+
+def test_send_telegram_returns_failed_for_500_response_without_retry_delay(monkeypatch):
+    monkeypatch.setattr(jm, "TG_TOKEN", "test-token")
+    monkeypatch.setattr(jm, "TG_CHAT_ID", "test-chat")
+    monkeypatch.setattr(jm, "HISTORY_DB", jm.Path("data/test.sqlite3"))
+    monkeypatch.setattr(jm, "TELEGRAM_RETRY_DELAYS", ())
+    session = FakeTelegramSession(FakeTelegramResponse(500, "server error"))
+
+    result = asyncio.run(jm.send_telegram(session, "test message"))
+
+    assert result.status == jm.TELEGRAM_STATUS_FAILED
+    assert result.ok is False
+    assert result.detail == "status=500 body=server error"
+    assert len(session.calls) == 1
+
+
+def test_send_telegram_returns_unknown_timeout_without_retry(monkeypatch):
+    monkeypatch.setattr(jm, "TG_TOKEN", "test-token")
+    monkeypatch.setattr(jm, "TG_CHAT_ID", "test-chat")
+    monkeypatch.setattr(jm, "HISTORY_DB", jm.Path("data/test.sqlite3"))
+    session = FakeTelegramSession(exc=asyncio.TimeoutError("slow telegram"))
+
+    result = asyncio.run(jm.send_telegram(session, "test message"))
+
+    assert result.status == jm.TELEGRAM_STATUS_UNKNOWN_TIMEOUT
+    assert result.ok is False
+    assert "slow telegram" in result.detail
+    assert len(session.calls) == 1
 
 
 def test_previous_page_cursor_moves_before_oldest_item():

@@ -4,6 +4,7 @@
 
 ## 2026-05-17
 
+- 扩展 Telegram 发送结果 fake session 测试：覆盖 200 成功、500 失败和 timeout 送达未知分支，继续保持不联网、不触碰真实 Telegram。
 - 增强 Telegram 发送结果轻量回归测试：覆盖未配置凭据、临时测试库保护跳过和 `TelegramSendResult.ok` 判定，确保无真实网络和无真实 Telegram 即可保护发送结果边界。
 - 新增项目状态摘要 018：记录开发效用重新评估、计划与实际偏离判断、后续优先级和 CHANGELOG 日期分组规则，便于后续按效用续接。
 - 整理 CHANGELOG：按真实提交日期拆分近期变更，避免多日改动继续堆在 `Unreleased`。
