@@ -4,6 +4,7 @@
 
 ## 2026-05-17
 
+- 新增项目状态摘要 019：记录 Telegram 发送结果测试、回溯查询 cursor 修复与 mock REST 测试、自动补拉 gap 摘要冷却测试、验证结果和后续优先级，便于换 session 续接。
 - 增强自愈补拉摘要冷却回归测试：用临时历史库和 fake Telegram 覆盖 gap 摘要冷却中不发送、冷却后发送并写入投递状态，避免真实 REST 和真实 Telegram。
 - 修复回溯查询翻页 cursor 边界：`crawl_window` 复用补拉窗口的上一页 cursor 计算，避免重复时间戳导致下一页重复扫描；新增无网络 mock REST 测试覆盖窗口过滤、关键词评分、高优先级分类和跨页 cursor。
 - 扩展 Telegram 发送结果 fake session 测试：覆盖 200 成功、500 失败和 timeout 送达未知分支，继续保持不联网、不触碰真实 Telegram。
