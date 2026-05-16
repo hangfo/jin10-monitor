@@ -229,6 +229,95 @@ def test_crawl_window_filters_scores_and_advances_cursor(monkeypatch):
     assert result["all_items"][1]["priority_level"] == jm.PRIORITY_HIGH
 
 
+def test_crawl_window_falls_back_to_next_app_id(monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+    calls = []
+
+    def fake_fetch_page(cursor, app_id):
+        calls.append((cursor, app_id))
+        if app_id == "bad-app":
+            raise RuntimeError("bad app id")
+        return [news_item(id="ok", time="2026-05-17 10:05:00", data={"title": "", "content": "cpi"})]
+
+    monkeypatch.setattr(jm, "APP_IDS", ["bad-app", "good-app"])
+    monkeypatch.setattr(jm, "KEYWORDS", ["cpi"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "fetch_page_sync", fake_fetch_page)
+    monkeypatch.setattr(jm.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+
+    result = jm.crawl_window(start_dt, end_dt, ["cpi"], max_pages=1, sleep_s=0)
+
+    assert result["ok"] is True
+    assert result["app_id"] == "good-app"
+    assert calls == [
+        ("2026-05-17 10:11:00", "bad-app"),
+        ("2026-05-17 10:11:00", "good-app"),
+    ]
+    assert [row["id"] for row in result["matched_items"]] == ["ok"]
+
+
+def test_crawl_window_stops_on_empty_page(monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+
+    monkeypatch.setattr(jm, "APP_IDS", ["test-app"])
+    monkeypatch.setattr(jm, "fetch_page_sync", lambda cursor, app_id: [])
+
+    result = jm.crawl_window(start_dt, end_dt, ["cpi"], max_pages=3, sleep_s=0)
+
+    assert result["ok"] is True
+    assert result["pages"] == 1
+    assert result["all_items"] == []
+    assert result["matched_items"] == []
+
+
+def test_crawl_window_dedupes_repeated_ids(monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+    page = [
+        news_item(id="dupe", time="2026-05-17 10:06:00", data={"title": "", "content": "cpi first"}),
+        news_item(id="dupe", time="2026-05-17 10:05:00", data={"title": "", "content": "cpi second"}),
+    ]
+
+    monkeypatch.setattr(jm, "APP_IDS", ["test-app"])
+    monkeypatch.setattr(jm, "KEYWORDS", ["cpi"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "fetch_page_sync", lambda cursor, app_id: page)
+    monkeypatch.setattr(jm.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+
+    result = jm.crawl_window(start_dt, end_dt, ["cpi"], max_pages=1, sleep_s=0)
+
+    assert [row["id"] for row in result["all_items"]] == ["dupe"]
+    assert result["all_items"][0]["content"] == "cpi first"
+    assert [row["id"] for row in result["matched_items"]] == ["dupe"]
+
+
+def test_crawl_window_keeps_unmatched_items_out_of_matched_items(monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+    page = [
+        news_item(id="plain", time="2026-05-17 10:05:00", data={"title": "Plain", "content": "macro update"}),
+    ]
+
+    monkeypatch.setattr(jm, "APP_IDS", ["test-app"])
+    monkeypatch.setattr(jm, "KEYWORDS", ["cpi"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "fetch_page_sync", lambda cursor, app_id: page)
+    monkeypatch.setattr(jm.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+
+    result = jm.crawl_window(start_dt, end_dt, ["cpi"], max_pages=1, sleep_s=0)
+
+    assert [row["id"] for row in result["all_items"]] == ["plain"]
+    assert result["all_items"][0]["match_score"] == 0
+    assert result["all_items"][0]["matched_keywords"] == []
+    assert result["all_items"][0]["priority_level"] == jm.PRIORITY_NONE
+    assert result["matched_items"] == []
+
+
 def test_item_text_uses_data_title_and_content_and_cleans_html():
     title, content = jm.item_text(news_item(data={"title": "<b>Title</b>", "content": "Line<br>Two"}))
 
