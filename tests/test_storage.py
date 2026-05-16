@@ -192,3 +192,114 @@ def test_select_catchup_send_candidates_skips_already_delivered_rows():
     selected = jm.select_catchup_send_candidates(rows, max_send=2)
 
     assert [row["id"] for row in selected] == ["new-important", "new-normal"]
+
+
+def test_catch_up_window_filters_window_and_skips_delivered_candidates(temp_history_db, monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+    existing = news_item("existing", when=datetime(2026, 5, 17, 10, 8, 0), content="plain")
+    delivered = news_item("delivered", when=datetime(2026, 5, 17, 10, 7, 0), content="hit")
+    fresh = news_item("fresh", when=datetime(2026, 5, 17, 10, 6, 0), content="urgent")
+    page = [
+        news_item("too-new", when=datetime(2026, 5, 17, 10, 11, 0), content="hit"),
+        existing,
+        delivered,
+        fresh,
+        news_item("too-old", when=datetime(2026, 5, 17, 9, 59, 0), content="hit"),
+    ]
+    jm.save_history_item(existing, hit=False, high=False, source="rest", priority_level=jm.PRIORITY_NONE)
+    conn = jm.get_db()
+    jm.mark_delivery(conn, "delivered", channel="telegram", mode="catchup")
+    conn.commit()
+
+    monkeypatch.setattr(jm, "APP_IDS", ["test-app"])
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit", "urgent"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", ["urgent"])
+    monkeypatch.setattr(jm, "fetch_page_sync", lambda cursor, app_id: page)
+
+    result = jm.catch_up_window(
+        start_dt,
+        end_dt,
+        source="catchup_test",
+        max_store=10,
+        max_send=10,
+        sleep_s=0,
+    )
+
+    assert result["ok"] is True
+    assert result["pages"] == 1
+    assert result["scanned"] == 3
+    assert result["stored"] == 2
+    assert result["already_stored"] == 1
+    assert result["already_delivered"] == 1
+    assert result["push_candidates"] == 2
+    assert result["seen_item_ids"] == ["fresh", "delivered", "existing"]
+    assert [row["id"] for row in result["send_candidates"]] == ["fresh"]
+
+
+def test_catch_up_window_respects_max_store_truncation(temp_history_db, monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+    page = [
+        news_item("first", when=datetime(2026, 5, 17, 10, 9, 0), content="hit"),
+        news_item("second", when=datetime(2026, 5, 17, 10, 8, 0), content="hit"),
+    ]
+
+    monkeypatch.setattr(jm, "APP_IDS", ["test-app"])
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "fetch_page_sync", lambda cursor, app_id: page)
+
+    result = jm.catch_up_window(
+        start_dt,
+        end_dt,
+        source="catchup_test",
+        max_store=1,
+        max_send=10,
+        sleep_s=0,
+    )
+
+    assert result["ok"] is True
+    assert result["truncated"] is True
+    assert result["scanned"] == 1
+    assert result["stored"] == 1
+    assert result["seen_item_ids"] == ["first"]
+
+
+def test_catch_up_window_advances_cursor_between_pages(temp_history_db, monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+    first_page = [
+        news_item("page1-new", when=datetime(2026, 5, 17, 10, 9, 0), content="hit"),
+        news_item("page1-old", when=datetime(2026, 5, 17, 10, 5, 0), content="hit"),
+    ]
+    second_page = [
+        news_item("page2-new", when=datetime(2026, 5, 17, 10, 4, 0), content="hit"),
+        news_item("page2-old", when=datetime(2026, 5, 17, 9, 59, 0), content="hit"),
+    ]
+    cursors = []
+
+    def fake_fetch_page(cursor, app_id):
+        cursors.append(cursor)
+        return first_page if len(cursors) == 1 else second_page
+
+    monkeypatch.setattr(jm, "APP_IDS", ["test-app"])
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "fetch_page_sync", fake_fetch_page)
+    monkeypatch.setattr(jm.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+
+    result = jm.catch_up_window(
+        start_dt,
+        end_dt,
+        source="catchup_test",
+        max_store=10,
+        max_send=10,
+        sleep_s=0,
+    )
+
+    assert result["ok"] is True
+    assert result["pages"] == 2
+    assert cursors == ["2026-05-17 10:11:00", "2026-05-17 10:04:59"]
+    assert result["seen_item_ids"] == ["page2-new", "page1-old", "page1-new"]
