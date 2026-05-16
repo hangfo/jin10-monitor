@@ -776,6 +776,7 @@ def update_ingest_cursor(item: dict) -> None:
     if not current_dt or current_dt > future_limit or item_dt >= current_dt:
         set_state(conn, "last_ingested_at", format_cursor_datetime(item_dt))
         set_state(conn, "last_ingested_id", fid)
+        conn.commit()
 
 
 def record_startup(startup_at: datetime) -> None:
@@ -1019,24 +1020,57 @@ def save_history_item(
     )
     conn.execute(
         """
-        INSERT OR IGNORE INTO flash_history
+        INSERT INTO flash_history
             (id, published_at, title, content, hit, high, important, has_bold,
              priority_level, has_title, has_pic, pic_url, news_source, source_url,
              style_flags, source, raw_json)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            published_at = excluded.published_at,
+            title = excluded.title,
+            content = excluded.content,
+            hit = CASE WHEN flash_history.hit = 1 OR excluded.hit = 1 THEN 1 ELSE 0 END,
+            high = CASE WHEN flash_history.high = 1 OR excluded.high = 1 THEN 1 ELSE 0 END,
+            important = CASE WHEN flash_history.important = 1 OR excluded.important = 1 THEN 1 ELSE 0 END,
+            has_bold = CASE WHEN flash_history.has_bold = 1 OR excluded.has_bold = 1 THEN 1 ELSE 0 END,
+            priority_level = CASE
+                WHEN flash_history.priority_level = ? OR excluded.priority_level = ? THEN ?
+                WHEN flash_history.priority_level = ? OR excluded.priority_level = ? THEN ?
+                WHEN flash_history.priority_level = ? OR excluded.priority_level = ? THEN ?
+                ELSE ?
+            END,
+            has_title = excluded.has_title,
+            has_pic = excluded.has_pic,
+            pic_url = excluded.pic_url,
+            news_source = excluded.news_source,
+            source_url = excluded.source_url,
+            style_flags = CASE
+                WHEN flash_history.priority_level = ? AND excluded.priority_level != ? THEN flash_history.style_flags
+                WHEN flash_history.priority_level = ? AND excluded.priority_level IN (?, ?) THEN flash_history.style_flags
+                WHEN flash_history.priority_level = ? AND excluded.priority_level = ? THEN flash_history.style_flags
+                ELSE excluded.style_flags
+            END,
+            raw_json = excluded.raw_json
         """,
-        values,
-    )
-    conn.execute(
-        """
-        UPDATE flash_history
-        SET published_at = ?, title = ?, content = ?, hit = ?, high = ?,
-            important = ?, has_bold = ?, priority_level = ?, has_title = ?,
-            has_pic = ?, pic_url = ?, news_source = ?, source_url = ?,
-            style_flags = ?, source = ?, raw_json = ?
-        WHERE id = ?
-        """,
-        values[1:] + (fid,),
+        values + (
+            PRIORITY_IMPORTANT,
+            PRIORITY_IMPORTANT,
+            PRIORITY_IMPORTANT,
+            PRIORITY_HIGH,
+            PRIORITY_HIGH,
+            PRIORITY_HIGH,
+            PRIORITY_NORMAL,
+            PRIORITY_NORMAL,
+            PRIORITY_NORMAL,
+            PRIORITY_NONE,
+            PRIORITY_IMPORTANT,
+            PRIORITY_IMPORTANT,
+            PRIORITY_HIGH,
+            PRIORITY_NORMAL,
+            PRIORITY_NONE,
+            PRIORITY_NORMAL,
+            PRIORITY_NONE,
+        ),
     )
     if advance_cursor:
         update_ingest_cursor(item)
