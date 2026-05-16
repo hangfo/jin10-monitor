@@ -50,6 +50,26 @@ def news_item(**overrides):
     return item
 
 
+def test_env_min_float_keeps_value_at_or_above_minimum(monkeypatch):
+    monkeypatch.setenv("TEST_DELAY", "2.5")
+
+    assert jm.env_min_float("TEST_DELAY", 5, 1.0) == 2.5
+
+
+def test_env_min_float_clamps_value_below_minimum(monkeypatch, caplog):
+    monkeypatch.setenv("TEST_DELAY", "0")
+
+    assert jm.env_min_float("TEST_DELAY", 5, 1.0) == 1.0
+    assert "TEST_DELAY=0.0 低于下限 1.0" in caplog.text
+
+
+def test_env_min_float_keeps_invalid_value_on_default_path(monkeypatch, caplog):
+    monkeypatch.setenv("TEST_DELAY", "bad")
+
+    assert jm.env_min_float("TEST_DELAY", 5, 1.0) == 5
+    assert "TEST_DELAY='bad' 不是有效数字，使用默认值 5" in caplog.text
+
+
 def test_item_datetime_parses_unix_seconds():
     value = 1_715_000_000
 

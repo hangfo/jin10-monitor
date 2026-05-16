@@ -4,6 +4,7 @@
 
 ## 2026-05-17
 
+- 增强 WebSocket 重连配置保护：`WS_RECONNECT_DELAY` 低于 1 秒时自动使用 1 秒下限并记录 warning，避免负数配置导致重连 sleep 异常退出。
 - 新增数值配置上下限保护评估清单：梳理轮询、WebSocket 重连、补拉窗口、补发间隔、gap 自愈和延迟提示等配置的建议范围与误填风险，暂不实装批量 clamp。
 - 扩展回溯查询 mock REST 边界测试：覆盖 app_id 失败 fallback、空页停止、重复 ID 去重和未命中关键词只保留在全部结果中，继续保持无网络验证。
 - 新增项目状态摘要 019：记录 Telegram 发送结果测试、回溯查询 cursor 修复与 mock REST 测试、自动补拉 gap 摘要冷却测试、验证结果和后续优先级，便于换 session 续接。

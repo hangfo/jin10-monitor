@@ -61,6 +61,14 @@ def env_float(name: str, default: float) -> float:
         return default
 
 
+def env_min_float(name: str, default: float, minimum: float) -> float:
+    value = env_float(name, default)
+    if value < minimum:
+        log.warning("%s=%s 低于下限 %s，使用下限", name, value, minimum)
+        return minimum
+    return value
+
+
 TG_TOKEN   = os.getenv("TG_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
 HISTORY_DB = Path(os.getenv("HISTORY_DB", "data/jin10_history.sqlite3"))
@@ -175,7 +183,7 @@ KEYWORDS = load_keyword_file("KEYWORDS_FILE", DEFAULT_KEYWORDS)
 HIGH_PRIORITY = load_keyword_file("HIGH_PRIORITY_FILE", DEFAULT_HIGH_PRIORITY)
 
 POLL_INTERVAL = env_float("POLL_INTERVAL", 3)                   # 轮询间隔（秒）
-WS_RECONNECT_DELAY = env_float("WS_RECONNECT_DELAY", 5)         # WebSocket 断线重连间隔（秒）
+WS_RECONNECT_DELAY = env_min_float("WS_RECONNECT_DELAY", 5, 1.0)  # WebSocket 断线重连间隔（秒）
 
 # ─── 请求头池 ────────────────────────────────────────────────────────────────
 
