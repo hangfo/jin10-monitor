@@ -83,6 +83,12 @@ def test_env_range_float_clamps_value_below_minimum(monkeypatch, caplog):
     assert "TEST_INTERVAL=-5.0 低于下限 1.0" in caplog.text
 
 
+def test_env_range_float_allows_zero_when_minimum_is_zero(monkeypatch):
+    monkeypatch.setenv("TEST_INTERVAL", "0")
+
+    assert jm.env_range_float("TEST_INTERVAL", 3, 0.0, 10.0) == 0
+
+
 def test_env_range_float_clamps_value_above_maximum(monkeypatch, caplog):
     monkeypatch.setenv("TEST_INTERVAL", "120")
 
