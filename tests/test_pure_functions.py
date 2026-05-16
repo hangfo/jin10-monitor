@@ -191,6 +191,44 @@ def test_previous_page_cursor_accepts_minute_precision_current_cursor():
     assert jm.previous_page_cursor(dated, "2026-05-16 20:30") == "2026-05-16 20:29:59"
 
 
+def test_crawl_window_filters_scores_and_advances_cursor(monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+    first_page = [
+        news_item(id="too-new", time="2026-05-17 10:11:00", data={"title": "", "content": "cpi"}),
+        news_item(id="high", time="2026-05-17 10:09:00", data={"title": "High", "content": "urgent macro"}),
+        news_item(id="normal", time="2026-05-17 10:05:00", data={"title": "Normal", "content": "cpi plain"}),
+    ]
+    second_page = [
+        news_item(id="too-old", time="2026-05-17 09:59:00", data={"title": "", "content": "cpi"}),
+    ]
+    cursors = []
+
+    def fake_fetch_page(cursor, app_id):
+        cursors.append(cursor)
+        return first_page if len(cursors) == 1 else second_page
+
+    monkeypatch.setattr(jm, "APP_IDS", ["test-app"])
+    monkeypatch.setattr(jm, "KEYWORDS", ["cpi", "urgent"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", ["urgent"])
+    monkeypatch.setattr(jm, "fetch_page_sync", fake_fetch_page)
+    monkeypatch.setattr(jm.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+
+    result = jm.crawl_window(start_dt, end_dt, ["cpi", "urgent"], max_pages=3, sleep_s=0)
+
+    assert result["ok"] is True
+    assert result["pages"] == 2
+    assert cursors == ["2026-05-17 10:11:00", "2026-05-17 10:04:59"]
+    assert [row["id"] for row in result["all_items"]] == ["normal", "high"]
+    assert [row["id"] for row in result["matched_items"]] == ["normal", "high"]
+    assert result["all_items"][0]["matched_keywords"] == ["cpi"]
+    assert result["all_items"][0]["match_score"] == 1
+    assert result["all_items"][0]["priority_level"] == jm.PRIORITY_NORMAL
+    assert result["all_items"][1]["matched_keywords"] == ["urgent"]
+    assert result["all_items"][1]["priority_level"] == jm.PRIORITY_HIGH
+
+
 def test_item_text_uses_data_title_and_content_and_cleans_html():
     title, content = jm.item_text(news_item(data={"title": "<b>Title</b>", "content": "Line<br>Two"}))
 

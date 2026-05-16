@@ -1594,7 +1594,7 @@ def crawl_window(
                 if oldest_seen and oldest_seen < start_dt:
                     break
                 if dated:
-                    cursor = dated[-1][0].strftime("%Y-%m-%d %H:%M:%S")
+                    cursor = previous_page_cursor(dated, cursor)
                 else:
                     break
                 time.sleep(sleep_s + random.uniform(0, 0.2))
