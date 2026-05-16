@@ -70,6 +70,26 @@ def test_env_min_float_keeps_invalid_value_on_default_path(monkeypatch, caplog):
     assert "TEST_DELAY='bad' 不是有效数字，使用默认值 5" in caplog.text
 
 
+def test_env_range_float_keeps_value_inside_range(monkeypatch):
+    monkeypatch.setenv("TEST_INTERVAL", "10")
+
+    assert jm.env_range_float("TEST_INTERVAL", 3, 1.0, 60.0) == 10
+
+
+def test_env_range_float_clamps_value_below_minimum(monkeypatch, caplog):
+    monkeypatch.setenv("TEST_INTERVAL", "-5")
+
+    assert jm.env_range_float("TEST_INTERVAL", 3, 1.0, 60.0) == 1.0
+    assert "TEST_INTERVAL=-5.0 低于下限 1.0" in caplog.text
+
+
+def test_env_range_float_clamps_value_above_maximum(monkeypatch, caplog):
+    monkeypatch.setenv("TEST_INTERVAL", "120")
+
+    assert jm.env_range_float("TEST_INTERVAL", 3, 1.0, 60.0) == 60.0
+    assert "TEST_INTERVAL=120.0 高于上限 60.0" in caplog.text
+
+
 def test_item_datetime_parses_unix_seconds():
     value = 1_715_000_000
 
