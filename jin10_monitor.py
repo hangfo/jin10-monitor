@@ -61,6 +61,17 @@ def env_float(name: str, default: float) -> float:
         return default
 
 
+def env_range_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    value = env_int(name, default)
+    if value < minimum:
+        log.warning("%s=%s 低于下限 %s，使用下限", name, value, minimum)
+        return minimum
+    if value > maximum:
+        log.warning("%s=%s 高于上限 %s，使用上限", name, value, maximum)
+        return maximum
+    return value
+
+
 def env_min_float(name: str, default: float, minimum: float) -> float:
     value = env_float(name, default)
     if value < minimum:
@@ -89,7 +100,7 @@ PUSH_IMPORTANT = os.getenv("PUSH_IMPORTANT", "1").lower() not in {"0", "false", 
 AUTO_CATCHUP = os.getenv("AUTO_CATCHUP", "1").lower() not in {"0", "false", "no", "off"}
 CATCHUP_TELEGRAM = os.getenv("CATCHUP_TELEGRAM", "1").lower() not in {"0", "false", "no", "off"}
 CATCHUP_MAX_HOURS = env_int("CATCHUP_MAX_HOURS", 24)
-CATCHUP_MAX_STORE = env_int("CATCHUP_MAX_STORE", 1000)
+CATCHUP_MAX_STORE = env_range_int("CATCHUP_MAX_STORE", 1000, 20, 5000)
 CATCHUP_MAX_SEND = env_int("CATCHUP_MAX_SEND", 120)
 CATCHUP_SEND_INTERVAL = env_float("CATCHUP_SEND_INTERVAL", 0.5)
 AUTO_CATCHUP_GAP_SECONDS = env_int("AUTO_CATCHUP_GAP_SECONDS", 300)

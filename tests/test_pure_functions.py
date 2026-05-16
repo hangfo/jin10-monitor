@@ -90,6 +90,33 @@ def test_env_range_float_clamps_value_above_maximum(monkeypatch, caplog):
     assert "TEST_INTERVAL=120.0 高于上限 60.0" in caplog.text
 
 
+def test_env_range_int_keeps_value_inside_range(monkeypatch):
+    monkeypatch.setenv("TEST_LIMIT", "100")
+
+    assert jm.env_range_int("TEST_LIMIT", 50, 20, 5000) == 100
+
+
+def test_env_range_int_clamps_value_below_minimum(monkeypatch, caplog):
+    monkeypatch.setenv("TEST_LIMIT", "0")
+
+    assert jm.env_range_int("TEST_LIMIT", 50, 20, 5000) == 20
+    assert "TEST_LIMIT=0 低于下限 20" in caplog.text
+
+
+def test_env_range_int_clamps_value_above_maximum(monkeypatch, caplog):
+    monkeypatch.setenv("TEST_LIMIT", "9999")
+
+    assert jm.env_range_int("TEST_LIMIT", 50, 20, 5000) == 5000
+    assert "TEST_LIMIT=9999 高于上限 5000" in caplog.text
+
+
+def test_env_range_int_keeps_invalid_value_on_default_path(monkeypatch, caplog):
+    monkeypatch.setenv("TEST_LIMIT", "bad")
+
+    assert jm.env_range_int("TEST_LIMIT", 50, 20, 5000) == 50
+    assert "TEST_LIMIT='bad' 不是有效整数，使用默认值 50" in caplog.text
+
+
 def test_item_datetime_parses_unix_seconds():
     value = 1_715_000_000
 
