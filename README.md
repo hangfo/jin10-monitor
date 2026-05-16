@@ -25,6 +25,15 @@ TG_CHAT_ID=你的 Telegram chat_id
 
 如果没有配置 Telegram，脚本会把命中的消息打印到控制台，适合先做本地验证。
 
+## 本地测试
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+测试优先覆盖纯函数和边界逻辑，避免触发真实 Telegram 推送、SQLite 写入或外部网络请求。
+
 ## 模式
 
 - `python jin10_monitor.py --once --limit 20`：一次性抓取最近快讯，用于验证接口、关键词和 Telegram 推送。
