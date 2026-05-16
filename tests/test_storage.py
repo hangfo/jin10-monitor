@@ -303,3 +303,110 @@ def test_catch_up_window_advances_cursor_between_pages(temp_history_db, monkeypa
     assert result["pages"] == 2
     assert cursors == ["2026-05-17 10:11:00", "2026-05-17 10:04:59"]
     assert result["seen_item_ids"] == ["page2-new", "page1-old", "page1-new"]
+
+
+def test_build_catchup_summary_items_prioritizes_important_and_high_only():
+    rows = [
+        {
+            "id": "normal",
+            "time": "2026-05-17 10:01:00",
+            "item": news_item("normal", title="Normal", content="normal"),
+            "should_push": True,
+            "priority_level": jm.PRIORITY_NORMAL,
+        },
+        {
+            "id": "high-late",
+            "time": "2026-05-17 10:03:00",
+            "item": news_item("high-late", title="High late", content="high"),
+            "should_push": True,
+            "priority_level": jm.PRIORITY_HIGH,
+        },
+        {
+            "id": "important",
+            "time": "2026-05-17 10:02:00",
+            "item": news_item("important", title="Important", content="important"),
+            "should_push": True,
+            "priority_level": jm.PRIORITY_IMPORTANT,
+        },
+        {
+            "id": "high-early",
+            "time": "2026-05-17 10:01:30",
+            "item": news_item("high-early", title="", content="High early content"),
+            "should_push": True,
+            "priority_level": jm.PRIORITY_HIGH,
+        },
+    ]
+
+    items = jm.build_catchup_summary_items(rows, limit=3)
+
+    assert [(row["priority_level"], row["text"]) for row in items] == [
+        (jm.PRIORITY_IMPORTANT, "Important"),
+        (jm.PRIORITY_HIGH, "High early content"),
+        (jm.PRIORITY_HIGH, "High late"),
+    ]
+
+
+def test_catchup_summary_status_id_uses_trigger_and_window():
+    result = {
+        "trigger": "gap",
+        "window": {
+            "start": "2026-05-17 10:00:00",
+            "end": "2026-05-17 10:10:00",
+        },
+    }
+
+    assert jm.catchup_summary_status_id(result) == (
+        "catchup_summary:gap:2026-05-17 10:00:00:2026-05-17 10:10:00"
+    )
+
+
+def test_catchup_summary_delivery_detail_includes_counts_and_detail():
+    result = {
+        "stored": 2,
+        "push_candidates": 3,
+        "truncated": True,
+    }
+
+    assert jm.catchup_summary_delivery_detail(result, detail="network skipped") == (
+        "stored=2 push_candidates=3 truncated=True detail=network skipped"
+    )
+
+
+def test_format_catchup_summary_message_escapes_text_and_marks_gap(monkeypatch):
+    monkeypatch.setattr(jm, "CATCHUP_MAX_HOURS", 12)
+    monkeypatch.setattr(jm, "CATCHUP_MAX_STORE", 3)
+    result = {
+        "trigger": "gap",
+        "window": {
+            "start": "2026-05-17 10:00:00",
+            "end": "2026-05-17 10:10:00",
+        },
+        "stored": 2,
+        "already_stored": 1,
+        "push_candidates": 2,
+        "priority_counts": {
+            jm.PRIORITY_IMPORTANT: 1,
+            jm.PRIORITY_HIGH: 1,
+            jm.PRIORITY_NORMAL: 0,
+        },
+        "summary_items": [
+            {
+                "time": "2026-05-17 10:02:00",
+                "priority_level": jm.PRIORITY_IMPORTANT,
+                "text": "A < B & C",
+            },
+        ],
+        "limited_by_max_hours": True,
+        "truncated": True,
+    }
+
+    message = jm.format_catchup_summary_message(result)
+
+    assert "<b>金十自愈补拉完成</b>" in message
+    assert "窗口：2026-05-17 10:00:00 → 2026-05-17 10:10:00" in message
+    assert "入库：2 条" in message
+    assert "已存在未重复入库：1 条" in message
+    assert "分级：⚡ 1 / 🚨 1 / 📰 0" in message
+    assert "1. ⚡ 2026-05-17 10:02:00 A &lt; B &amp; C" in message
+    assert "已按 CATCHUP_MAX_HOURS=12 截断较早窗口。" in message
+    assert "入库达到 CATCHUP_MAX_STORE=3 上限，窗口可能未完全覆盖。" in message
