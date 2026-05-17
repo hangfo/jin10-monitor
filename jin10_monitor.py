@@ -99,12 +99,12 @@ APP_IDS = [
 PUSH_IMPORTANT = os.getenv("PUSH_IMPORTANT", "1").lower() not in {"0", "false", "no", "off"}
 AUTO_CATCHUP = os.getenv("AUTO_CATCHUP", "1").lower() not in {"0", "false", "no", "off"}
 CATCHUP_TELEGRAM = os.getenv("CATCHUP_TELEGRAM", "1").lower() not in {"0", "false", "no", "off"}
-CATCHUP_MAX_HOURS = env_int("CATCHUP_MAX_HOURS", 24)
+CATCHUP_MAX_HOURS = env_range_int("CATCHUP_MAX_HOURS", 24, 1, 168)
 CATCHUP_MAX_STORE = env_range_int("CATCHUP_MAX_STORE", 1000, 20, 5000)
 CATCHUP_MAX_SEND = env_range_int("CATCHUP_MAX_SEND", 120, 0, 300)
 CATCHUP_SEND_INTERVAL = env_range_float("CATCHUP_SEND_INTERVAL", 0.5, 0.0, 10.0)
-AUTO_CATCHUP_GAP_SECONDS = env_int("AUTO_CATCHUP_GAP_SECONDS", 300)
-SHOW_DELAY_IF_SECONDS = max(0, env_int("SHOW_DELAY_IF_SECONDS", 60))
+AUTO_CATCHUP_GAP_SECONDS = env_range_int("AUTO_CATCHUP_GAP_SECONDS", 300, 0, 86400)
+SHOW_DELAY_IF_SECONDS = env_range_int("SHOW_DELAY_IF_SECONDS", 60, 0, 3600)
 ALLOW_TMP_TELEGRAM = os.getenv("ALLOW_TMP_TELEGRAM", "0").lower() in {"1", "true", "yes", "on"}
 TELEGRAM_TIMEOUT = aiohttp.ClientTimeout(total=10)
 TELEGRAM_RETRY_DELAYS = (1.0, 3.0)

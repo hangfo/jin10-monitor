@@ -115,6 +115,13 @@ def test_env_range_int_allows_zero_when_minimum_is_zero(monkeypatch):
     assert jm.env_range_int("TEST_LIMIT", 50, 0, 300) == 0
 
 
+def test_env_range_int_clamps_zero_when_minimum_is_positive(monkeypatch, caplog):
+    monkeypatch.setenv("TEST_LIMIT", "0")
+
+    assert jm.env_range_int("TEST_LIMIT", 50, 1, 168) == 1
+    assert "TEST_LIMIT=0 低于下限 1" in caplog.text
+
+
 def test_env_range_int_clamps_value_above_maximum(monkeypatch, caplog):
     monkeypatch.setenv("TEST_LIMIT", "9999")
 

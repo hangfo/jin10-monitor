@@ -51,20 +51,20 @@ pytest
 - `HIGH_PRIORITY`：命中后使用高优先级标头。
 - `KEYWORDS_FILE`：可选，普通推送关键词文件路径，一行一个关键词，支持 `#` 注释。未配置、文件不存在或文件为空时使用内置默认关键词。
 - `HIGH_PRIORITY_FILE`：可选，高优先级关键词文件路径，一行一个关键词，支持 `#` 注释。未配置、文件不存在或文件为空时使用内置默认关键词。
-- `POLL_INTERVAL`：REST 兜底轮询间隔，默认 3 秒。
-- `WS_RECONNECT_DELAY`：WebSocket 断线重连间隔，默认 5 秒。
+- `POLL_INTERVAL`：REST 兜底轮询间隔，默认 3 秒，范围 `1-60` 秒。
+- `WS_RECONNECT_DELAY`：WebSocket 断线重连间隔，默认 5 秒，最低 `1` 秒。
 - `WS_URLS`：WebSocket 地址列表，逗号分隔。默认使用本机已验证可解析的 `wss://wss-flash-2.jin10.com/`。
 - `HISTORY_DB`：本地历史库路径，默认 `data/jin10_history.sqlite3`。
 - `JIN10_APP_IDS`：REST 请求头 app id 列表，逗号分隔。默认先用当前页面常见 app id，再自动降级到旧 app id。
 - `PUSH_IMPORTANT`：是否直接推送金十红色重要消息，默认 `1`。设为 `0` 时只按关键词推送。
 - `AUTO_CATCHUP`：启动时是否自动补拉离线窗口，默认 `1`。
 - `CATCHUP_TELEGRAM`：补拉是否允许发送 Telegram，默认 `1`。自动补拉只发送一条摘要，不逐条发送历史消息。
-- `CATCHUP_MAX_HOURS`：自动补拉最多回看小时数，默认 24。
-- `CATCHUP_MAX_STORE`：补拉最多入库条数，默认 1000。
-- `CATCHUP_MAX_SEND`：手动补拉最多补发 Telegram 条数，默认 120。
-- `CATCHUP_SEND_INTERVAL`：手动补发 Telegram 的发送间隔，默认 0.5 秒。
-- `AUTO_CATCHUP_GAP_SECONDS`：常驻进程检测到 REST 轮询停顿超过该秒数后，会自动补拉一次摘要，默认 300；设为 `0` 可关闭。
-- `SHOW_DELAY_IF_SECONDS`：消息发生时间距当前超过该秒数时，在 Telegram 和终端显示 `延迟：Xs`，默认 60；设为 `0` 可关闭。
+- `CATCHUP_MAX_HOURS`：自动补拉最多回看小时数，默认 24，范围 `1-168`。
+- `CATCHUP_MAX_STORE`：补拉最多入库条数，默认 1000，范围 `20-5000`。
+- `CATCHUP_MAX_SEND`：手动补拉最多补发 Telegram 条数，默认 120，范围 `0-300`；设为 `0` 可关闭逐条补发。
+- `CATCHUP_SEND_INTERVAL`：手动补发 Telegram 的发送间隔，默认 0.5 秒，范围 `0-10` 秒；设为 `0` 表示不等待。
+- `AUTO_CATCHUP_GAP_SECONDS`：常驻进程检测到 REST 轮询停顿超过该秒数后，会自动补拉一次摘要，默认 300，范围 `0-86400`；设为 `0` 可关闭。
+- `SHOW_DELAY_IF_SECONDS`：消息发生时间距当前超过该秒数时，在 Telegram 和终端显示 `延迟：Xs`，默认 60，范围 `0-3600`；设为 `0` 可关闭。
 - `ALLOW_TMP_TELEGRAM`：临时测试库是否允许真实发送 Telegram，默认 `0`。当 `HISTORY_DB=/tmp/...` 时，脚本会跳过真实 Telegram 发送并在终端显示跳过原因。
 
 ### 关键词文件

@@ -4,6 +4,7 @@
 
 ## 2026-05-17
 
+- 补齐剩余数值配置范围保护与文档：`CATCHUP_MAX_HOURS`、`AUTO_CATCHUP_GAP_SECONDS`、`SHOW_DELAY_IF_SECONDS` 增加上下限保护，并在 README 与 `.env.example` 标明配置范围。
 - 增强补拉 Telegram 补发间隔配置保护：`CATCHUP_SEND_INTERVAL` 限制在 0 到 10 秒之间，保留 0 作为不等待的语义，同时避免误填负数或极大值导致补发节奏异常。
 - 增强补拉 Telegram 补发上限配置保护：`CATCHUP_MAX_SEND` 限制在 0 到 300 条之间，保留 0 作为关闭逐条补发的语义，同时避免误填极大值导致补发刷屏。
 - 增强补拉入库上限配置保护：`CATCHUP_MAX_STORE` 限制在 20 到 5000 条之间，避免误填 0、负数或极大值导致补拉窗口语义不清或扫描写入压力过大。
