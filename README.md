@@ -42,7 +42,7 @@ pytest
 - `python jin10_monitor.py --telegram-status`：只读查看最近需要关注的 Telegram 投递状态。
 - `python jin10_monitor.py --lookup-date 2026-05-02 --lookup-start 20:05 --lookup-end 20:20`：直接从金十 REST 回溯指定时间窗口。
 - `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --no-catch-up-telegram`：手动补拉指定离线窗口，只入库不发 Telegram。
-- `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --catch-up-telegram --catch-up-max-send 10`：手动补拉并最多补发 10 条 Telegram。
+- `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --catch-up-telegram --catch-up-max-send 10`：手动补拉并最多补发 10 条 Telegram；`--catch-up-max-store` 范围 `20-5000`，`--catch-up-max-send` 范围 `0-300`，`--catch-up-send-interval` 范围 `0-10` 秒。
 - `python jin10_monitor.py`：常驻运行，WebSocket + REST 双路。
 
 ## 配置

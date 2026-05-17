@@ -61,8 +61,7 @@ def env_float(name: str, default: float) -> float:
         return default
 
 
-def env_range_int(name: str, default: int, minimum: int, maximum: int) -> int:
-    value = env_int(name, default)
+def clamp_int_value(name: str, value: int, minimum: int, maximum: int) -> int:
     if value < minimum:
         log.warning("%s=%s 低于下限 %s，使用下限", name, value, minimum)
         return minimum
@@ -70,6 +69,10 @@ def env_range_int(name: str, default: int, minimum: int, maximum: int) -> int:
         log.warning("%s=%s 高于上限 %s，使用上限", name, value, maximum)
         return maximum
     return value
+
+
+def env_range_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    return clamp_int_value(name, env_int(name, default), minimum, maximum)
 
 
 def env_min_float(name: str, default: float, minimum: float) -> float:
@@ -80,12 +83,18 @@ def env_min_float(name: str, default: float, minimum: float) -> float:
     return value
 
 
-def env_range_float(name: str, default: float, minimum: float, maximum: float) -> float:
-    value = env_min_float(name, default, minimum)
+def clamp_float_value(name: str, value: float, minimum: float, maximum: float) -> float:
+    if value < minimum:
+        log.warning("%s=%s 低于下限 %s，使用下限", name, value, minimum)
+        return minimum
     if value > maximum:
         log.warning("%s=%s 高于上限 %s，使用上限", name, value, maximum)
         return maximum
     return value
+
+
+def env_range_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    return clamp_float_value(name, env_float(name, default), minimum, maximum)
 
 
 TG_TOKEN   = os.getenv("TG_TOKEN", "")
@@ -2171,10 +2180,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--to", dest="catchup_to", help="补拉结束时间 YYYY-MM-DD HH:MM[:SS]")
     parser.add_argument("--catch-up-telegram", dest="catchup_telegram", action="store_true", default=None, help="补拉后发送 Telegram")
     parser.add_argument("--no-catch-up-telegram", dest="catchup_telegram", action="store_false", help="补拉只入库和终端显示，不发送 Telegram")
-    parser.add_argument("--catch-up-max-store", type=int, default=CATCHUP_MAX_STORE, help="补拉最多入库条数")
-    parser.add_argument("--catch-up-max-send", type=int, default=CATCHUP_MAX_SEND, help="补拉最多发送 Telegram 条数")
-    parser.add_argument("--catch-up-send-interval", type=float, default=CATCHUP_SEND_INTERVAL, help="补拉 Telegram 发送间隔秒数")
+    parser.add_argument("--catch-up-max-store", type=int, default=CATCHUP_MAX_STORE, help="补拉最多入库条数，范围 20-5000")
+    parser.add_argument("--catch-up-max-send", type=int, default=CATCHUP_MAX_SEND, help="补拉最多发送 Telegram 条数，范围 0-300")
+    parser.add_argument("--catch-up-send-interval", type=float, default=CATCHUP_SEND_INTERVAL, help="补拉 Telegram 发送间隔秒数，范围 0-10")
     return parser.parse_args()
+
+
+def normalized_catchup_limits(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "max_store": clamp_int_value("--catch-up-max-store", args.catch_up_max_store, 20, 5000),
+        "max_send": clamp_int_value("--catch-up-max-send", args.catch_up_max_send, 0, 300),
+        "send_interval": clamp_float_value("--catch-up-send-interval", args.catch_up_send_interval, 0.0, 10.0),
+    }
 
 
 if __name__ == "__main__":
@@ -2196,13 +2213,14 @@ if __name__ == "__main__":
             if end_dt <= start_dt:
                 raise SystemExit("--to 必须晚于 --from / last_ingested_at")
             telegram_enabled = CATCHUP_TELEGRAM if args.catchup_telegram is None else bool(args.catchup_telegram)
+            catchup_limits = normalized_catchup_limits(args)
             result = asyncio.run(run_catch_up(
                 start_dt,
                 end_dt,
                 telegram_enabled=telegram_enabled,
-                max_store=max(1, args.catch_up_max_store),
-                max_send=max(0, args.catch_up_max_send),
-                send_interval=max(0.0, args.catch_up_send_interval),
+                max_store=catchup_limits["max_store"],
+                max_send=catchup_limits["max_send"],
+                send_interval=catchup_limits["send_interval"],
             ))
             print_catchup_summary(result)
         elif args.lookup_date or args.lookup_start or args.lookup_end:

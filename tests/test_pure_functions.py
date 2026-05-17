@@ -1,4 +1,5 @@
 import asyncio
+from argparse import Namespace
 from datetime import datetime, timedelta
 
 import jin10_monitor as jm
@@ -134,6 +135,39 @@ def test_env_range_int_keeps_invalid_value_on_default_path(monkeypatch, caplog):
 
     assert jm.env_range_int("TEST_LIMIT", 50, 20, 5000) == 50
     assert "TEST_LIMIT='bad' 不是有效整数，使用默认值 50" in caplog.text
+
+
+def test_normalized_catchup_limits_clamps_cli_values(caplog):
+    args = Namespace(
+        catch_up_max_store=1,
+        catch_up_max_send=999,
+        catch_up_send_interval=-1.0,
+    )
+
+    limits = jm.normalized_catchup_limits(args)
+
+    assert limits == {
+        "max_store": 20,
+        "max_send": 300,
+        "send_interval": 0.0,
+    }
+    assert "--catch-up-max-store=1 低于下限 20" in caplog.text
+    assert "--catch-up-max-send=999 高于上限 300" in caplog.text
+    assert "--catch-up-send-interval=-1.0 低于下限 0.0" in caplog.text
+
+
+def test_normalized_catchup_limits_preserves_cli_zero_values():
+    args = Namespace(
+        catch_up_max_store=20,
+        catch_up_max_send=0,
+        catch_up_send_interval=0.0,
+    )
+
+    assert jm.normalized_catchup_limits(args) == {
+        "max_store": 20,
+        "max_send": 0,
+        "send_interval": 0.0,
+    }
 
 
 def test_item_datetime_parses_unix_seconds():
