@@ -604,6 +604,43 @@ def test_run_auto_catch_up_skips_future_cursor_without_history(temp_history_db):
     assert "last_ingested_at 位于未来且暂无可恢复历史游标" in result["reason"]
 
 
+def test_run_auto_catch_up_limits_window_by_max_hours(temp_history_db, monkeypatch):
+    conn = jm.get_db()
+    jm.set_state(conn, "last_ingested_at", "2026-05-17 00:00:00")
+    conn.commit()
+    calls = []
+
+    def fake_catch_up_window(start_dt, end_dt, **kwargs):
+        calls.append((start_dt, end_dt, kwargs))
+        return {
+            "ok": True,
+            "stored": 0,
+            "truncated": False,
+            "seen_item_ids": [],
+            "window": {
+                "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            "push_candidates": 0,
+            "priority_counts": {},
+            "summary_items": [],
+        }
+
+    monkeypatch.setattr(jm, "CATCHUP_MAX_HOURS", 2)
+    monkeypatch.setattr(jm, "CATCHUP_TELEGRAM", False)
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+
+    result = asyncio.run(jm.run_auto_catch_up(object(), datetime(2026, 5, 17, 10, 10, 0), trigger="startup"))
+
+    assert result["ok"] is True
+    assert result["limited_by_max_hours"] is True
+    assert len(calls) == 1
+    assert calls[0][0] == datetime(2026, 5, 17, 8, 10, 0)
+    assert calls[0][1] == datetime(2026, 5, 17, 10, 10, 0)
+    assert calls[0][2]["source"] == "catchup_auto"
+    assert calls[0][2]["max_send"] == 0
+
+
 def test_run_auto_catch_up_gap_summary_respects_cooldown(temp_history_db, monkeypatch):
     conn = jm.get_db()
     jm.set_state(conn, "last_ingested_at", "2026-05-17 10:00:00")
