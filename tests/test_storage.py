@@ -47,6 +47,52 @@ def state_value(conn, key):
     return row[0] if row else ""
 
 
+def telegram_status(conn, message_id, mode="catchup"):
+    return conn.execute(
+        """
+        SELECT status, detail
+        FROM telegram_delivery_status
+        WHERE message_id = ? AND channel = ? AND mode = ?
+        """,
+        (message_id, "telegram", mode),
+    ).fetchone()
+
+
+def manual_catchup_result(candidate_id="manual-candidate", *, status_item=None):
+    item = status_item or news_item(candidate_id, content="hit")
+    return {
+        "ok": True,
+        "stored": 1,
+        "truncated": False,
+        "window": {
+            "start": "2026-05-17 10:00:00",
+            "end": "2026-05-17 10:10:00",
+        },
+        "push_candidates": 1,
+        "send_candidates": [
+            {
+                "id": candidate_id,
+                "item": item,
+                "priority_level": jm.PRIORITY_NORMAL,
+            }
+        ],
+    }
+
+
+def manual_catchup_result_for_ids(candidate_ids):
+    result = manual_catchup_result(candidate_ids[0])
+    result["push_candidates"] = len(candidate_ids)
+    result["send_candidates"] = [
+        {
+            "id": candidate_id,
+            "item": news_item(candidate_id, content="hit"),
+            "priority_level": jm.PRIORITY_NORMAL,
+        }
+        for candidate_id in candidate_ids
+    ]
+    return result
+
+
 def test_save_history_item_preserves_first_source_and_prevents_priority_downgrade(temp_history_db):
     high_item = news_item("same-id", title="<b>High title</b>", content="High content")
     normal_item = news_item("same-id", title="Normal title", content="Normal content")
@@ -551,6 +597,277 @@ def test_format_catchup_summary_message_escapes_text_and_marks_gap(monkeypatch):
     assert "1. ⚡ 2026-05-17 10:02:00 A &lt; B &amp; C" in message
     assert "已按 CATCHUP_MAX_HOURS=12 截断较早窗口。" in message
     assert "入库达到 CATCHUP_MAX_STORE=3 上限，窗口可能未完全覆盖。" in message
+
+
+def test_run_catch_up_does_not_send_when_telegram_disabled(temp_history_db, monkeypatch):
+    def fake_catch_up_window(*args, **kwargs):
+        return manual_catchup_result("manual-disabled")
+
+    async def fail_send_telegram(session, text):
+        raise AssertionError("manual catch-up should not send Telegram when disabled")
+
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+    monkeypatch.setattr(jm, "send_telegram", fail_send_telegram)
+
+    result = asyncio.run(
+        jm.run_catch_up(
+            datetime(2026, 5, 17, 10, 0, 0),
+            datetime(2026, 5, 17, 10, 10, 0),
+            telegram_enabled=False,
+            max_store=10,
+            max_send=10,
+            send_interval=0,
+        )
+    )
+
+    conn = jm.get_db()
+    assert result["telegram_enabled"] is False
+    assert result["telegram_sent"] == 0
+    assert result["telegram_failed"] == 0
+    assert result["telegram_skipped"] == 0
+    assert not jm.has_any_delivery(conn, "manual-disabled", channel="telegram")
+    assert telegram_status(conn, "manual-disabled") is None
+
+
+def test_run_catch_up_passes_manual_window_limits_to_catch_up_window(temp_history_db, monkeypatch):
+    calls = []
+
+    def fake_catch_up_window(start_dt, end_dt, **kwargs):
+        calls.append((start_dt, end_dt, kwargs))
+        return manual_catchup_result("manual-args")
+
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+
+    result = asyncio.run(
+        jm.run_catch_up(
+            datetime(2026, 5, 17, 10, 0, 0),
+            datetime(2026, 5, 17, 10, 10, 0),
+            telegram_enabled=False,
+            max_store=23,
+            max_send=4,
+            send_interval=0,
+        )
+    )
+
+    assert result["ok"] is True
+    assert len(calls) == 1
+    assert calls[0][0] == datetime(2026, 5, 17, 10, 0, 0)
+    assert calls[0][1] == datetime(2026, 5, 17, 10, 10, 0)
+    assert calls[0][2] == {
+        "source": "catchup_manual",
+        "max_store": 23,
+        "max_send": 4,
+    }
+
+
+def test_run_catch_up_does_not_send_when_window_fails(temp_history_db, monkeypatch):
+    def fake_catch_up_window(*args, **kwargs):
+        return {
+            "ok": False,
+            "error": "REST failed",
+            "send_candidates": [
+                {
+                    "id": "manual-window-failed",
+                    "item": news_item("manual-window-failed", content="hit"),
+                    "priority_level": jm.PRIORITY_NORMAL,
+                }
+            ],
+        }
+
+    async def fail_send_telegram(session, text):
+        raise AssertionError("manual catch-up should not send Telegram when window fails")
+
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+    monkeypatch.setattr(jm, "send_telegram", fail_send_telegram)
+
+    result = asyncio.run(
+        jm.run_catch_up(
+            datetime(2026, 5, 17, 10, 0, 0),
+            datetime(2026, 5, 17, 10, 10, 0),
+            telegram_enabled=True,
+            max_store=10,
+            max_send=10,
+            send_interval=0,
+        )
+    )
+
+    conn = jm.get_db()
+    assert result["ok"] is False
+    assert result["telegram_sent"] == 0
+    assert result["telegram_failed"] == 0
+    assert not jm.has_any_delivery(conn, "manual-window-failed", channel="telegram")
+    assert telegram_status(conn, "manual-window-failed") is None
+
+
+def test_run_catch_up_records_skipped_status_without_delivery_log(temp_history_db, monkeypatch):
+    def fake_catch_up_window(*args, **kwargs):
+        return manual_catchup_result("manual-skipped")
+
+    async def fail_send_telegram(session, text):
+        raise AssertionError("manual catch-up should stop at skip guard")
+
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+    monkeypatch.setattr(jm, "telegram_skip_reason", lambda: "Telegram 未配置")
+    monkeypatch.setattr(jm, "send_telegram", fail_send_telegram)
+
+    result = asyncio.run(
+        jm.run_catch_up(
+            datetime(2026, 5, 17, 10, 0, 0),
+            datetime(2026, 5, 17, 10, 10, 0),
+            telegram_enabled=True,
+            max_store=10,
+            max_send=10,
+            send_interval=0,
+        )
+    )
+
+    conn = jm.get_db()
+    assert result["telegram_skipped"] == 1
+    assert result["telegram_skip_reason"] == "Telegram 未配置"
+    assert not jm.has_any_delivery(conn, "manual-skipped", channel="telegram")
+    assert telegram_status(conn, "manual-skipped") == (jm.TELEGRAM_STATUS_SKIPPED, "Telegram 未配置")
+
+
+def test_run_catch_up_marks_delivery_only_after_successful_send(temp_history_db, monkeypatch):
+    def fake_catch_up_window(*args, **kwargs):
+        return manual_catchup_result("manual-sent")
+
+    sent_messages = []
+
+    async def fake_send_telegram(session, text):
+        sent_messages.append(text)
+        return jm.TelegramSendResult(jm.TELEGRAM_STATUS_SENT)
+
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+    monkeypatch.setattr(jm, "telegram_skip_reason", lambda: "")
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+
+    result = asyncio.run(
+        jm.run_catch_up(
+            datetime(2026, 5, 17, 10, 0, 0),
+            datetime(2026, 5, 17, 10, 10, 0),
+            telegram_enabled=True,
+            max_store=10,
+            max_send=10,
+            send_interval=0,
+        )
+    )
+
+    conn = jm.get_db()
+    assert result["telegram_sent"] == 1
+    assert result["telegram_failed"] == 0
+    assert len(sent_messages) == 1
+    assert jm.has_delivery(conn, "manual-sent", channel="telegram", mode="catchup")
+    assert telegram_status(conn, "manual-sent") == (jm.TELEGRAM_STATUS_SENT, "")
+
+
+def test_run_catch_up_records_failed_status_without_delivery_log(temp_history_db, monkeypatch):
+    def fake_catch_up_window(*args, **kwargs):
+        return manual_catchup_result("manual-failed")
+
+    async def fake_send_telegram(session, text):
+        return jm.TelegramSendResult(jm.TELEGRAM_STATUS_FAILED, "status=500")
+
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+    monkeypatch.setattr(jm, "telegram_skip_reason", lambda: "")
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+
+    result = asyncio.run(
+        jm.run_catch_up(
+            datetime(2026, 5, 17, 10, 0, 0),
+            datetime(2026, 5, 17, 10, 10, 0),
+            telegram_enabled=True,
+            max_store=10,
+            max_send=10,
+            send_interval=0,
+        )
+    )
+
+    conn = jm.get_db()
+    assert result["telegram_sent"] == 0
+    assert result["telegram_failed"] == 1
+    assert not jm.has_any_delivery(conn, "manual-failed", channel="telegram")
+    assert telegram_status(conn, "manual-failed") == (jm.TELEGRAM_STATUS_FAILED, "status=500")
+
+
+def test_run_catch_up_records_mixed_send_results_and_waits_between_sends(temp_history_db, monkeypatch):
+    def fake_catch_up_window(*args, **kwargs):
+        return manual_catchup_result_for_ids(["manual-first", "manual-second"])
+
+    send_results = [
+        jm.TelegramSendResult(jm.TELEGRAM_STATUS_SENT),
+        jm.TelegramSendResult(jm.TELEGRAM_STATUS_FAILED, "status=500"),
+    ]
+    sent_messages = []
+    sleep_calls = []
+
+    async def fake_send_telegram(session, text):
+        sent_messages.append(text)
+        return send_results.pop(0)
+
+    async def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+    monkeypatch.setattr(jm, "telegram_skip_reason", lambda: "")
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+    monkeypatch.setattr(jm.asyncio, "sleep", fake_sleep)
+
+    result = asyncio.run(
+        jm.run_catch_up(
+            datetime(2026, 5, 17, 10, 0, 0),
+            datetime(2026, 5, 17, 10, 10, 0),
+            telegram_enabled=True,
+            max_store=10,
+            max_send=10,
+            send_interval=1.5,
+        )
+    )
+
+    conn = jm.get_db()
+    assert result["telegram_sent"] == 1
+    assert result["telegram_failed"] == 1
+    assert len(sent_messages) == 2
+    assert sleep_calls == [1.5, 1.5]
+    assert jm.has_delivery(conn, "manual-first", channel="telegram", mode="catchup")
+    assert not jm.has_any_delivery(conn, "manual-second", channel="telegram")
+    assert telegram_status(conn, "manual-first") == (jm.TELEGRAM_STATUS_SENT, "")
+    assert telegram_status(conn, "manual-second") == (jm.TELEGRAM_STATUS_FAILED, "status=500")
+
+
+def test_run_catch_up_does_not_wait_when_send_interval_is_zero(temp_history_db, monkeypatch):
+    def fake_catch_up_window(*args, **kwargs):
+        return manual_catchup_result_for_ids(["manual-zero-wait-1", "manual-zero-wait-2"])
+
+    async def fake_send_telegram(session, text):
+        return jm.TelegramSendResult(jm.TELEGRAM_STATUS_SENT)
+
+    async def fail_sleep(seconds):
+        raise AssertionError("manual catch-up should not wait when send_interval is zero")
+
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+    monkeypatch.setattr(jm, "telegram_skip_reason", lambda: "")
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+    monkeypatch.setattr(jm.asyncio, "sleep", fail_sleep)
+
+    result = asyncio.run(
+        jm.run_catch_up(
+            datetime(2026, 5, 17, 10, 0, 0),
+            datetime(2026, 5, 17, 10, 10, 0),
+            telegram_enabled=True,
+            max_store=10,
+            max_send=10,
+            send_interval=0,
+        )
+    )
+
+    conn = jm.get_db()
+    assert result["telegram_sent"] == 2
+    assert result["telegram_failed"] == 0
+    assert jm.has_delivery(conn, "manual-zero-wait-1", channel="telegram", mode="catchup")
+    assert jm.has_delivery(conn, "manual-zero-wait-2", channel="telegram", mode="catchup")
+    assert telegram_status(conn, "manual-zero-wait-1") == (jm.TELEGRAM_STATUS_SENT, "")
+    assert telegram_status(conn, "manual-zero-wait-2") == (jm.TELEGRAM_STATUS_SENT, "")
 
 
 def test_run_auto_catch_up_recovers_future_cursor_from_history(temp_history_db, monkeypatch):
