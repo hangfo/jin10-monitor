@@ -306,6 +306,146 @@ def test_catch_up_window_advances_cursor_between_pages(temp_history_db, monkeypa
     assert result["seen_item_ids"] == ["page2-new", "page1-old", "page1-new"]
 
 
+def test_catch_up_window_falls_back_to_next_app_id(temp_history_db, monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+    page = [
+        news_item("fallback-hit", when=datetime(2026, 5, 17, 10, 5, 0), content="hit"),
+        news_item("too-old", when=datetime(2026, 5, 17, 9, 59, 0), content="hit"),
+    ]
+    calls = []
+
+    def fake_fetch_page(cursor, app_id):
+        calls.append((cursor, app_id))
+        if app_id == "bad-app":
+            raise RuntimeError("bad app id")
+        return page
+
+    monkeypatch.setattr(jm, "APP_IDS", ["bad-app", "good-app"])
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "fetch_page_sync", fake_fetch_page)
+    monkeypatch.setattr(jm.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+
+    result = jm.catch_up_window(
+        start_dt,
+        end_dt,
+        source="catchup_test",
+        max_store=10,
+        max_send=10,
+        sleep_s=0,
+    )
+
+    assert result["ok"] is True
+    assert result["app_id"] == "good-app"
+    assert calls == [
+        ("2026-05-17 10:11:00", "bad-app"),
+        ("2026-05-17 10:11:00", "good-app"),
+    ]
+    assert result["seen_item_ids"] == ["fallback-hit"]
+    assert [row["id"] for row in result["send_candidates"]] == ["fallback-hit"]
+
+
+def test_catch_up_window_stops_on_empty_page(temp_history_db, monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+
+    monkeypatch.setattr(jm, "APP_IDS", ["test-app"])
+    monkeypatch.setattr(jm, "fetch_page_sync", lambda cursor, app_id: [])
+
+    result = jm.catch_up_window(
+        start_dt,
+        end_dt,
+        source="catchup_test",
+        max_store=10,
+        max_send=10,
+        sleep_s=0,
+    )
+
+    assert result["ok"] is True
+    assert result["pages"] == 1
+    assert result["scanned"] == 0
+    assert result["stored"] == 0
+    assert result["send_candidates"] == []
+    assert result["seen_item_ids"] == []
+
+
+def test_catch_up_window_dedupes_repeated_ids_across_pages(temp_history_db, monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+    first_page = [
+        news_item("dupe", when=datetime(2026, 5, 17, 10, 9, 0), content="hit first"),
+    ]
+    second_page = [
+        news_item("dupe", when=datetime(2026, 5, 17, 10, 5, 0), content="hit second"),
+        news_item("too-old", when=datetime(2026, 5, 17, 9, 59, 0), content="hit"),
+    ]
+    calls = []
+
+    def fake_fetch_page(cursor, app_id):
+        calls.append(cursor)
+        return first_page if len(calls) == 1 else second_page
+
+    monkeypatch.setattr(jm, "APP_IDS", ["test-app"])
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "fetch_page_sync", fake_fetch_page)
+    monkeypatch.setattr(jm.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+
+    result = jm.catch_up_window(
+        start_dt,
+        end_dt,
+        source="catchup_test",
+        max_store=10,
+        max_send=10,
+        sleep_s=0,
+    )
+
+    assert result["ok"] is True
+    assert result["pages"] == 2
+    assert result["scanned"] == 1
+    assert result["stored"] == 1
+    assert result["seen_item_ids"] == ["dupe"]
+    assert [row["id"] for row in result["send_candidates"]] == ["dupe"]
+
+
+def test_catch_up_window_stores_unmatched_items_without_send_candidate(temp_history_db, monkeypatch):
+    start_dt = datetime(2026, 5, 17, 10, 0, 0)
+    end_dt = datetime(2026, 5, 17, 10, 10, 0)
+    page = [
+        news_item("plain", when=datetime(2026, 5, 17, 10, 5, 0), content="plain macro update"),
+    ]
+
+    monkeypatch.setattr(jm, "APP_IDS", ["test-app"])
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "fetch_page_sync", lambda cursor, app_id: page)
+    monkeypatch.setattr(jm.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+
+    result = jm.catch_up_window(
+        start_dt,
+        end_dt,
+        source="catchup_test",
+        max_store=10,
+        max_send=10,
+        sleep_s=0,
+    )
+
+    assert result["ok"] is True
+    assert result["scanned"] == 1
+    assert result["stored"] == 1
+    assert result["push_candidates"] == 0
+    assert result["send_candidates"] == []
+    assert result["priority_counts"] == {
+        jm.PRIORITY_IMPORTANT: 0,
+        jm.PRIORITY_HIGH: 0,
+        jm.PRIORITY_NORMAL: 0,
+    }
+
+
 def test_build_catchup_summary_items_prioritizes_important_and_high_only():
     rows = [
         {

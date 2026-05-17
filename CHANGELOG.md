@@ -4,6 +4,7 @@
 
 ## 2026-05-17
 
+- 增强补拉窗口 mock REST 边界测试：覆盖 app_id fallback、空页停止、跨页重复 ID 去重和未命中关键词只入库不补发，继续保持无网络和无真实 Telegram 验证。
 - 新增项目状态摘要 022：记录手动补拉 CLI 参数范围保护、验证结果、风险判断、后续 pytest 边界和其它 CLI limit 参数评估方向，便于换 session 续接。
 - 增强手动补拉 CLI 参数范围保护：`--catch-up-max-store`、`--catch-up-max-send`、`--catch-up-send-interval` 与 `.env` 配置使用同一范围，并在 README 和 CLI help 中标明边界。
 - 新增项目状态摘要 021：记录数值配置范围保护、README / `.env.example` 文档同步、验证结果、风险判断和后续 CLI 参数 clamp 评估方向，便于换 session 续接。
