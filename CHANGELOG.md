@@ -4,6 +4,7 @@
 
 ## 2026-05-17
 
+- 新增项目状态摘要 021：记录数值配置范围保护、README / `.env.example` 文档同步、验证结果、风险判断和后续 CLI 参数 clamp 评估方向，便于换 session 续接。
 - 补齐剩余数值配置范围保护与文档：`CATCHUP_MAX_HOURS`、`AUTO_CATCHUP_GAP_SECONDS`、`SHOW_DELAY_IF_SECONDS` 增加上下限保护，并在 README 与 `.env.example` 标明配置范围。
 - 增强补拉 Telegram 补发间隔配置保护：`CATCHUP_SEND_INTERVAL` 限制在 0 到 10 秒之间，保留 0 作为不等待的语义，同时避免误填负数或极大值导致补发节奏异常。
 - 增强补拉 Telegram 补发上限配置保护：`CATCHUP_MAX_SEND` 限制在 0 到 300 条之间，保留 0 作为关闭逐条补发的语义，同时避免误填极大值导致补发刷屏。
