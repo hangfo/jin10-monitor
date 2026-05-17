@@ -604,6 +604,60 @@ def test_run_auto_catch_up_skips_future_cursor_without_history(temp_history_db):
     assert "last_ingested_at 位于未来且暂无可恢复历史游标" in result["reason"]
 
 
+def test_run_auto_catch_up_skips_without_last_ingested_at(temp_history_db, monkeypatch):
+    def fail_catch_up_window(*args, **kwargs):
+        raise AssertionError("auto catch-up should skip before calling catch_up_window")
+
+    monkeypatch.setattr(jm, "catch_up_window", fail_catch_up_window)
+
+    result = asyncio.run(jm.run_auto_catch_up(object(), datetime(2026, 5, 17, 10, 10, 0), trigger="startup"))
+
+    assert result == {
+        "ok": True,
+        "skipped": True,
+        "reason": "暂无 last_ingested_at",
+        "trigger": "startup",
+    }
+
+
+def test_run_auto_catch_up_returns_error_for_invalid_last_ingested_at(temp_history_db, monkeypatch):
+    conn = jm.get_db()
+    jm.set_state(conn, "last_ingested_at", "not-a-date")
+    conn.commit()
+
+    def fail_catch_up_window(*args, **kwargs):
+        raise AssertionError("auto catch-up should skip invalid cursor before calling catch_up_window")
+
+    monkeypatch.setattr(jm, "catch_up_window", fail_catch_up_window)
+
+    result = asyncio.run(jm.run_auto_catch_up(object(), datetime(2026, 5, 17, 10, 10, 0), trigger="startup"))
+
+    assert result["ok"] is False
+    assert "last_ingested_at 格式应为" in result["error"]
+    assert result["trigger"] == "startup"
+
+
+def test_run_auto_catch_up_skips_when_no_offline_window(temp_history_db, monkeypatch):
+    conn = jm.get_db()
+    jm.set_state(conn, "last_ingested_at", "2026-05-17 10:12:00")
+    conn.commit()
+
+    def fail_catch_up_window(*args, **kwargs):
+        raise AssertionError("auto catch-up should skip empty window before calling catch_up_window")
+
+    monkeypatch.setattr(jm, "catch_up_window", fail_catch_up_window)
+
+    result = asyncio.run(jm.run_auto_catch_up(object(), datetime(2026, 5, 17, 10, 10, 0), trigger="startup"))
+
+    assert result["ok"] is True
+    assert result["skipped"] is True
+    assert result["reason"] == "没有离线窗口"
+    assert result["window"] == {
+        "start": "2026-05-17 10:10:00",
+        "end": "2026-05-17 10:10:00",
+    }
+
+
 def test_run_auto_catch_up_limits_window_by_max_hours(temp_history_db, monkeypatch):
     conn = jm.get_db()
     jm.set_state(conn, "last_ingested_at", "2026-05-17 00:00:00")
