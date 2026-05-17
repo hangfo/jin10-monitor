@@ -695,6 +695,39 @@ def test_run_auto_catch_up_limits_window_by_max_hours(temp_history_db, monkeypat
     assert calls[0][2]["max_send"] == 0
 
 
+def test_run_auto_catch_up_remembers_seen_item_ids(temp_history_db, monkeypatch):
+    conn = jm.get_db()
+    jm.set_state(conn, "last_ingested_at", "2026-05-17 10:00:00")
+    conn.commit()
+    jm.seen_ids.clear()
+
+    def fake_catch_up_window(*args, **kwargs):
+        return {
+            "ok": True,
+            "stored": 2,
+            "truncated": False,
+            "seen_item_ids": ["auto-seen-1", "auto-seen-2"],
+            "window": {
+                "start": "2026-05-17 09:58:00",
+                "end": "2026-05-17 10:10:00",
+            },
+            "push_candidates": 0,
+            "priority_counts": {},
+            "summary_items": [],
+        }
+
+    monkeypatch.setattr(jm, "CATCHUP_TELEGRAM", False)
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+
+    result = asyncio.run(jm.run_auto_catch_up(object(), datetime(2026, 5, 17, 10, 10, 0), trigger="startup"))
+
+    assert result["ok"] is True
+    assert "auto-seen-1" in jm.seen_ids
+    assert "auto-seen-2" in jm.seen_ids
+    assert jm.is_new({"id": "auto-seen-1"}) is False
+    assert jm.is_new({"id": "realtime-new"}) is True
+
+
 def test_run_auto_catch_up_gap_summary_respects_cooldown(temp_history_db, monkeypatch):
     conn = jm.get_db()
     jm.set_state(conn, "last_ingested_at", "2026-05-17 10:00:00")
