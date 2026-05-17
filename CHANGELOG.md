@@ -4,6 +4,7 @@
 
 ## 2026-05-17
 
+- 新增项目状态摘要 022：记录手动补拉 CLI 参数范围保护、验证结果、风险判断、后续 pytest 边界和其它 CLI limit 参数评估方向，便于换 session 续接。
 - 增强手动补拉 CLI 参数范围保护：`--catch-up-max-store`、`--catch-up-max-send`、`--catch-up-send-interval` 与 `.env` 配置使用同一范围，并在 README 和 CLI help 中标明边界。
 - 新增项目状态摘要 021：记录数值配置范围保护、README / `.env.example` 文档同步、验证结果、风险判断和后续 CLI 参数 clamp 评估方向，便于换 session 续接。
 - 补齐剩余数值配置范围保护与文档：`CATCHUP_MAX_HOURS`、`AUTO_CATCHUP_GAP_SECONDS`、`SHOW_DELAY_IF_SECONDS` 增加上下限保护，并在 README 与 `.env.example` 标明配置范围。
