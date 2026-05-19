@@ -48,7 +48,7 @@ def state_value(conn, key):
 
 
 def telegram_status(conn, message_id, mode="catchup"):
-    return conn.execute(
+    row = conn.execute(
         """
         SELECT status, detail
         FROM telegram_delivery_status
@@ -56,6 +56,7 @@ def telegram_status(conn, message_id, mode="catchup"):
         """,
         (message_id, "telegram", mode),
     ).fetchone()
+    return tuple(row) if row else None
 
 
 def manual_catchup_result(candidate_id="manual-candidate", *, status_item=None):
@@ -212,6 +213,72 @@ def test_delivery_status_does_not_create_delivery_log_dedupe_record(temp_history
         ("status-only-id", "telegram", "catchup"),
     ).fetchone()
     assert status == (jm.TELEGRAM_STATUS_UNKNOWN_TIMEOUT, "timeout")
+
+
+def test_handle_item_marks_realtime_delivery_after_successful_send(temp_history_db, monkeypatch):
+    item = news_item("realtime-sent", content="hit")
+    sent_messages = []
+
+    async def fake_send_telegram(session, text):
+        sent_messages.append(text)
+        return jm.TelegramSendResult(jm.TELEGRAM_STATUS_SENT)
+
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+
+    asyncio.run(jm.handle_item(object(), item, source="rest"))
+
+    conn = jm.get_db()
+    row = row_by_id(conn, "realtime-sent")
+    assert row["source"] == "rest"
+    assert row["hit"] == 1
+    assert row["priority_level"] == jm.PRIORITY_NORMAL
+    assert len(sent_messages) == 1
+    assert jm.has_delivery(conn, "realtime-sent", channel="telegram", mode="realtime")
+    assert telegram_status(conn, "realtime-sent", mode="realtime") == (jm.TELEGRAM_STATUS_SENT, "")
+
+
+def test_handle_item_records_failed_realtime_status_without_delivery_log(temp_history_db, monkeypatch):
+    item = news_item("realtime-failed", content="hit")
+
+    async def fake_send_telegram(session, text):
+        return jm.TelegramSendResult(jm.TELEGRAM_STATUS_FAILED, "status=500")
+
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+
+    asyncio.run(jm.handle_item(object(), item, source="rest"))
+
+    conn = jm.get_db()
+    assert row_by_id(conn, "realtime-failed")["hit"] == 1
+    assert not jm.has_any_delivery(conn, "realtime-failed", channel="telegram")
+    assert telegram_status(conn, "realtime-failed", mode="realtime") == (
+        jm.TELEGRAM_STATUS_FAILED,
+        "status=500",
+    )
+
+
+def test_handle_item_stores_unmatched_item_without_sending(temp_history_db, monkeypatch):
+    item = news_item("realtime-unmatched", content="plain")
+
+    async def fail_send_telegram(session, text):
+        raise AssertionError("unmatched realtime item should not send Telegram")
+
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "send_telegram", fail_send_telegram)
+
+    asyncio.run(jm.handle_item(object(), item, source="rest"))
+
+    conn = jm.get_db()
+    row = row_by_id(conn, "realtime-unmatched")
+    assert row["source"] == "rest"
+    assert row["hit"] == 0
+    assert row["priority_level"] == jm.PRIORITY_NONE
+    assert not jm.has_any_delivery(conn, "realtime-unmatched", channel="telegram")
+    assert telegram_status(conn, "realtime-unmatched", mode="realtime") is None
 
 
 def test_select_catchup_send_candidates_skips_already_delivered_rows():
