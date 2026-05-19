@@ -1258,6 +1258,44 @@ def test_poll_loop_triggers_auto_catch_up_after_gap(monkeypatch):
     assert poll_calls == [session]
 
 
+def test_poll_loop_continues_polling_when_auto_catch_up_raises(monkeypatch, caplog):
+    fake_datetime = fake_datetime_from(
+        [
+            datetime(2026, 5, 17, 10, 0, 0),
+            datetime(2026, 5, 17, 10, 5, 0),
+            datetime(2026, 5, 17, 10, 5, 0),
+        ]
+    )
+
+    poll_calls = []
+
+    async def fail_run_auto_catch_up(*args, **kwargs):
+        raise RuntimeError("catch-up failed")
+
+    async def fake_poll_once(session):
+        poll_calls.append(session)
+        return []
+
+    async def stop_sleep(seconds):
+        raise StopPollLoop
+
+    monkeypatch.setattr(jm, "AUTO_CATCHUP", True)
+    monkeypatch.setattr(jm, "AUTO_CATCHUP_GAP_SECONDS", 300)
+    monkeypatch.setattr(jm, "datetime", fake_datetime)
+    monkeypatch.setattr(jm, "run_auto_catch_up", fail_run_auto_catch_up)
+    monkeypatch.setattr(jm, "poll_once", fake_poll_once)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+    monkeypatch.setattr(jm.asyncio, "sleep", stop_sleep)
+    caplog.set_level("WARNING", logger="jin10")
+
+    session = object()
+    with pytest.raises(StopPollLoop):
+        asyncio.run(jm.poll_loop(session))
+
+    assert poll_calls == [session]
+    assert "自愈补拉异常，继续实时监控：catch-up failed" in caplog.text
+
+
 @pytest.mark.parametrize(
     ("auto_catchup", "loop_now", "threshold"),
     [
