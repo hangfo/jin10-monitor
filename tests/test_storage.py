@@ -27,6 +27,23 @@ def close_thread_db():
         delattr(jm._db_local, "conn")
 
 
+class StopPollLoop(Exception):
+    pass
+
+
+def fake_datetime_from(times):
+    timeline = list(times)
+
+    class FakeDatetime:
+        @classmethod
+        def now(cls):
+            if len(timeline) > 1:
+                return timeline.pop(0)
+            return timeline[0]
+
+    return FakeDatetime
+
+
 @pytest.fixture()
 def temp_history_db(tmp_path, monkeypatch):
     close_thread_db()
@@ -1200,3 +1217,84 @@ def test_run_auto_catch_up_gap_summary_after_cooldown_updates_status(temp_histor
         ),
     ).fetchone()
     assert status == (jm.TELEGRAM_STATUS_SENT, "stored=1 push_candidates=1 truncated=False")
+
+
+def test_poll_loop_triggers_auto_catch_up_after_gap(monkeypatch):
+    fake_datetime = fake_datetime_from(
+        [
+            datetime(2026, 5, 17, 10, 0, 0),
+            datetime(2026, 5, 17, 10, 5, 0),
+            datetime(2026, 5, 17, 10, 5, 0),
+        ]
+    )
+
+    session = object()
+    catchup_calls = []
+    poll_calls = []
+
+    async def fake_run_auto_catch_up(run_session, now, trigger):
+        catchup_calls.append((run_session, now, trigger))
+        return {"ok": True, "stored": 0, "push_candidates": 0, "window": {}}
+
+    async def fake_poll_once(run_session):
+        poll_calls.append(run_session)
+        return []
+
+    async def stop_sleep(seconds):
+        raise StopPollLoop
+
+    monkeypatch.setattr(jm, "AUTO_CATCHUP", True)
+    monkeypatch.setattr(jm, "AUTO_CATCHUP_GAP_SECONDS", 300)
+    monkeypatch.setattr(jm, "datetime", fake_datetime)
+    monkeypatch.setattr(jm, "run_auto_catch_up", fake_run_auto_catch_up)
+    monkeypatch.setattr(jm, "poll_once", fake_poll_once)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+    monkeypatch.setattr(jm.asyncio, "sleep", stop_sleep)
+
+    with pytest.raises(StopPollLoop):
+        asyncio.run(jm.poll_loop(session))
+
+    assert catchup_calls == [(session, datetime(2026, 5, 17, 10, 5, 0), "gap")]
+    assert poll_calls == [session]
+
+
+@pytest.mark.parametrize(
+    ("auto_catchup", "loop_now", "threshold"),
+    [
+        (False, datetime(2026, 5, 17, 10, 5, 0), 300),
+        (True, datetime(2026, 5, 17, 10, 4, 59), 300),
+    ],
+)
+def test_poll_loop_skips_auto_catch_up_when_disabled_or_gap_below_threshold(
+    monkeypatch,
+    auto_catchup,
+    loop_now,
+    threshold,
+):
+    fake_datetime = fake_datetime_from(
+        [
+            datetime(2026, 5, 17, 10, 0, 0),
+            loop_now,
+            loop_now,
+        ]
+    )
+
+    async def fail_run_auto_catch_up(*args, **kwargs):
+        raise AssertionError("poll_loop should not run auto catch-up")
+
+    async def fake_poll_once(session):
+        return []
+
+    async def stop_sleep(seconds):
+        raise StopPollLoop
+
+    monkeypatch.setattr(jm, "AUTO_CATCHUP", auto_catchup)
+    monkeypatch.setattr(jm, "AUTO_CATCHUP_GAP_SECONDS", threshold)
+    monkeypatch.setattr(jm, "datetime", fake_datetime)
+    monkeypatch.setattr(jm, "run_auto_catch_up", fail_run_auto_catch_up)
+    monkeypatch.setattr(jm, "poll_once", fake_poll_once)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+    monkeypatch.setattr(jm.asyncio, "sleep", stop_sleep)
+
+    with pytest.raises(StopPollLoop):
+        asyncio.run(jm.poll_loop(object()))

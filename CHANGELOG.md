@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 2026-05-20
+
+- 增强 REST 轮询主循环自愈补拉编排测试：覆盖 `poll_loop` 在停顿达到 `AUTO_CATCHUP_GAP_SECONDS` 时以 `trigger="gap"` 调用自动补拉，以及关闭自动补拉或停顿未达阈值时不调用补拉，继续保持无真实 REST、无真实 Telegram 验证。
+
 ## 2026-05-19
 
 - 新增项目状态摘要 025：记录实时处理链路测试覆盖、验证结果、风险判断、后续模型建议和 poll_loop gap 测试新 session 交接提示词。
