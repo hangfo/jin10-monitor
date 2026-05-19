@@ -1296,6 +1296,43 @@ def test_poll_loop_continues_polling_when_auto_catch_up_raises(monkeypatch, capl
     assert "自愈补拉异常，继续实时监控：catch-up failed" in caplog.text
 
 
+def test_poll_loop_handles_new_rest_items(monkeypatch):
+    fake_datetime = fake_datetime_from(
+        [
+            datetime(2026, 5, 17, 10, 0, 0),
+            datetime(2026, 5, 17, 10, 0, 1),
+            datetime(2026, 5, 17, 10, 0, 1),
+        ]
+    )
+    session = object()
+    item = news_item("poll-new", when=datetime(2026, 5, 17, 10, 0, 0), content="hit")
+    handle_calls = []
+
+    async def fake_poll_once(run_session):
+        assert run_session is session
+        return [item]
+
+    async def fake_handle_item(run_session, handled_item, source):
+        handle_calls.append((run_session, handled_item, source))
+
+    async def stop_sleep(seconds):
+        raise StopPollLoop
+
+    monkeypatch.setattr(jm, "AUTO_CATCHUP", False)
+    monkeypatch.setattr(jm, "datetime", fake_datetime)
+    monkeypatch.setattr(jm, "poll_once", fake_poll_once)
+    monkeypatch.setattr(jm, "handle_item", fake_handle_item)
+    monkeypatch.setattr(jm.random, "uniform", lambda start, end: 0)
+    monkeypatch.setattr(jm.asyncio, "sleep", stop_sleep)
+    jm.seen_ids.clear()
+
+    with pytest.raises(StopPollLoop):
+        asyncio.run(jm.poll_loop(session))
+
+    assert handle_calls == [(session, item, "rest")]
+    assert jm.is_new({"id": "poll-new"}) is False
+
+
 @pytest.mark.parametrize(
     ("auto_catchup", "loop_now", "threshold"),
     [

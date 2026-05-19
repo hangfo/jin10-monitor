@@ -4,6 +4,7 @@
 
 ## 2026-05-20
 
+- 增强 REST 轮询主循环新消息处理测试：覆盖 `poll_once` 返回新快讯时，`poll_loop` 会以 `source="rest"` 调用 `handle_item` 并写入内存去重集合。
 - 增强 REST 轮询主循环异常保护测试：覆盖 `poll_loop` 中 gap 自愈补拉抛异常后记录 warning 并继续进入本轮 `poll_once`，避免补拉异常阻断实时轮询兜底。
 - 新增项目状态摘要 026：记录 REST 轮询主循环 gap 触发自动补拉测试覆盖、验证结果、风险判断和下一阶段建议。
 - 增强 REST 轮询主循环自愈补拉编排测试：覆盖 `poll_loop` 在停顿达到 `AUTO_CATCHUP_GAP_SECONDS` 时以 `trigger="gap"` 调用自动补拉，以及关闭自动补拉或停顿未达阈值时不调用补拉，继续保持无真实 REST、无真实 Telegram 验证。
