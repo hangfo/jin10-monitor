@@ -390,6 +390,31 @@ def test_select_catchup_send_candidates_skips_already_delivered_rows():
     assert [row["id"] for row in selected] == ["new-important", "new-normal"]
 
 
+def test_query_context_returns_window_around_message(temp_history_db):
+    before = news_item("context-before", when=datetime(2026, 5, 20, 10, 50, 0), content="before")
+    center = news_item("context-center", when=datetime(2026, 5, 20, 11, 0, 0), content="center")
+    after = news_item("context-after", when=datetime(2026, 5, 20, 11, 10, 0), content="after")
+    outside = news_item("context-outside", when=datetime(2026, 5, 20, 11, 20, 0), content="outside")
+
+    for item in (before, center, after, outside):
+        jm.save_history_item(item, hit=True, high=False, source="rest", priority_level=jm.PRIORITY_NORMAL)
+
+    found, rows = jm.query_context("context-center", minutes=10)
+
+    assert found["id"] == "context-center"
+    assert [row["id"] for row in rows] == ["context-before", "context-center", "context-after"]
+
+
+def test_query_context_missing_readonly_db_does_not_create_file(tmp_path, monkeypatch):
+    missing_db = tmp_path / "missing.sqlite3"
+    monkeypatch.setattr(jm, "HISTORY_DB", missing_db)
+
+    with pytest.raises(FileNotFoundError):
+        jm.query_context("missing-id")
+
+    assert not missing_db.exists()
+
+
 def test_catch_up_window_filters_window_and_skips_delivered_candidates(temp_history_db, monkeypatch):
     start_dt = datetime(2026, 5, 17, 10, 0, 0)
     end_dt = datetime(2026, 5, 17, 10, 10, 0)

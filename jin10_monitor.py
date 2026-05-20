@@ -1241,6 +1241,80 @@ def print_history(query: str = "", *, limit: int = 20, high_only: bool = False) 
             print(f"  图片：{pic_url}")
 
 
+def query_context(message_id: str, *, minutes: int = 15) -> tuple[Optional[sqlite3.Row], list[sqlite3.Row]]:
+    minutes = max(0, minutes)
+    with open_readonly_history_db() as conn:
+        center = conn.execute(
+            """
+            SELECT id, published_at, hit, high, important, has_bold, priority_level,
+                   has_pic, pic_url, news_source, source_url, title, content
+            FROM flash_history
+            WHERE id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+        if not center:
+            return None, []
+        center_dt = parse_cursor_datetime(str(center["published_at"] or ""))
+        if center_dt is None:
+            return center, []
+        start_at = format_cursor_datetime(center_dt - timedelta(minutes=minutes))
+        end_at = format_cursor_datetime(center_dt + timedelta(minutes=minutes))
+        rows = conn.execute(
+            """
+            SELECT id, published_at, hit, high, important, has_bold, priority_level,
+                   has_pic, pic_url, news_source, source_url, title, content
+            FROM flash_history
+            WHERE published_at BETWEEN ? AND ?
+            ORDER BY published_at ASC, created_at ASC
+            """,
+            (start_at, end_at),
+        ).fetchall()
+    return center, rows
+
+
+def print_context(message_id: str, *, minutes: int = 15) -> None:
+    try:
+        center, rows = query_context(message_id, minutes=minutes)
+    except FileNotFoundError as exc:
+        log.info("历史库不存在：%s", exc)
+        return
+    except sqlite3.OperationalError as exc:
+        log.warning("上下文读取失败：%s", exc)
+        return
+    if center is None:
+        log.info("历史库未找到消息：%s", message_id)
+        return
+    if not rows:
+        log.info("消息缺少可解析时间，无法查询上下文：%s", message_id)
+        return
+
+    print(f"上下文：id={message_id} 前后 {max(0, minutes)} 分钟，共 {len(rows)} 条")
+    for row in rows:
+        priority = str(row["priority_level"] or "")
+        icon = PRIORITY_ICONS.get(priority, "·" if not row["hit"] else "📰")
+        labels = [PRIORITY_LABELS.get(priority, priority)]
+        if row["important"]:
+            labels.append("重要")
+        if row["has_bold"]:
+            labels.append("加粗")
+        if row["has_pic"]:
+            labels.append("有图")
+        marker = ">>" if row["id"] == message_id else "  "
+        label_text = f" [{' '.join(label for label in labels if label)}]" if labels else ""
+        print(f"{marker} {row['published_at']} {icon}{label_text} id={row['id']}")
+        if row["title"]:
+            print(apply_console_style(f"     {row['title']}", important=bool(row["important"]), bold=True))
+        if row["content"]:
+            print(apply_console_style(f"     {row['content']}", important=bool(row["important"]), bold=bool(row["has_bold"]) and not row["title"]))
+        if row["news_source"]:
+            print(f"     来源：{row['news_source']}")
+        if row["source_url"]:
+            print(f"     来源链接：{row['source_url']}")
+        if row["pic_url"]:
+            print(f"     图片：{row['pic_url']}")
+
+
 # ─── Telegram 推送 ───────────────────────────────────────────────────────────
 
 def is_temp_history_db() -> bool:
@@ -2258,6 +2332,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--history", nargs="?", const="", help="查询本地历史库，省略关键词时显示最新记录")
     parser.add_argument("--history-limit", type=int, default=20, help="历史查询返回条数")
     parser.add_argument("--history-high", action="store_true", help="历史查询只显示高优先级记录")
+    parser.add_argument("--context", help="只读查询某条快讯前后上下文，传入金十消息 ID")
+    parser.add_argument("--context-minutes", type=int, default=15, help="上下文前后分钟数，默认 15")
     parser.add_argument("--telegram-status", nargs="?", const="problem", choices=["problem", "failed", "unknown_timeout", "skipped", "sent", "all"], help="只读查询 Telegram 投递状态，默认显示 failed/unknown_timeout/skipped")
     parser.add_argument("--telegram-status-limit", type=int, default=20, help="Telegram 投递状态查询返回条数")
     parser.add_argument("--lookup-date", help="回溯查询日期 YYYY-MM-DD")
@@ -2290,6 +2366,8 @@ if __name__ == "__main__":
         args = parse_args()
         if args.telegram_status is not None:
             print_telegram_delivery_status(args.telegram_status, limit=max(1, args.telegram_status_limit))
+        elif args.context:
+            print_context(args.context, minutes=max(0, args.context_minutes))
         elif args.catch_up:
             init_history_db()
             conn = get_db()
