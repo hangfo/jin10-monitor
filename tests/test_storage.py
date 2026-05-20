@@ -298,6 +298,71 @@ def test_handle_item_stores_unmatched_item_without_sending(temp_history_db, monk
     assert telegram_status(conn, "realtime-unmatched", mode="realtime") is None
 
 
+def test_handle_item_suppresses_similar_realtime_pushes_after_success(temp_history_db, monkeypatch):
+    first = news_item("aggregate-first", title="Oil supply hit", content="hit", source="Reuters")
+    second = news_item("aggregate-second", title="Oil supply hit", content="hit update", source="Reuters")
+    sent_messages = []
+    jm.aggregation_recent.clear()
+
+    async def fake_send_telegram(session, text):
+        sent_messages.append(text)
+        return jm.TelegramSendResult(jm.TELEGRAM_STATUS_SENT)
+
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "AGGREGATION_V2", True)
+    monkeypatch.setattr(jm, "AGGREGATION_WINDOW_SECONDS", 180)
+    monkeypatch.setattr(jm, "AGGREGATION_BYPASS_IMPORTANT", True)
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+
+    asyncio.run(jm.handle_item(object(), first, source="rest"))
+    asyncio.run(jm.handle_item(object(), second, source="rest"))
+
+    conn = jm.get_db()
+    assert len(sent_messages) == 1
+    assert jm.has_delivery(conn, "aggregate-first", channel="telegram", mode="realtime")
+    assert not jm.has_any_delivery(conn, "aggregate-second", channel="telegram")
+    assert telegram_status(conn, "aggregate-first", mode="realtime") == (jm.TELEGRAM_STATUS_SENT, "")
+    second_status = telegram_status(conn, "aggregate-second", mode="realtime")
+    assert second_status[0] == jm.TELEGRAM_STATUS_SKIPPED
+    assert "aggregation_v2 similar_to=aggregate-first" in second_status[1]
+
+
+def test_handle_item_bypasses_aggregation_for_important_realtime_items(temp_history_db, monkeypatch):
+    first = {
+        **news_item("aggregate-important-1", title="Gold move hit", content="hit", source="Reuters"),
+        "important": True,
+    }
+    second = {
+        **news_item("aggregate-important-2", title="Gold move hit", content="hit update", source="Reuters"),
+        "important": True,
+    }
+    sent_messages = []
+    jm.aggregation_recent.clear()
+
+    async def fake_send_telegram(session, text):
+        sent_messages.append(text)
+        return jm.TelegramSendResult(jm.TELEGRAM_STATUS_SENT)
+
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "PUSH_IMPORTANT", True)
+    monkeypatch.setattr(jm, "AGGREGATION_V2", True)
+    monkeypatch.setattr(jm, "AGGREGATION_WINDOW_SECONDS", 180)
+    monkeypatch.setattr(jm, "AGGREGATION_BYPASS_IMPORTANT", True)
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+
+    asyncio.run(jm.handle_item(object(), first, source="rest"))
+    asyncio.run(jm.handle_item(object(), second, source="rest"))
+
+    conn = jm.get_db()
+    assert len(sent_messages) == 2
+    assert jm.has_delivery(conn, "aggregate-important-1", channel="telegram", mode="realtime")
+    assert jm.has_delivery(conn, "aggregate-important-2", channel="telegram", mode="realtime")
+    assert telegram_status(conn, "aggregate-important-1", mode="realtime") == (jm.TELEGRAM_STATUS_SENT, "")
+    assert telegram_status(conn, "aggregate-important-2", mode="realtime") == (jm.TELEGRAM_STATUS_SENT, "")
+
+
 def test_select_catchup_send_candidates_skips_already_delivered_rows():
     rows = [
         {

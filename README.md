@@ -57,6 +57,9 @@ pytest
 - `HISTORY_DB`：本地历史库路径，默认 `data/jin10_history.sqlite3`。
 - `JIN10_APP_IDS`：REST 请求头 app id 列表，逗号分隔。默认先用当前页面常见 app id，再自动降级到旧 app id。
 - `PUSH_IMPORTANT`：是否直接推送金十红色重要消息，默认 `1`。设为 `0` 时只按关键词推送。
+- `AGGREGATION_V2`：事件聚合防刷屏开关，默认 `0`。开启后相似实时快讯在窗口内只推第一条，后续仍入库但跳过 Telegram，并记录为 `skipped` 诊断状态。
+- `AGGREGATION_WINDOW_SECONDS`：聚合窗口秒数，默认 180，范围 `0-3600`；设为 `0` 可关闭窗口。
+- `AGGREGATION_BYPASS_IMPORTANT`：T3 金十重要消息是否绕过聚合直推，默认 `1`。
 - `AUTO_CATCHUP`：启动时是否自动补拉离线窗口，默认 `1`。
 - `CATCHUP_TELEGRAM`：补拉是否允许发送 Telegram，默认 `1`。自动补拉只发送一条摘要，不逐条发送历史消息。
 - `CATCHUP_MAX_HOURS`：自动补拉最多回看小时数，默认 24，范围 `1-168`。

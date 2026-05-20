@@ -106,6 +106,9 @@ APP_IDS = [
     if app_id.strip()
 ]
 PUSH_IMPORTANT = os.getenv("PUSH_IMPORTANT", "1").lower() not in {"0", "false", "no", "off"}
+AGGREGATION_V2 = os.getenv("AGGREGATION_V2", "0").lower() in {"1", "true", "yes", "on"}
+AGGREGATION_WINDOW_SECONDS = env_range_int("AGGREGATION_WINDOW_SECONDS", 180, 0, 3600)
+AGGREGATION_BYPASS_IMPORTANT = os.getenv("AGGREGATION_BYPASS_IMPORTANT", "1").lower() not in {"0", "false", "no", "off"}
 AUTO_CATCHUP = os.getenv("AUTO_CATCHUP", "1").lower() not in {"0", "false", "no", "off"}
 CATCHUP_TELEGRAM = os.getenv("CATCHUP_TELEGRAM", "1").lower() not in {"0", "false", "no", "off"}
 CATCHUP_MAX_HOURS = env_range_int("CATCHUP_MAX_HOURS", 24, 1, 168)
@@ -342,6 +345,79 @@ def match_keywords(text: str) -> tuple[bool, bool]:
 def item_full_text(item: dict) -> str:
     title, content = item_text(item)
     return " ".join(part for part in [title, content] if part).strip()
+
+
+aggregation_recent: OrderedDict[str, tuple[str, datetime]] = OrderedDict()
+
+
+def aggregation_text_key(text: str, limit: int = 48) -> str:
+    text = re.sub(r"\s+", "", text.lower())
+    text = re.sub(r"[，。、“”\"'：:；;！!？?（）()【】\[\]{}<>《》,.]", "", text)
+    return text[:limit]
+
+
+def aggregation_key(item: dict, priority_level: str) -> str:
+    title, content = item_text(item)
+    text_key = aggregation_text_key(title or content)
+    if not text_key:
+        return ""
+    source = aggregation_text_key(item_metadata(item)["news_source"], limit=24)
+    return f"{priority_level}|{source}|{text_key}"
+
+
+def aggregation_enabled_for(priority_level: str) -> bool:
+    if not AGGREGATION_V2 or AGGREGATION_WINDOW_SECONDS <= 0:
+        return False
+    if AGGREGATION_BYPASS_IMPORTANT and priority_level == PRIORITY_IMPORTANT:
+        return False
+    return True
+
+
+def purge_aggregation_recent(now: datetime) -> None:
+    while aggregation_recent:
+        _, (_, seen_at) = next(iter(aggregation_recent.items()))
+        if (now - seen_at).total_seconds() <= AGGREGATION_WINDOW_SECONDS:
+            break
+        aggregation_recent.popitem(last=False)
+
+
+def aggregation_suppression_detail(
+    item: dict,
+    priority_level: str,
+    *,
+    now: Optional[datetime] = None,
+) -> str:
+    if not aggregation_enabled_for(priority_level):
+        return ""
+    current = now or datetime.now().replace(microsecond=0)
+    purge_aggregation_recent(current)
+    key = aggregation_key(item, priority_level)
+    if not key:
+        return ""
+    previous = aggregation_recent.get(key)
+    if not previous:
+        return ""
+    previous_id, previous_at = previous
+    return f"aggregation_v2 similar_to={previous_id} at={format_cursor_datetime(previous_at)}"
+
+
+def remember_aggregation_push(
+    item: dict,
+    priority_level: str,
+    *,
+    now: Optional[datetime] = None,
+) -> None:
+    if not aggregation_enabled_for(priority_level):
+        return
+    key = aggregation_key(item, priority_level)
+    if not key:
+        return
+    current = now or datetime.now().replace(microsecond=0)
+    purge_aggregation_recent(current)
+    aggregation_recent[key] = (str(item.get("id", "")), current)
+    aggregation_recent.move_to_end(key)
+    while len(aggregation_recent) > 500:
+        aggregation_recent.popitem(last=False)
 
 
 def clean_html(raw: str) -> str:
@@ -2070,12 +2146,27 @@ async def handle_item(session: aiohttp.ClientSession, item: dict, *, source: str
         log.info("跳过无可显示内容的推送：id=%s type=%s priority=%s", item.get("id", ""), item.get("type", ""), priority_level)
         return
 
+    suppression_detail = aggregation_suppression_detail(item, priority_level)
+    if suppression_detail:
+        conn = get_db()
+        record_telegram_delivery_status(
+            conn,
+            str(item.get("id", "")),
+            mode="realtime",
+            status=TELEGRAM_STATUS_SKIPPED,
+            detail=suppression_detail,
+        )
+        conn.commit()
+        log.info("聚合降噪跳过 Telegram：id=%s %s", item.get("id", ""), suppression_detail)
+        return
+
     log.info("\n%s", format_console_message(item, priority_level=priority_level))
     msg = format_message(item, priority_level)
     send_result = await send_telegram(session, msg)
     conn = get_db()
     if send_result.ok:
         mark_delivery(conn, str(item.get("id", "")), channel="telegram", mode="realtime")
+        remember_aggregation_push(item, priority_level)
     record_telegram_delivery_status(
         conn,
         str(item.get("id", "")),
