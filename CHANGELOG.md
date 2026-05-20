@@ -4,6 +4,7 @@
 
 ## 2026-05-21
 
+- 新增 Dashboard MVP 设计文档：明确本地只读页面结构、SQLite 数据来源、localhost 启动方式、安全边界、与 Telegram inline / callback 的后续关系，以及实现前的风险控制。
 - 新增项目状态摘要 031：记录只读上下文查询已完成、事件聚合 V2 暂列技术债、Telegram inline 暂缓，以及下一阶段 dashboard MVP 设计方向和模型建议。
 
 ## 2026-05-20
