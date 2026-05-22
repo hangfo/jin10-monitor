@@ -45,6 +45,67 @@
         background: #fff;
         padding: 14px 16px;
       }
+      .toolbar {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 16px;
+        margin: 22px 0 10px;
+      }
+      form.filters {
+        display: flex;
+        align-items: end;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      label {
+        display: grid;
+        gap: 4px;
+        color: #5f6b70;
+        font-size: 12px;
+      }
+      select,
+      input[type="number"] {
+        height: 34px;
+        min-width: 108px;
+        border: 1px solid #cfd7d3;
+        border-radius: 6px;
+        background: #fff;
+        color: #1f2528;
+        padding: 0 10px;
+        font: inherit;
+      }
+      .check {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 34px;
+        color: #1f2528;
+      }
+      .check input {
+        width: 16px;
+        height: 16px;
+        margin: 0;
+      }
+      button,
+      .button-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 34px;
+        border: 1px solid #1d6678;
+        border-radius: 6px;
+        background: #1d6678;
+        color: #fff;
+        padding: 0 12px;
+        font: inherit;
+        text-decoration: none;
+      }
+      .button-link {
+        border-color: #cfd7d3;
+        background: #fff;
+        color: #1f2528;
+      }
       dl {
         display: grid;
         grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -134,6 +195,10 @@
           align-items: flex-start;
           flex-direction: column;
         }
+        .toolbar {
+          align-items: flex-start;
+          flex-direction: column;
+        }
         dl {
           grid-template-columns: 120px 1fr;
         }
@@ -162,7 +227,29 @@
           <dd>{{ 'ok' if not health.missing_tables else health.missing_tables | join(', ') }}</dd>
         </dl>
       </div>
-      <h2>最近快讯</h2>
+      <div class="toolbar">
+        <h2>最近快讯</h2>
+        <form class="filters" method="get" action="/">
+          <label>
+            优先级
+            <select name="priority">
+              {% for value, label in priority_options %}
+              <option value="{{ value }}" {{ 'selected' if params.priority == value else '' }}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            条数
+            <input type="number" name="limit" min="1" max="300" value="{{ params.limit }}">
+          </label>
+          <label class="check">
+            <input type="checkbox" name="with_status" value="1" {{ 'checked' if params.with_status else '' }}>
+            只看 Telegram 状态
+          </label>
+          <button type="submit">筛选</button>
+          <a class="button-link" href="/">重置</a>
+        </form>
+      </div>
       <div class="table-wrap">
         {% if items %}
         <table>

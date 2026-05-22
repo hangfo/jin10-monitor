@@ -11,6 +11,14 @@ from fastapi.templating import Jinja2Templates
 from .db import history_health, query_recent_items
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+PRIORITY_OPTIONS = [
+    ("", "全部"),
+    ("T3_IMPORTANT", "T3 重要"),
+    ("T2_HIGH", "T2 高优"),
+    ("T1_NORMAL", "T1 普通"),
+    ("T0_NONE", "T0 仅入库"),
+]
+ALLOWED_PRIORITIES = {value for value, _label in PRIORITY_OPTIONS}
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
@@ -21,21 +29,47 @@ def compact_text(*parts: object, limit: int = 120) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "..."
 
 
+def parse_int(value: object, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(str(value))
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def feed_params(request: Request) -> dict[str, object]:
+    query = request.query_params
+    priority = str(query.get("priority", "") or "")
+    if priority not in ALLOWED_PRIORITIES:
+        priority = ""
+    return {
+        "limit": parse_int(query.get("limit", "80"), 80, 1, 300),
+        "priority": priority,
+        "with_status": str(query.get("with_status", "")).lower() in {"1", "true", "yes", "on"},
+    }
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Jin10 Monitor Dashboard")
 
     @app.get("/")
     async def index(request: Request):
         health = history_health()
+        params = feed_params(request)
         items = []
         if health["status"] == "ok":
-            items = query_recent_items(limit=80)
+            items = query_recent_items(**params)
             for item in items:
                 item["summary"] = compact_text(item.get("title"), item.get("content"), limit=140)
         return templates.TemplateResponse(
             request,
             "index.html",
-            {"health": health, "items": items},
+            {
+                "health": health,
+                "items": items,
+                "params": params,
+                "priority_options": PRIORITY_OPTIONS,
+            },
         )
 
     @app.get("/healthz")

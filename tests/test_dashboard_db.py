@@ -2,6 +2,7 @@ import sqlite3
 
 import pytest
 
+from dashboard.app import feed_params, parse_int
 from dashboard import db
 
 
@@ -118,6 +119,31 @@ def test_query_recent_items_clamps_limit(dashboard_history_db):
 
     assert len(rows) == 1
     assert rows[0]["id"] == "dash-1"
+
+
+def test_query_recent_items_filters_priority(dashboard_history_db):
+    rows = db.query_recent_items(priority="T3_IMPORTANT")
+
+    assert rows == []
+
+
+def test_parse_int_clamps_invalid_and_out_of_range_values():
+    assert parse_int("bad", 80, 1, 300) == 80
+    assert parse_int("0", 80, 1, 300) == 1
+    assert parse_int("999", 80, 1, 300) == 300
+
+
+def test_feed_params_normalizes_query_values():
+    class Request:
+        query_params = {
+            "priority": "bad",
+            "limit": "999",
+            "with_status": "on",
+        }
+
+    params = feed_params(Request())
+
+    assert params == {"limit": 300, "priority": "", "with_status": True}
 
 
 def test_missing_history_db_does_not_create_file(tmp_path, monkeypatch):
