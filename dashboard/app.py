@@ -8,11 +8,17 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from .db import history_db_path, history_health
+from .db import history_health, query_recent_items
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+
+
+def compact_text(*parts: object, limit: int = 120) -> str:
+    text = " ".join(str(part or "").strip() for part in parts if str(part or "").strip())
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "..."
 
 
 def create_app() -> FastAPI:
@@ -20,10 +26,16 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     async def index(request: Request):
+        health = history_health()
+        items = []
+        if health["status"] == "ok":
+            items = query_recent_items(limit=80)
+            for item in items:
+                item["summary"] = compact_text(item.get("title"), item.get("content"), limit=140)
         return templates.TemplateResponse(
             request,
             "index.html",
-            {"health": history_health()},
+            {"health": health, "items": items},
         )
 
     @app.get("/healthz")

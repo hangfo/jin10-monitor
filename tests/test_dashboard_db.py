@@ -113,6 +113,13 @@ def test_query_recent_items_reads_latest_status(dashboard_history_db):
     assert rows[0]["telegram_mode"] == "realtime"
 
 
+def test_query_recent_items_clamps_limit(dashboard_history_db):
+    rows = db.query_recent_items(limit=0)
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == "dash-1"
+
+
 def test_missing_history_db_does_not_create_file(tmp_path, monkeypatch):
     missing_db = tmp_path / "missing-dashboard.sqlite3"
     monkeypatch.setenv("HISTORY_DB", str(missing_db))
