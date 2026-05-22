@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jin10 Monitor Dashboard</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #f7f7f4;
+        color: #1f2528;
+      }
+      main {
+        max-width: 880px;
+        margin: 48px auto;
+        padding: 0 24px;
+      }
+      h1 {
+        font-size: 28px;
+        font-weight: 650;
+        margin: 0 0 12px;
+      }
+      .panel {
+        border: 1px solid #d9ddd8;
+        border-radius: 8px;
+        background: #fff;
+        padding: 18px;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        gap: 10px 16px;
+        margin: 0;
+      }
+      dt {
+        color: #5f6b70;
+      }
+      dd {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        word-break: break-all;
+      }
+      .ok {
+        color: #19733f;
+      }
+      .warn {
+        color: #a14d00;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Jin10 Monitor Dashboard</h1>
+      <div class="panel">
+        <dl>
+          <dt>状态</dt>
+          <dd class="{{ 'ok' if health.history_db_exists else 'warn' }}">{{ health.status }}</dd>
+          <dt>历史库</dt>
+          <dd>{{ health.history_db }}</dd>
+          <dt>业务库写入</dt>
+          <dd>{{ health.writes_business_db }}</dd>
+          <dt>金十 REST</dt>
+          <dd>{{ health.calls_jin10_rest }}</dd>
+          <dt>Telegram</dt>
+          <dd>{{ health.sends_telegram }}</dd>
+        </dl>
+      </div>
+    </main>
+  </body>
+</html>

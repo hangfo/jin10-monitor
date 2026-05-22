@@ -120,6 +120,14 @@ python jin10_monitor.py --dashboard --dashboard-port 8766
 
 MVP 阶段仅允许绑定 `127.0.0.1` / `localhost`，不要暴露到公网或局域网。
 
+正式 Dashboard 入口会逐步迁移到独立 FastAPI/Jinja2 服务：
+
+```bash
+python run_dashboard.py
+```
+
+默认同样监听 `http://127.0.0.1:8765/`。该入口与 `jin10_monitor.py` 解耦，当前先提供最小健康页和 `/healthz`，后续按阶段迁移快讯流、详情页、Telegram 状态页和系统健康页。
+
 ## Telegram 投递状态
 
 脚本会记录 Telegram 投递结果，便于事后诊断失败、超时未知或测试保护跳过的消息。查询入口只读，不会补发消息：
