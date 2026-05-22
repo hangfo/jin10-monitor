@@ -1,0 +1,126 @@
+import sqlite3
+
+import pytest
+
+from dashboard import db
+
+
+def create_dashboard_schema(db_path):
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE flash_history (
+            id TEXT PRIMARY KEY,
+            published_at TEXT,
+            title TEXT,
+            content TEXT,
+            hit INTEGER,
+            high INTEGER,
+            important INTEGER,
+            has_bold INTEGER,
+            priority_level TEXT,
+            has_pic INTEGER,
+            pic_url TEXT,
+            news_source TEXT,
+            source_url TEXT,
+            source TEXT,
+            created_at TEXT
+        );
+        CREATE TABLE runtime_state (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE delivery_log (message_id TEXT, sent_at TEXT);
+        CREATE TABLE telegram_delivery_status (
+            message_id TEXT,
+            channel TEXT,
+            mode TEXT,
+            status TEXT,
+            detail TEXT,
+            updated_at TEXT
+        );
+        """
+    )
+    conn.commit()
+    return conn
+
+
+@pytest.fixture()
+def dashboard_history_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "dashboard-history.sqlite3"
+    conn = create_dashboard_schema(db_path)
+    conn.execute(
+        """
+        INSERT INTO flash_history (
+            id, published_at, title, content, hit, high, important, has_bold,
+            priority_level, has_pic, pic_url, news_source, source_url, source, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "dash-1",
+            "2026-05-23 09:30:00",
+            "Dashboard title",
+            "Dashboard content",
+            1,
+            0,
+            0,
+            0,
+            "T1_NORMAL",
+            0,
+            "",
+            "金十数据",
+            "",
+            "rest",
+            "2026-05-23 09:30:01",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO telegram_delivery_status (
+            message_id, channel, mode, status, detail, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("dash-1", "telegram", "realtime", "sent", "", "2026-05-23 09:30:02"),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("HISTORY_DB", str(db_path))
+    return db_path
+
+
+def test_history_health_reports_ok_for_expected_schema(dashboard_history_db):
+    health = db.history_health()
+
+    assert health["status"] == "ok"
+    assert health["history_db_exists"] is True
+    assert health["missing_tables"] == []
+    assert health["writes_business_db"] is False
+    assert health["calls_jin10_rest"] is False
+    assert health["sends_telegram"] is False
+
+
+def test_open_readonly_connection_rejects_writes(dashboard_history_db):
+    with db.open_readonly_connection() as conn:
+        with pytest.raises(sqlite3.OperationalError):
+            conn.execute("INSERT INTO runtime_state (key, value) VALUES ('x', 'y')")
+
+
+def test_query_recent_items_reads_latest_status(dashboard_history_db):
+    rows = db.query_recent_items(limit=10, with_status=True)
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == "dash-1"
+    assert rows[0]["telegram_status"] == "sent"
+    assert rows[0]["telegram_mode"] == "realtime"
+
+
+def test_missing_history_db_does_not_create_file(tmp_path, monkeypatch):
+    missing_db = tmp_path / "missing-dashboard.sqlite3"
+    monkeypatch.setenv("HISTORY_DB", str(missing_db))
+
+    health = db.history_health()
+
+    assert health["status"] == "missing_history_db"
+    assert not missing_db.exists()
+    with pytest.raises(FileNotFoundError):
+        db.open_readonly_connection()
+    assert not missing_db.exists()

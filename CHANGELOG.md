@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 2026-05-23
+
+- 新增独立 Dashboard 只读 SQLite 查询层：封装 `HISTORY_DB` 路径解析、`mode=ro` + `query_only` 连接、schema 健康检查和最近快讯查询，并用临时 SQLite 测试保护缺库不创建、只读连接拒绝写入和 Telegram 状态联查。
+
 ## 2026-05-22
 
 - 新增独立 Dashboard 骨架入口：`run_dashboard.py` 启动 FastAPI/Jinja2 服务，默认监听 `127.0.0.1:8765`，先提供最小健康页和 `/healthz`，不写业务库、不触发金十 REST、不发送 Telegram。

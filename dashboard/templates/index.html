@@ -67,6 +67,8 @@
           <dd>{{ health.calls_jin10_rest }}</dd>
           <dt>Telegram</dt>
           <dd>{{ health.sends_telegram }}</dd>
+          <dt>Schema</dt>
+          <dd>{{ 'ok' if not health.missing_tables else health.missing_tables | join(', ') }}</dd>
         </dl>
       </div>
     </main>
