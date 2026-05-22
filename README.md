@@ -12,6 +12,7 @@ cp .env.example .env
 python jin10_monitor.py --once --limit 20
 python jin10_monitor.py --history 伊朗 --history-limit 20
 python jin10_monitor.py --context 20260520224302550800 --context-minutes 15
+python jin10_monitor.py --dashboard
 python jin10_monitor.py --lookup-date 2026-05-02 --lookup-start 20:05 --lookup-end 20:20
 python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --no-catch-up-telegram
 python jin10_monitor.py
@@ -42,6 +43,7 @@ pytest
 - `python jin10_monitor.py --history --history-high`：查看最近高优先级记录。
 - `python jin10_monitor.py --context 20260520224302550800 --context-minutes 15`：只读查看某条快讯前后上下文。
 - `python jin10_monitor.py --telegram-status`：只读查看最近需要关注的 Telegram 投递状态。
+- `python jin10_monitor.py --dashboard`：启动本地只读 Dashboard，默认打开 `http://127.0.0.1:8765/`。
 - `python jin10_monitor.py --lookup-date 2026-05-02 --lookup-start 20:05 --lookup-end 20:20`：直接从金十 REST 回溯指定时间窗口。
 - `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --no-catch-up-telegram`：手动补拉指定离线窗口，只入库不发 Telegram。
 - `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --catch-up-telegram --catch-up-max-send 10`：手动补拉并最多补发 10 条 Telegram；`--catch-up-max-store` 范围 `20-5000`，`--catch-up-max-send` 范围 `0-300`，`--catch-up-send-interval` 范围 `0-10` 秒。
@@ -99,6 +101,24 @@ HIGH_PRIORITY_FILE=config/high_priority.txt
 脚本会把冷启动、REST、WebSocket 收到的快讯写入 SQLite，本地数据库默认不提交到 Git。字段包括快讯 ID、发布时间、标题、正文、关键词命中、高优先级标记、金十重要标记、HTML 加粗标记、来源和原始 JSON。
 
 可用 `--context <消息ID>` 只读查看某条快讯前后上下文，默认前后 15 分钟；该命令只读取 SQLite，不触发 REST、Telegram 或补拉。
+
+## 本地 Dashboard
+
+可用 `--dashboard` 启动本地只读页面：
+
+```bash
+python jin10_monitor.py --dashboard
+```
+
+默认监听 `http://127.0.0.1:8765/`，页面包括最近快讯、单条消息上下文、Telegram 投递状态和聚合候选报告占位。Dashboard 只读打开 SQLite，不触发 REST、WebSocket、补拉或 Telegram 发送，也不接管 launchd 常驻监控服务。
+
+如端口被占用，可以改端口：
+
+```bash
+python jin10_monitor.py --dashboard --dashboard-port 8766
+```
+
+MVP 阶段仅允许绑定 `127.0.0.1` / `localhost`，不要暴露到公网或局域网。
 
 ## Telegram 投递状态
 

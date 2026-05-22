@@ -415,6 +415,48 @@ def test_query_context_missing_readonly_db_does_not_create_file(tmp_path, monkey
     assert not missing_db.exists()
 
 
+def test_dashboard_recent_items_reads_history_and_status(temp_history_db):
+    item = news_item("dashboard-item", when=datetime(2026, 5, 21, 9, 30, 0), content="dashboard hit")
+    jm.save_history_item(item, hit=True, high=False, source="rest", priority_level=jm.PRIORITY_NORMAL)
+    jm.record_telegram_delivery_status(
+        jm.get_db(),
+        "dashboard-item",
+        channel="telegram",
+        mode="realtime",
+        status=jm.TELEGRAM_STATUS_SENT,
+    )
+    jm.get_db().commit()
+
+    rows = jm.query_dashboard_recent_items(limit=10, with_status=True)
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == "dashboard-item"
+    assert rows[0]["telegram_status"] == jm.TELEGRAM_STATUS_SENT
+    assert rows[0]["telegram_mode"] == "realtime"
+
+
+def test_dashboard_missing_readonly_db_does_not_create_file(tmp_path, monkeypatch):
+    missing_db = tmp_path / "missing-dashboard.sqlite3"
+    monkeypatch.setattr(jm, "HISTORY_DB", missing_db)
+
+    with pytest.raises(FileNotFoundError):
+        jm.query_dashboard_recent_items(limit=5)
+
+    assert not missing_db.exists()
+
+
+def test_render_dashboard_index_outputs_local_readonly_page(temp_history_db):
+    item = news_item("dashboard-html", when=datetime(2026, 5, 21, 9, 35, 0), title="Dashboard title")
+    jm.save_history_item(item, hit=True, high=False, source="rest", priority_level=jm.PRIORITY_NORMAL)
+
+    html = jm.render_dashboard_index({}).decode("utf-8")
+
+    assert "Jin10 Monitor Dashboard" in html
+    assert "Dashboard title" in html
+    assert "/item/dashboard-html" in html
+    assert "SQLite mode=ro" in html
+
+
 def test_catch_up_window_filters_window_and_skips_delivered_candidates(temp_history_db, monkeypatch):
     start_dt = datetime(2026, 5, 17, 10, 0, 0)
     end_dt = datetime(2026, 5, 17, 10, 10, 0)

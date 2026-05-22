@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 2026-05-22
+
+- 新增本地只读 Dashboard MVP：支持 `--dashboard` 打开最近快讯、单条上下文、Telegram 投递状态和聚合报告占位页面，默认仅监听 `127.0.0.1` 且不触发 REST、WebSocket、补拉或 Telegram 发送。
+
 ## 2026-05-21
 
 - 新增 Dashboard MVP 设计文档：明确本地只读页面结构、SQLite 数据来源、localhost 启动方式、安全边界、与 Telegram inline / callback 的后续关系，以及实现前的风险控制。
