@@ -4,6 +4,8 @@
 
 ## 2026-05-22
 
+- 新增 Dashboard + AI 分析最终规格：冻结正式 FastAPI/Jinja2 独立 dashboard 方向，明确旧 `--dashboard` 原型保留但不继续扩展，AI 分析先采用 evidence packet + ChatGPT Business/Custom GPT 手工复制粘贴 + 回填保存。
+- 新增项目状态摘要 033：记录 Dashboard 原型已提交已推送、无需 revert，后续切到独立 dashboard 架构，且 Anthropic/Claude API 不作为 P0/P1 前置依赖。
 - 新增本地只读 Dashboard MVP：支持 `--dashboard` 打开最近快讯、单条上下文、Telegram 投递状态和聚合报告占位页面，默认仅监听 `127.0.0.1` 且不触发 REST、WebSocket、补拉或 Telegram 发送。
 
 ## 2026-05-21
