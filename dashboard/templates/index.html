@@ -164,6 +164,14 @@
       .summary {
         line-height: 1.5;
       }
+      .summary a {
+        color: #1f2528;
+        text-decoration: none;
+      }
+      .summary a:hover {
+        color: #1d6678;
+        text-decoration: underline;
+      }
       .pill {
         display: inline-flex;
         min-height: 22px;
@@ -271,7 +279,7 @@
                   {{ item.priority_level or 'T0_NONE' }}
                 </span>
               </td>
-              <td class="summary">{{ item.summary or item.id }}</td>
+              <td class="summary"><a href="/item/{{ item.id }}">{{ item.summary or item.id }}</a></td>
               <td class="source">{{ item.news_source or item.source or '' }}</td>
               <td class="status">
                 {% if item.telegram_status %}

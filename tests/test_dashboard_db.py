@@ -43,10 +43,7 @@ def create_dashboard_schema(db_path):
     return conn
 
 
-@pytest.fixture()
-def dashboard_history_db(tmp_path, monkeypatch):
-    db_path = tmp_path / "dashboard-history.sqlite3"
-    conn = create_dashboard_schema(db_path)
+def insert_flash(conn, item_id, published_at, title, priority="T1_NORMAL"):
     conn.execute(
         """
         INSERT INTO flash_history (
@@ -56,23 +53,30 @@ def dashboard_history_db(tmp_path, monkeypatch):
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            "dash-1",
-            "2026-05-23 09:30:00",
-            "Dashboard title",
-            "Dashboard content",
+            item_id,
+            published_at,
+            title,
+            f"{title} content",
             1,
             0,
             0,
             0,
-            "T1_NORMAL",
+            priority,
             0,
             "",
             "金十数据",
             "",
             "rest",
-            "2026-05-23 09:30:01",
+            published_at,
         ),
     )
+
+
+@pytest.fixture()
+def dashboard_history_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "dashboard-history.sqlite3"
+    conn = create_dashboard_schema(db_path)
+    insert_flash(conn, "dash-1", "2026-05-23 09:30:00", "Dashboard title")
     conn.execute(
         """
         INSERT INTO telegram_delivery_status (
@@ -124,6 +128,27 @@ def test_query_recent_items_clamps_limit(dashboard_history_db):
 def test_query_recent_items_filters_priority(dashboard_history_db):
     rows = db.query_recent_items(priority="T3_IMPORTANT")
 
+    assert rows == []
+
+
+def test_query_item_context_returns_window(dashboard_history_db):
+    conn = sqlite3.connect(dashboard_history_db)
+    insert_flash(conn, "dash-before", "2026-05-23 09:25:00", "Before title")
+    insert_flash(conn, "dash-after", "2026-05-23 09:40:00", "After title")
+    insert_flash(conn, "dash-outside", "2026-05-23 09:41:00", "Outside title")
+    conn.commit()
+    conn.close()
+
+    center, rows = db.query_item_context("dash-1", minutes=10)
+
+    assert center["id"] == "dash-1"
+    assert [row["id"] for row in rows] == ["dash-before", "dash-1", "dash-after"]
+
+
+def test_query_item_context_missing_item_returns_empty(dashboard_history_db):
+    center, rows = db.query_item_context("missing-id", minutes=10)
+
+    assert center is None
     assert rows == []
 
 

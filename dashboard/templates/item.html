@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jin10 Item {{ center.id }}</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #f6f7f7;
+        color: #1f2528;
+      }
+      main {
+        max-width: 960px;
+        margin: 32px auto;
+        padding: 0 24px;
+      }
+      a {
+        color: #1d6678;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      h1 {
+        font-size: 24px;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 24px 0 10px;
+      }
+      .meta {
+        color: #657177;
+        font-size: 13px;
+      }
+      .panel,
+      .timeline {
+        border: 1px solid #d9ddd8;
+        border-radius: 8px;
+        background: #fff;
+      }
+      .panel {
+        padding: 16px;
+      }
+      .back {
+        display: inline-flex;
+        margin-bottom: 18px;
+      }
+      .body {
+        line-height: 1.65;
+        margin-top: 12px;
+        white-space: pre-wrap;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .pill {
+        display: inline-flex;
+        min-height: 22px;
+        align-items: center;
+        border-radius: 999px;
+        background: #edf1f2;
+        color: #34454d;
+        padding: 0 8px;
+        font-size: 12px;
+      }
+      .pill.important {
+        background: #f9e5df;
+        color: #9d321d;
+      }
+      .pill.high {
+        background: #f5ead3;
+        color: #7a4b00;
+      }
+      .pill.sent {
+        background: #dff1e7;
+        color: #17633a;
+      }
+      .timeline-item {
+        display: grid;
+        grid-template-columns: 170px 120px 1fr;
+        gap: 12px;
+        padding: 12px 14px;
+        border-bottom: 1px solid #e4e7e5;
+      }
+      .timeline-item:last-child {
+        border-bottom: 0;
+      }
+      .timeline-item.center {
+        background: #eef6f8;
+      }
+      .time,
+      .priority {
+        white-space: nowrap;
+      }
+      .summary {
+        line-height: 1.5;
+      }
+      @media (max-width: 760px) {
+        .timeline-item {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back" href="/">返回首页</a>
+      <section class="panel">
+        <h1>{{ center.title or center.content or center.id }}</h1>
+        <div class="meta">{{ center.published_at }} · {{ center.id }}</div>
+        <div class="chips">
+          <span class="pill {{ 'important' if center.priority_level == 'T3_IMPORTANT' else 'high' if center.priority_level == 'T2_HIGH' else '' }}">{{ center.priority_level or 'T0_NONE' }}</span>
+          <span class="pill">{{ center.news_source or center.source or 'unknown source' }}</span>
+          {% if center.telegram_status %}
+          <span class="pill {{ 'sent' if center.telegram_status == 'sent' else '' }}">Telegram {{ center.telegram_status }}</span>
+          {% endif %}
+        </div>
+        {% if center.content and center.content != center.title %}
+        <div class="body">{{ center.content }}</div>
+        {% endif %}
+        {% if center.source_url %}
+        <div class="body"><a href="{{ center.source_url }}">来源链接</a></div>
+        {% endif %}
+        {% if center.pic_url %}
+        <div class="body"><a href="{{ center.pic_url }}">图片链接</a></div>
+        {% endif %}
+      </section>
+
+      <h2>前后 {{ minutes }} 分钟上下文</h2>
+      <div class="timeline">
+        {% for item in context_items %}
+        <div class="timeline-item {{ 'center' if item.id == center.id else '' }}">
+          <div class="time">{{ item.published_at or '' }}</div>
+          <div class="priority">
+            <span class="pill {{ 'important' if item.priority_level == 'T3_IMPORTANT' else 'high' if item.priority_level == 'T2_HIGH' else '' }}">{{ item.priority_level or 'T0_NONE' }}</span>
+          </div>
+          <div class="summary">
+            <a href="/item/{{ item.id }}?minutes={{ minutes }}">{{ item.summary or item.id }}</a>
+            {% if item.id == center.id %}<span class="meta"> · 中心消息</span>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </main>
+  </body>
+</html>

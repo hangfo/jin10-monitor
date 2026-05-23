@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from .db import history_health, query_recent_items
+from .db import history_health, query_item_context, query_recent_items
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 PRIORITY_OPTIONS = [
@@ -70,6 +70,20 @@ def create_app() -> FastAPI:
                 "params": params,
                 "priority_options": PRIORITY_OPTIONS,
             },
+        )
+
+    @app.get("/item/{message_id}")
+    async def item_detail(request: Request, message_id: str):
+        minutes = parse_int(request.query_params.get("minutes", "15"), 15, 0, 120)
+        center, context_items = query_item_context(message_id, minutes=minutes)
+        if not center:
+            raise HTTPException(status_code=404, detail="message not found")
+        for item in [center, *context_items]:
+            item["summary"] = compact_text(item.get("title"), item.get("content"), limit=180)
+        return templates.TemplateResponse(
+            request,
+            "item.html",
+            {"center": center, "context_items": context_items, "minutes": minutes},
         )
 
     @app.get("/healthz")

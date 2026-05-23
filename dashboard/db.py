@@ -112,3 +112,53 @@ def query_recent_items(
             params,
         ).fetchall()
     return [row_to_dict(row) for row in rows]
+
+
+def query_item_context(message_id: str, *, minutes: int = 15) -> tuple[Optional[dict[str, Any]], list[dict[str, Any]]]:
+    safe_minutes = max(0, min(int(minutes), 120))
+    select_fields = """
+        h.id, h.published_at, h.title, h.content, h.hit, h.high, h.important,
+        h.has_bold, h.priority_level, h.has_pic, h.pic_url, h.news_source,
+        h.source_url, h.source, h.created_at,
+        (
+            SELECT t.status
+            FROM telegram_delivery_status t
+            WHERE t.message_id = h.id
+            ORDER BY t.updated_at DESC
+            LIMIT 1
+        ) AS telegram_status,
+        (
+            SELECT t.mode
+            FROM telegram_delivery_status t
+            WHERE t.message_id = h.id
+            ORDER BY t.updated_at DESC
+            LIMIT 1
+        ) AS telegram_mode
+    """
+    with open_readonly_connection() as conn:
+        center = conn.execute(
+            f"""
+            SELECT {select_fields}
+            FROM flash_history h
+            WHERE h.id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+        if not center:
+            return None, []
+
+        rows = conn.execute(
+            f"""
+            SELECT {select_fields}
+            FROM flash_history h
+            WHERE h.published_at BETWEEN datetime(?, ?) AND datetime(?, ?)
+            ORDER BY h.published_at ASC, h.created_at ASC
+            """,
+            (
+                center["published_at"],
+                f"-{safe_minutes} minutes",
+                center["published_at"],
+                f"+{safe_minutes} minutes",
+            ),
+        ).fetchall()
+    return row_to_dict(center), [row_to_dict(row) for row in rows]

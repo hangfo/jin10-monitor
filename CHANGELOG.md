@@ -4,6 +4,7 @@
 
 ## 2026-05-23
 
+- 新增独立 Dashboard 单条详情页雏形：支持从首页点击快讯进入 `/item/{id}`，只读展示中心消息、Telegram 状态和前后时间窗口上下文。
 - 增强独立 Dashboard 首页快讯筛选：支持通过 URL query 选择优先级、返回条数和只看有 Telegram 状态的消息，并对参数做白名单和范围保护。
 - 新增独立 Dashboard 首页快讯流雏形：`run_dashboard.py` 首页读取只读 SQLite 最近快讯，展示时间、优先级、内容摘要、来源和 Telegram 状态，继续保持不写业务库、不触发金十 REST、不发送 Telegram。
 - 新增独立 Dashboard 只读 SQLite 查询层：封装 `HISTORY_DB` 路径解析、`mode=ro` + `query_only` 连接、schema 健康检查和最近快讯查询，并用临时 SQLite 测试保护缺库不创建、只读连接拒绝写入和 Telegram 状态联查。
