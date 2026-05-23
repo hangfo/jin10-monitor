@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Telegram 投递状态{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <h1>Telegram 投递状态</h1>
+    <div class="meta">只读，不提供重试或补发</div>
+  </div>
+
+  {% if summary %}
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">sent</div>
+      <div class="stat-value" style="color:var(--sent-fg)">{{ summary.sent }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">delivery_log</div>
+      <div class="stat-value">{{ summary.confirmed_sent }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">failed</div>
+      <div class="stat-value" style="color:var(--fail-fg)">{{ summary.failed }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">unknown_timeout</div>
+      <div class="stat-value" style="color:var(--warn-fg)">{{ summary.unknown_timeout }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">success rate</div>
+      <div class="stat-value">{{ summary.success_rate }}%</div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:12px">
+    <span class="mono">unknown_timeout</span> 只表示请求发出后未拿到确认，不等同成功；成功去重仍以 <span class="mono">delivery_log</span> 为准。
+  </div>
+  {% endif %}
+
+  <form class="filters" method="get" action="/telegram-status">
+    <div class="filter-group">
+      <span class="filter-label">状态</span>
+      <select name="status">
+        {% for value, label in status_options %}
+        <option value="{{ value }}"{{ ' selected' if status_filter == value }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit">筛选</button>
+    <a class="button-link secondary" href="/telegram-status">重置</a>
+  </form>
+
+  {% if deliveries %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>更新时间</th>
+          <th>状态</th>
+          <th>模式</th>
+          <th>优先级</th>
+          <th>消息</th>
+          <th>详情</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in deliveries %}
+        <tr>
+          <td class="time mono">{{ item.updated_at or '' }}</td>
+          <td class="status"><span class="pill {{ item.status }}">{{ item.status }}</span></td>
+          <td class="source meta">{{ item.mode or '' }}</td>
+          <td class="priority"><span class="pill {{ priority_class(item.priority_level) }}">{{ item.priority_level or 'T0_NONE' }}</span></td>
+          <td class="summary">
+            <a href="/item/{{ item.message_id }}">{{ item.summary or item.message_id }}</a>
+            <div class="meta mono">{{ item.message_id }}</div>
+          </td>
+          <td class="meta mono">{{ item.detail or '-' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card"><div class="empty">暂无投递记录</div></div>
+  {% endif %}
+{% endblock %}

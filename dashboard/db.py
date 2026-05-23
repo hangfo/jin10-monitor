@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import urllib.parse
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -18,6 +19,9 @@ REQUIRED_TABLES = {
     "delivery_log",
     "telegram_delivery_status",
 }
+
+HOURS_OPTIONS = [1, 6, 24, 72]
+DEFAULT_HOURS = 24
 
 
 def history_db_path() -> Path:
@@ -43,6 +47,32 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 def existing_tables(conn: sqlite3.Connection) -> set[str]:
     rows = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
     return {str(row["name"]) for row in rows}
+
+
+def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {str(row["name"]) for row in rows}
+
+
+def optional_column(columns: set[str], name: str, alias: Optional[str] = None) -> str:
+    if name in columns:
+        return f"h.{name}"
+    return f"'' AS {alias or name}"
+
+
+def since_text(hours: int) -> str:
+    safe_hours = max(1, min(int(hours), 720))
+    return (datetime.now() - timedelta(hours=safe_hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def parse_history_datetime(value: object) -> Optional[datetime]:
+    text = str(value or "").strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(text[:19], fmt)
+        except ValueError:
+            continue
+    return None
 
 
 def history_health() -> dict[str, Any]:
@@ -71,17 +101,26 @@ def query_recent_items(
     *,
     limit: int = 80,
     priority: str = "",
+    keyword: str = "",
+    hours: int = DEFAULT_HOURS,
+    tg_sent_only: bool = False,
     with_status: bool = False,
 ) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 300))
-    clauses = []
-    params: list[object] = []
+    clauses = ["h.published_at >= ?"]
+    params: list[object] = [since_text(hours)]
     if priority:
         clauses.append("h.priority_level = ?")
         params.append(priority)
+    if keyword:
+        clauses.append("(h.title LIKE ? OR h.content LIKE ?)")
+        pattern = f"%{keyword[:80]}%"
+        params.extend([pattern, pattern])
+    if tg_sent_only:
+        clauses.append("EXISTS (SELECT 1 FROM delivery_log dl WHERE dl.message_id = h.id)")
     if with_status:
         clauses.append("EXISTS (SELECT 1 FROM telegram_delivery_status t WHERE t.message_id = h.id)")
-    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    where = "WHERE " + " AND ".join(clauses)
     params.append(safe_limit)
 
     with open_readonly_connection() as conn:
@@ -103,7 +142,10 @@ def query_recent_items(
                        WHERE t.message_id = h.id
                        ORDER BY t.updated_at DESC
                        LIMIT 1
-                   ) AS telegram_mode
+                   ) AS telegram_mode,
+                   EXISTS (
+                       SELECT 1 FROM delivery_log dl WHERE dl.message_id = h.id
+                   ) AS tg_confirmed_sent
             FROM flash_history h
             {where}
             ORDER BY h.published_at DESC, h.created_at DESC
@@ -112,6 +154,73 @@ def query_recent_items(
             params,
         ).fetchall()
     return [row_to_dict(row) for row in rows]
+
+
+def query_feed_density(*, hours: int = DEFAULT_HOURS) -> list[dict[str, Any]]:
+    with open_readonly_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT strftime('%H', published_at) AS hour_slot,
+                   SUM(CASE WHEN priority_level IN ('T3_IMPORTANT', 'T2_HIGH') THEN 1 ELSE 0 END) AS hot_count,
+                   COUNT(*) AS total_count
+            FROM flash_history
+            WHERE published_at >= ?
+            GROUP BY hour_slot
+            ORDER BY hour_slot ASC
+            """,
+            (since_text(hours),),
+        ).fetchall()
+    return [row_to_dict(row) for row in rows]
+
+
+def query_keyword_heatmap(*, hours: int = DEFAULT_HOURS, limit: int = 12) -> list[dict[str, Any]]:
+    keywords = [
+        "美联储",
+        "降息",
+        "通胀",
+        "非农",
+        "CPI",
+        "PCE",
+        "美元",
+        "黄金",
+        "原油",
+        "关税",
+        "特朗普",
+        "就业",
+    ]
+    rows: list[dict[str, Any]] = []
+    with open_readonly_connection() as conn:
+        for keyword in keywords:
+            count = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM flash_history
+                WHERE published_at >= ? AND (title LIKE ? OR content LIKE ?)
+                """,
+                (since_text(hours), f"%{keyword}%", f"%{keyword}%"),
+            ).fetchone()[0]
+            if count:
+                rows.append({"keyword": keyword, "count": count})
+    return sorted(rows, key=lambda row: row["count"], reverse=True)[: max(1, min(limit, 24))]
+
+
+def query_item(message_id: str) -> Optional[dict[str, Any]]:
+    with open_readonly_connection() as conn:
+        columns = table_columns(conn, "flash_history")
+        row = conn.execute(
+            f"""
+            SELECT h.id, h.published_at, h.title, h.content, h.hit, h.high, h.important,
+                   h.has_bold, h.priority_level, h.has_pic, h.pic_url, h.news_source,
+                   h.source_url, h.source, h.created_at,
+                   {optional_column(columns, "has_title")},
+                   {optional_column(columns, "style_flags")},
+                   {optional_column(columns, "raw_json")}
+            FROM flash_history h
+            WHERE h.id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+    return row_to_dict(row) if row else None
 
 
 def query_item_context(message_id: str, *, minutes: int = 15) -> tuple[Optional[dict[str, Any]], list[dict[str, Any]]]:
@@ -162,3 +271,139 @@ def query_item_context(message_id: str, *, minutes: int = 15) -> tuple[Optional[
             ),
         ).fetchall()
     return row_to_dict(center), [row_to_dict(row) for row in rows]
+
+
+def query_tg_status_for_item(message_id: str) -> Optional[dict[str, Any]]:
+    with open_readonly_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT status, detail, mode, updated_at
+            FROM telegram_delivery_status
+            WHERE message_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (message_id,),
+        ).fetchone()
+    return row_to_dict(row) if row else None
+
+
+def query_tg_deliveries(*, status_filter: str = "all", limit: int = 120) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 500))
+    clauses = []
+    params: list[object] = []
+    if status_filter != "all":
+        clauses.append("t.status = ?")
+        params.append(status_filter)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    params.append(safe_limit)
+    with open_readonly_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT t.message_id, t.status, t.mode, t.detail, t.updated_at,
+                   h.title, h.content, h.published_at, h.priority_level
+            FROM telegram_delivery_status t
+            LEFT JOIN flash_history h ON h.id = t.message_id
+            {where}
+            ORDER BY t.updated_at DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    return [row_to_dict(row) for row in rows]
+
+
+def query_tg_summary(*, hours: int = DEFAULT_HOURS) -> dict[str, Any]:
+    since = since_text(hours)
+    with open_readonly_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT status, COUNT(*) AS count
+            FROM telegram_delivery_status
+            WHERE updated_at >= ?
+            GROUP BY status
+            """,
+            (since,),
+        ).fetchall()
+        counts = {str(row["status"]): int(row["count"]) for row in rows}
+        confirmed_sent = conn.execute(
+            "SELECT COUNT(*) FROM delivery_log WHERE sent_at >= ?",
+            (since,),
+        ).fetchone()[0]
+    sent = counts.get("sent", 0)
+    failed = counts.get("failed", 0)
+    return {
+        "sent": sent,
+        "failed": failed,
+        "unknown_timeout": counts.get("unknown_timeout", 0),
+        "skipped": counts.get("skipped", 0),
+        "confirmed_sent": confirmed_sent,
+        "success_rate": round(sent / max(sent + failed, 1) * 100),
+    }
+
+
+def query_system_health() -> dict[str, Any]:
+    db_path = history_db_path()
+    since = since_text(24)
+    with open_readonly_connection() as conn:
+        total_items = conn.execute("SELECT COUNT(*) FROM flash_history").fetchone()[0]
+        today_t3 = conn.execute(
+            "SELECT COUNT(*) FROM flash_history WHERE priority_level = 'T3_IMPORTANT' AND published_at >= ?",
+            (since,),
+        ).fetchone()[0]
+        today_t2 = conn.execute(
+            "SELECT COUNT(*) FROM flash_history WHERE priority_level = 'T2_HIGH' AND published_at >= ?",
+            (since,),
+        ).fetchone()[0]
+        today_sent = conn.execute(
+            "SELECT COUNT(*) FROM delivery_log WHERE sent_at >= ?",
+            (since,),
+        ).fetchone()[0]
+        today_failed = conn.execute(
+            "SELECT COUNT(*) FROM telegram_delivery_status WHERE status = 'failed' AND updated_at >= ?",
+            (since,),
+        ).fetchone()[0]
+        state_rows = conn.execute("SELECT key, value FROM runtime_state").fetchall()
+    state = {str(row["key"]): str(row["value"]) for row in state_rows}
+    last_ingested_at = state.get("last_ingested_at", "")
+    last_dt = parse_history_datetime(last_ingested_at)
+    minutes_stale = round((datetime.now() - last_dt).total_seconds() / 60, 1) if last_dt else None
+    if minutes_stale is None:
+        monitor_status = "unknown"
+    elif minutes_stale < 5:
+        monitor_status = "ok"
+    elif minutes_stale < 30:
+        monitor_status = "warn"
+    else:
+        monitor_status = "error"
+    return {
+        "monitor_status": monitor_status,
+        "minutes_stale": minutes_stale,
+        "last_ingested_at": last_ingested_at,
+        "last_startup": state.get("last_startup_at", ""),
+        "last_catchup_at": state.get("last_catchup_at", ""),
+        "db_path": str(db_path),
+        "db_size_mb": round(db_path.stat().st_size / 1024 / 1024, 2) if db_path.exists() else 0,
+        "total_items": total_items,
+        "today_t3": today_t3,
+        "today_t2": today_t2,
+        "today_sent": today_sent,
+        "today_failed": today_failed,
+    }
+
+
+def query_nav_summary() -> dict[str, Any]:
+    try:
+        with open_readonly_connection() as conn:
+            since = since_text(24)
+            t3 = conn.execute(
+                "SELECT COUNT(*) FROM flash_history WHERE priority_level = 'T3_IMPORTANT' AND published_at >= ?",
+                (since,),
+            ).fetchone()[0]
+            total = conn.execute(
+                "SELECT COUNT(*) FROM flash_history WHERE published_at >= ?",
+                (since,),
+            ).fetchone()[0]
+        return {"ok": True, "t3": t3, "total": total}
+    except (FileNotFoundError, sqlite3.Error):
+        return {"ok": False, "t3": 0, "total": 0}

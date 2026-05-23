@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Jin10 Monitor Dashboard{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <h1>快讯流</h1>
+    <div class="meta">{{ items | length }} items loaded</div>
+  </div>
+
+  <div class="panel">
+    <div class="health-grid">
+      <div class="health-item">
+        <div class="health-label">状态</div>
+        <div class="health-value mono">{{ health.status }}</div>
+      </div>
+      <div class="health-item">
+        <div class="health-label">业务库写入</div>
+        <div class="health-value mono">{{ health.writes_business_db }}</div>
+      </div>
+      <div class="health-item">
+        <div class="health-label">金十 REST</div>
+        <div class="health-value mono">{{ health.calls_jin10_rest }}</div>
+      </div>
+      <div class="health-item">
+        <div class="health-label">Telegram</div>
+        <div class="health-value mono">{{ health.sends_telegram }}</div>
+      </div>
+      <div class="health-item">
+        <div class="health-label">Schema</div>
+        <div class="health-value mono">{{ 'ok' if not health.missing_tables else health.missing_tables | join(', ') }}</div>
+      </div>
+      <div class="health-item wide">
+        <div class="health-label">历史库</div>
+        <div class="health-value mono">{{ health.history_db }}</div>
+      </div>
+    </div>
+  </div>
+
+  {% if density %}
+  <div class="density-bar" title="最近 {{ params.hours }} 小时每小时消息密度">
+    {% for slot in density %}
+      {% set total = slot.total_count or 0 %}
+      {% set hot = slot.hot_count or 0 %}
+      {% set cls = 'hot' if hot >= 2 else ('warm' if hot >= 1 else '') %}
+      <div class="density-slot {{ cls }}" style="height: {{ [total * 5, 32] | min }}px" title="{{ slot.hour_slot }}:00 / {{ total }} 条 / 重要 {{ hot }} 条"></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <form class="filters" method="get" action="/">
+    <div class="filter-group">
+      <span class="filter-label">优先级</span>
+      <select name="priority">
+        {% for value, label in priority_options %}
+        <option value="{{ value }}"{{ ' selected' if params.priority == value }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">关键词</span>
+      <input type="text" name="keyword" value="{{ params.keyword }}" placeholder="标题或正文">
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">时间范围</span>
+      <select name="hours">
+        {% for hours in hours_options %}
+        <option value="{{ hours }}"{{ ' selected' if params.hours == hours }}>最近 {{ hours }}h</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">条数</span>
+      <input type="number" name="limit" min="1" max="300" value="{{ params.limit }}" style="width:78px">
+    </div>
+    <label class="check">
+      <input type="checkbox" name="tg_sent_only" value="1"{{ ' checked' if params.tg_sent_only }}>
+      仅已推 Telegram
+    </label>
+    <button type="submit">筛选</button>
+    <a class="button-link secondary" href="/">重置</a>
+  </form>
+
+  {% if heatmap %}
+  <div class="panel" style="margin-bottom:12px">
+    <div class="muted" style="margin-bottom:8px">关键词热力</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      {% for item in heatmap %}
+      <a class="pill" href="/?keyword={{ item.keyword }}&hours={{ params.hours }}">{{ item.keyword }} · {{ item.count }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if items %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>优先级</th>
+          <th>内容</th>
+          <th>来源</th>
+          <th>Telegram</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        {% set row_class = priority_class(item.priority_level) %}
+        <tr class="row-{{ row_class }}">
+          <td class="time mono">{{ item.published_at or '' }}</td>
+          <td class="priority">
+            <span class="pill {{ row_class }}">{{ item.priority_level or 'T0_NONE' }}</span>
+          </td>
+          <td class="summary">
+            <a href="/item/{{ item.id }}">{{ item.summary or item.id }}</a>
+            {% if item.news_source %}
+            <div class="meta">{{ item.news_source }}</div>
+            {% endif %}
+          </td>
+          <td class="source meta">{{ item.source or '' }}</td>
+          <td class="status">
+            {% if item.tg_confirmed_sent %}
+            <span class="pill sent">sent</span>
+            {% elif item.telegram_status %}
+            <span class="pill {{ item.telegram_status }}">{{ item.telegram_status }}</span>
+            {% else %}
+            <span class="meta">-</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card"><div class="empty">暂无匹配快讯</div></div>
+  {% endif %}
+{% endblock %}

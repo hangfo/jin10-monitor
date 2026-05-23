@@ -4,6 +4,7 @@
 
 ## 2026-05-23
 
+- 扩展独立 Dashboard Phase 1 页面：新增共享导航模板、Telegram 投递状态页、系统健康页和分析占位页，并增强首页关键词、时间范围和“仅已推 Telegram”筛选；已确认发送语义改用 `delivery_log`。
 - 新增独立 Dashboard 单条详情页雏形：支持从首页点击快讯进入 `/item/{id}`，只读展示中心消息、Telegram 状态和前后时间窗口上下文。
 - 增强独立 Dashboard 首页快讯筛选：支持通过 URL query 选择优先级、返回条数和只看有 Telegram 状态的消息，并对参数做白名单和范围保护。
 - 新增独立 Dashboard 首页快讯流雏形：`run_dashboard.py` 首页读取只读 SQLite 最近快讯，展示时间、优先级、内容摘要、来源和 Telegram 状态，继续保持不写业务库、不触发金十 REST、不发送 Telegram。

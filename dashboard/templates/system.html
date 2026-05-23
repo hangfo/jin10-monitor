@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}系统健康{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <h1>系统健康</h1>
+    <div class="meta">只读自检</div>
+  </div>
+
+  {% if not system_health %}
+  <div class="card"><div class="empty">历史库不可用，无法读取系统状态</div></div>
+  {% else %}
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">监控状态</div>
+      <div class="stat-value">{{ system_health.monitor_status }}</div>
+      <div class="meta">
+        {% if system_health.minutes_stale is not none %}
+        {{ system_health.minutes_stale }} 分钟未入库
+        {% else %}
+        无 last_ingested_at
+        {% endif %}
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">历史库</div>
+      <div class="stat-value">{{ system_health.db_size_mb }} MB</div>
+      <div class="meta">{{ system_health.total_items }} 条记录</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">24h T3 / T2</div>
+      <div class="stat-value">{{ system_health.today_t3 }} / {{ system_health.today_t2 }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">24h Telegram</div>
+      <div class="stat-value">{{ system_health.today_sent }}</div>
+      <div class="meta">failed {{ system_health.today_failed }}</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <table style="min-width:0">
+      <tbody>
+        <tr><th>最后入库</th><td class="mono">{{ system_health.last_ingested_at or '-' }}</td></tr>
+        <tr><th>最后启动</th><td class="mono">{{ system_health.last_startup or '-' }}</td></tr>
+        <tr><th>最后补拉</th><td class="mono">{{ system_health.last_catchup_at or '-' }}</td></tr>
+        <tr><th>历史库路径</th><td class="mono">{{ system_health.db_path }}</td></tr>
+        <tr><th>业务库写入</th><td class="mono">False</td></tr>
+        <tr><th>金十 REST</th><td class="mono">False</td></tr>
+        <tr><th>Telegram 发送</th><td class="mono">False</td></tr>
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+{% endblock %}

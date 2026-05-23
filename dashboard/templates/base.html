@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Jin10 Monitor Dashboard{% endblock %}</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --bg: #f6f7f7;
+        --surface: #fff;
+        --border: #d9ddd8;
+        --border-soft: #e4e7e5;
+        --text: #1f2528;
+        --muted: #657177;
+        --accent: #1d6678;
+        --t3-bg: #f9e5df;
+        --t3-fg: #9d321d;
+        --t2-bg: #f5ead3;
+        --t2-fg: #7a4b00;
+        --sent-bg: #dff1e7;
+        --sent-fg: #17633a;
+        --fail-bg: #fde7e7;
+        --fail-fg: #9d221d;
+        --warn-bg: #fff1d6;
+        --warn-fg: #7a4b00;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      nav {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+        padding: 0 24px;
+      }
+      .brand {
+        color: var(--text);
+        font-weight: 650;
+        margin-right: 16px;
+        padding: 14px 0;
+      }
+      .nav-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-bottom: 2px solid transparent;
+        color: var(--muted);
+        padding: 14px 12px 12px;
+        font-size: 13px;
+      }
+      .nav-link.active {
+        border-bottom-color: var(--accent);
+        color: var(--accent);
+      }
+      .nav-badge {
+        border-radius: 999px;
+        background: var(--t3-bg);
+        color: var(--t3-fg);
+        font-size: 11px;
+        padding: 1px 6px;
+      }
+      main {
+        max-width: 1240px;
+        margin: 28px auto 48px;
+        padding: 0 24px;
+      }
+      h1 {
+        font-size: 24px;
+        font-weight: 650;
+        margin: 0;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 24px 0 10px;
+      }
+      .page-head {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 18px;
+      }
+      .meta,
+      .muted {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .panel,
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+      }
+      .panel,
+      .card-body {
+        padding: 14px 16px;
+      }
+      .error-banner {
+        border: 1px solid #f1b5ae;
+        border-radius: 8px;
+        background: var(--fail-bg);
+        color: var(--fail-fg);
+        margin-bottom: 16px;
+        padding: 12px 14px;
+      }
+      .filters {
+        display: flex;
+        align-items: end;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 18px 0 12px;
+      }
+      label,
+      .filter-label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .filter-group {
+        display: grid;
+        gap: 4px;
+      }
+      select,
+      input[type="number"],
+      input[type="text"] {
+        height: 34px;
+        border: 1px solid #cfd7d3;
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--text);
+        padding: 0 10px;
+        font: inherit;
+      }
+      input[type="text"] {
+        width: 180px;
+      }
+      .check {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 34px;
+        color: var(--text);
+      }
+      button,
+      .button-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 34px;
+        border: 1px solid var(--accent);
+        border-radius: 6px;
+        background: var(--accent);
+        color: #fff;
+        padding: 0 12px;
+        font: inherit;
+        text-decoration: none;
+      }
+      .button-link.secondary {
+        border-color: #cfd7d3;
+        background: var(--surface);
+        color: var(--text);
+      }
+      .table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+      }
+      table {
+        width: 100%;
+        min-width: 920px;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        border-bottom: 1px solid var(--border-soft);
+        padding: 10px 12px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: #eef1f2;
+        color: #56646a;
+        font-size: 12px;
+        font-weight: 650;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      .summary {
+        line-height: 1.5;
+      }
+      .time,
+      .source,
+      .status,
+      .priority {
+        white-space: nowrap;
+      }
+      .pill {
+        display: inline-flex;
+        min-height: 22px;
+        align-items: center;
+        border-radius: 999px;
+        background: #edf1f2;
+        color: #34454d;
+        padding: 0 8px;
+        font-size: 12px;
+      }
+      .pill.important {
+        background: var(--t3-bg);
+        color: var(--t3-fg);
+      }
+      .pill.high {
+        background: var(--t2-bg);
+        color: var(--t2-fg);
+      }
+      .pill.sent {
+        background: var(--sent-bg);
+        color: var(--sent-fg);
+      }
+      .pill.failed {
+        background: var(--fail-bg);
+        color: var(--fail-fg);
+      }
+      .pill.unknown_timeout,
+      .pill.skipped {
+        background: var(--warn-bg);
+        color: var(--warn-fg);
+      }
+      tr.row-important {
+        box-shadow: inset 3px 0 0 #d84a2a;
+      }
+      tr.row-high {
+        box-shadow: inset 3px 0 0 #d8911d;
+      }
+      .empty {
+        color: var(--muted);
+        padding: 24px;
+        text-align: center;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+      .stat-card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 14px 16px;
+      }
+      .stat-label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .stat-value {
+        font-size: 24px;
+        font-weight: 650;
+        margin-top: 4px;
+      }
+      .health-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px 16px;
+      }
+      .health-item.wide {
+        grid-column: 1 / -1;
+      }
+      .health-label {
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 4px;
+      }
+      .health-value {
+        word-break: break-word;
+      }
+      .timeline-item {
+        display: grid;
+        grid-template-columns: 170px 120px 1fr;
+        gap: 12px;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .timeline-item.center {
+        background: #eef6f8;
+      }
+      .density-bar {
+        display: flex;
+        align-items: end;
+        gap: 2px;
+        height: 34px;
+        margin-bottom: 12px;
+      }
+      .density-slot {
+        flex: 1;
+        min-height: 4px;
+        border-radius: 2px 2px 0 0;
+        background: #c9d9de;
+      }
+      .density-slot.hot {
+        background: #d84a2a;
+      }
+      .density-slot.warm {
+        background: #d8911d;
+      }
+      @media (max-width: 760px) {
+        nav {
+          overflow-x: auto;
+          padding: 0 12px;
+        }
+        main {
+          padding: 0 14px;
+        }
+        .page-head,
+        .timeline-item {
+          align-items: flex-start;
+          grid-template-columns: 1fr;
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <a class="brand" href="/">Jin10 Monitor</a>
+      <a class="nav-link {{ 'active' if request.url.path == '/' }}" href="/">
+        快讯流
+        {% if nav.t3 %}<span class="nav-badge">{{ nav.t3 }} T3</span>{% endif %}
+      </a>
+      <a class="nav-link {{ 'active' if request.url.path.startswith('/telegram-status') }}" href="/telegram-status">投递状态</a>
+      <a class="nav-link {{ 'active' if request.url.path.startswith('/system') }}" href="/system">系统</a>
+      <a class="nav-link {{ 'active' if request.url.path.startswith('/analyze') }}" href="/analyze">分析</a>
+    </nav>
+    <main>
+      {% if health.status != 'ok' %}
+      <div class="error-banner">
+        <strong>历史库不可用：</strong>{{ health.status }}
+        {% if health.missing_tables %}，缺表：{{ health.missing_tables | join(', ') }}{% endif %}
+        <div class="mono">{{ health.history_db }}</div>
+      </div>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

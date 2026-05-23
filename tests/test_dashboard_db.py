@@ -118,6 +118,32 @@ def test_query_recent_items_reads_latest_status(dashboard_history_db):
     assert rows[0]["telegram_mode"] == "realtime"
 
 
+def test_query_recent_items_filters_confirmed_telegram_delivery(dashboard_history_db):
+    rows = db.query_recent_items(limit=10, tg_sent_only=True)
+    assert rows == []
+
+    conn = sqlite3.connect(dashboard_history_db)
+    conn.execute(
+        "INSERT INTO delivery_log (message_id, sent_at) VALUES (?, ?)",
+        ("dash-1", "2026-05-23 09:30:03"),
+    )
+    conn.commit()
+    conn.close()
+
+    rows = db.query_recent_items(limit=10, tg_sent_only=True)
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == "dash-1"
+    assert rows[0]["tg_confirmed_sent"] == 1
+
+
+def test_query_recent_items_filters_keyword(dashboard_history_db):
+    rows = db.query_recent_items(keyword="Dashboard")
+
+    assert [row["id"] for row in rows] == ["dash-1"]
+    assert db.query_recent_items(keyword="missing keyword") == []
+
+
 def test_query_recent_items_clamps_limit(dashboard_history_db):
     rows = db.query_recent_items(limit=0)
 
@@ -163,12 +189,22 @@ def test_feed_params_normalizes_query_values():
         query_params = {
             "priority": "bad",
             "limit": "999",
+            "keyword": "Dashboard",
+            "hours": "6",
+            "tg_sent_only": "1",
             "with_status": "on",
         }
 
     params = feed_params(Request())
 
-    assert params == {"limit": 300, "priority": "", "with_status": True}
+    assert params == {
+        "limit": 300,
+        "priority": "",
+        "keyword": "Dashboard",
+        "hours": 6,
+        "tg_sent_only": True,
+        "with_status": True,
+    }
 
 
 def test_missing_history_db_does_not_create_file(tmp_path, monkeypatch):

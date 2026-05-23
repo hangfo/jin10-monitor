@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}分析工作台{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <h1>分析工作台</h1>
+    <div class="meta">Phase 2A 占位</div>
+  </div>
+
+  {% if prefill.from_item_id %}
+  <div class="panel" style="margin-bottom:12px">
+    来自消息 <a class="mono" href="/item/{{ prefill.from_item_id }}">{{ prefill.from_item_id }}</a>
+    <div class="meta mono">{{ prefill.window_start }} - {{ prefill.window_end }}</div>
+  </div>
+  {% endif %}
+
+  <div class="card card-body">
+    <h2 style="margin-top:0">Evidence packet + 手工 AI 回填将在 Phase 2A 实现</h2>
+    <p class="muted">
+      当前页面只接收详情页预填参数，不构建证据包，不写分析库，不调用任何模型 API。
+    </p>
+  </div>
+{% endblock %}
