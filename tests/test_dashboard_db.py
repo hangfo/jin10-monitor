@@ -157,6 +157,15 @@ def test_query_recent_items_filters_priority(dashboard_history_db):
     assert rows == []
 
 
+def test_query_keyword_heatmap_uses_configured_keywords(dashboard_history_db, monkeypatch):
+    monkeypatch.setattr(db, "HIGH_PRIORITY", ["Dashboard"])
+    monkeypatch.setattr(db, "KEYWORDS", ["Dashboard", "unused-custom-keyword"])
+
+    rows = db.query_keyword_heatmap(hours=24)
+
+    assert rows[0] == {"keyword": "Dashboard", "count": 1, "is_high": True}
+
+
 def test_query_item_context_returns_window(dashboard_history_db):
     conn = sqlite3.connect(dashboard_history_db)
     insert_flash(conn, "dash-before", "2026-05-23 09:25:00", "Before title")

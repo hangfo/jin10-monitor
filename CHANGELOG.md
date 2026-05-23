@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 新增独立 Dashboard Phase 2A 手工 AI 分析流：支持从本地只读 SQLite 构建 evidence packet、生成 ChatGPT Business/Custom GPT 复制用 Prompt、回填并解析答案、保存到独立 `data/dashboard_analysis.sqlite3`，并提供分析详情与历史记录页面；快讯流增加安全自动刷新，关键词热力改用真实监控关键词；不接模型 API、不请求金十 REST、不写业务历史库。
+
 ## 2026-05-23
 
 - 扩展独立 Dashboard Phase 1 页面：新增共享导航模板、Telegram 投递状态页、系统健康页和分析占位页，并增强首页关键词、时间范围和“仅已推 Telegram”筛选；已确认发送语义改用 `delivery_log`。

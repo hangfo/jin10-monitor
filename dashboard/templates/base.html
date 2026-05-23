@@ -12,13 +12,21 @@
         --surface: #fff;
         --border: #d9ddd8;
         --border-soft: #e4e7e5;
+        --border-sm: #e4e7e5;
         --text: #1f2528;
         --muted: #657177;
+        --dim: #8b989e;
         --accent: #1d6678;
+        --accent-fg: #fff;
+        --radius: 6px;
         --t3-bg: #f9e5df;
         --t3-fg: #9d321d;
         --t2-bg: #f5ead3;
         --t2-fg: #7a4b00;
+        --t1-bg: #e8f1ec;
+        --t1-fg: #2b5d42;
+        --t0-bg: #edf1f2;
+        --t0-fg: #34454d;
         --sent-bg: #dff1e7;
         --sent-fg: #17633a;
         --fail-bg: #fde7e7;
@@ -229,6 +237,22 @@
         background: var(--t2-bg);
         color: var(--t2-fg);
       }
+      .pill.t3 {
+        background: var(--t3-bg);
+        color: var(--t3-fg);
+      }
+      .pill.t2 {
+        background: var(--t2-bg);
+        color: var(--t2-fg);
+      }
+      .pill.t1 {
+        background: var(--t1-bg);
+        color: var(--t1-fg);
+      }
+      .pill.t0 {
+        background: var(--t0-bg);
+        color: var(--t0-fg);
+      }
       .pill.sent {
         background: var(--sent-bg);
         color: var(--sent-fg);
@@ -255,6 +279,10 @@
       }
       .mono {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+      .text-dim {
+        color: var(--dim);
         font-size: 12px;
       }
       .stat-grid {
@@ -339,6 +367,7 @@
         }
       }
     </style>
+    {% block head %}{% endblock %}
   </head>
   <body>
     <nav>

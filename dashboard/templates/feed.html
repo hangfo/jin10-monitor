@@ -4,7 +4,7 @@
 {% block content %}
   <div class="page-head">
     <h1>快讯流</h1>
-    <div class="meta">{{ items | length }} items loaded</div>
+    <div class="meta">{{ items | length }} items loaded · 30s 自动刷新</div>
   </div>
 
   <div class="panel">
@@ -85,7 +85,7 @@
     <div class="muted" style="margin-bottom:8px">关键词热力</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       {% for item in heatmap %}
-      <a class="pill" href="/?keyword={{ item.keyword }}&hours={{ params.hours }}">{{ item.keyword }} · {{ item.count }}</a>
+      <a class="pill {{ 'high' if item.is_high else '' }}" href="/?keyword={{ item.keyword }}&hours={{ params.hours }}">{{ item.keyword }} · {{ item.count }}</a>
       {% endfor %}
     </div>
   </div>
@@ -135,4 +135,14 @@
   {% else %}
   <div class="card"><div class="empty">暂无匹配快讯</div></div>
   {% endif %}
+
+  <script>
+    setTimeout(() => {
+      const tag = (document.activeElement && document.activeElement.tagName || "").toLowerCase();
+      const editing = ["input", "select", "textarea"].includes(tag);
+      if (!editing && !document.hidden) {
+        window.location.reload();
+      }
+    }, 30000);
+  </script>
 {% endblock %}

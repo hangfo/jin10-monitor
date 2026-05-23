@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from .analysis_db import create_run, delete_run, get_run, init_analysis_db, list_runs, save_answer
 from .db import (
     DEFAULT_HOURS,
     HOURS_OPTIONS,
@@ -26,6 +28,8 @@ from .db import (
     query_tg_status_for_item,
     query_tg_summary,
 )
+from .evidence import build_evidence_for_preview, known_assets
+from .manual_ai import PROMPT_VERSION, generate_prompt, parse_answer, render_answer_with_links
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 PRIORITY_OPTIONS = [
@@ -63,6 +67,15 @@ def priority_class(level: object) -> str:
     }.get(str(level or ""), "none")
 
 
+def priority_css(level: object) -> str:
+    return {
+        "T3_IMPORTANT": "t3",
+        "T2_HIGH": "t2",
+        "T1_NORMAL": "t1",
+        "T0_NONE": "t0",
+    }.get(str(level or ""), "t0")
+
+
 def parse_int(value: object, default: int, minimum: int, maximum: int) -> int:
     try:
         parsed = int(str(value))
@@ -86,10 +99,27 @@ def feed_params(request: Request) -> dict[str, object]:
     }
 
 
+async def read_urlencoded_form(request: Request) -> dict[str, str]:
+    body = (await request.body()).decode("utf-8", errors="replace")
+    parsed = parse_qs(body, keep_blank_values=True)
+    return {key: values[-1] if values else "" for key, values in parsed.items()}
+
+
+def parse_evidence_json(value: object) -> list[dict[str, object]]:
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Jin10 Monitor Dashboard")
     templates.env.globals["compact_text"] = compact_text
     templates.env.globals["priority_class"] = priority_class
+    templates.env.globals["priority_css"] = priority_css
 
     @app.get("/")
     async def index(request: Request):
@@ -203,6 +233,8 @@ def create_app() -> FastAPI:
             "from_item_id": str(request.query_params.get("from_item_id", "") or ""),
             "window_start": str(request.query_params.get("window_start", "") or ""),
             "window_end": str(request.query_params.get("window_end", "") or ""),
+            "asset": str(request.query_params.get("asset", "BTC") or "BTC"),
+            "question": str(request.query_params.get("question", "") or ""),
         }
         return templates.TemplateResponse(
             request,
@@ -210,9 +242,160 @@ def create_app() -> FastAPI:
             {
                 "health": history_health(),
                 "prefill": prefill,
+                "known_assets": known_assets(),
+                "step": "input",
                 "nav": query_nav_summary(),
             },
         )
+
+    @app.post("/analyze/preview")
+    async def analyze_preview(request: Request):
+        form = await read_urlencoded_form(request)
+        question = form.get("question", "").strip()
+        asset = form.get("asset", "BTC").strip() or "BTC"
+        window_start = form.get("window_start", "").strip()
+        window_end = form.get("window_end", "").strip()
+        from_item_id = form.get("from_item_id", "").strip()
+        user_context = form.get("user_context", "").strip()
+        evidence, boundary = build_evidence_for_preview(asset, window_start, window_end)
+        return templates.TemplateResponse(
+            request,
+            "analyze.html",
+            {
+                "health": history_health(),
+                "step": "preview",
+                "question": question,
+                "asset": asset,
+                "window_start": window_start,
+                "window_end": window_end,
+                "from_item_id": from_item_id,
+                "user_context": user_context,
+                "evidence": evidence,
+                "boundary": boundary,
+                "known_assets": known_assets(),
+                "prefill": {},
+                "nav": query_nav_summary(),
+            },
+        )
+
+    @app.post("/analyze/generate-prompt")
+    async def analyze_generate_prompt(request: Request):
+        form = await read_urlencoded_form(request)
+        init_analysis_db()
+        question = form.get("question", "").strip()
+        asset = form.get("asset", "BTC").strip() or "BTC"
+        window_start = form.get("window_start", "").strip()
+        window_end = form.get("window_end", "").strip()
+        from_item_id = form.get("from_item_id", "").strip()
+        user_context = form.get("user_context", "").strip()
+        evidence = parse_evidence_json(form.get("evidence_json", "[]"))
+        selected_ids = {
+            key.removeprefix("sel_")
+            for key, value in form.items()
+            if key.startswith("sel_") and value in {"1", "on", "true"}
+        }
+        if selected_ids:
+            for item in evidence:
+                item["selected"] = str(item.get("news_id") or item.get("id") or "") in selected_ids
+        prompt = generate_prompt(
+            question=question,
+            asset=asset,
+            window_start=window_start,
+            window_end=window_end,
+            evidence=evidence,
+            user_context=user_context,
+        )
+        run_id = create_run(
+            question=question,
+            asset=asset,
+            window_start=window_start,
+            window_end=window_end,
+            evidence_packet=evidence,
+            from_item_id=from_item_id,
+            user_context=user_context,
+            manual_prompt=prompt,
+            prompt_version=PROMPT_VERSION,
+        )
+        return templates.TemplateResponse(
+            request,
+            "analyze.html",
+            {
+                "health": history_health(),
+                "step": "prompt",
+                "run_id": run_id,
+                "question": question,
+                "asset": asset,
+                "window_start": window_start,
+                "window_end": window_end,
+                "from_item_id": from_item_id,
+                "user_context": user_context,
+                "evidence": evidence,
+                "prompt": prompt,
+                "known_assets": known_assets(),
+                "prefill": {},
+                "nav": query_nav_summary(),
+            },
+        )
+
+    @app.post("/analyze/save-answer")
+    async def analyze_save_answer(request: Request):
+        form = await read_urlencoded_form(request)
+        init_analysis_db()
+        run_id = form.get("run_id", "").strip()
+        answer_text = form.get("answer_text", "")
+        manual_prompt = form.get("manual_prompt", "")
+        parsed = parse_answer(answer_text)
+        save_answer(
+            run_id=run_id,
+            answer_text=answer_text,
+            manual_prompt=manual_prompt,
+            answer_json=parsed,
+            judgement=str(parsed.get("judgement") or "unclear"),
+            overall_confidence=float(parsed.get("overall_confidence") or 0),
+        )
+        return RedirectResponse(f"/analyze/{run_id}", status_code=303)
+
+    @app.get("/analyze/history")
+    async def analyze_history(request: Request):
+        asset_filter = str(request.query_params.get("asset", "") or "")
+        init_analysis_db()
+        runs = list_runs(asset=asset_filter, limit=50)
+        return templates.TemplateResponse(
+            request,
+            "analyze_history.html",
+            {
+                "health": history_health(),
+                "runs": runs,
+                "asset_filter": asset_filter,
+                "known_assets": known_assets(),
+                "nav": query_nav_summary(),
+            },
+        )
+
+    @app.get("/analyze/{run_id}")
+    async def analyze_run_detail(request: Request, run_id: str):
+        init_analysis_db()
+        run = get_run(run_id)
+        answer_html = ""
+        if run and run.get("answer_parsed"):
+            answer_html = render_answer_with_links(run["answer_parsed"])
+        return templates.TemplateResponse(
+            request,
+            "analyze_run.html",
+            {
+                "health": history_health(),
+                "run": run,
+                "run_id": run_id,
+                "answer_html": answer_html,
+                "nav": query_nav_summary(),
+            },
+        )
+
+    @app.post("/analyze/{run_id}/delete")
+    async def analyze_delete_run(run_id: str):
+        init_analysis_db()
+        delete_run(run_id)
+        return RedirectResponse("/analyze/history", status_code=303)
 
     @app.get("/healthz")
     async def healthz():

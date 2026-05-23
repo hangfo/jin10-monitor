@@ -1,23 +1,279 @@
 {% extends "base.html" %}
 {% block title %}分析工作台{% endblock %}
 
+{% block head %}
+<style>
+  .step-nav {
+    display: flex;
+    gap: 0;
+    margin-bottom: 18px;
+  }
+  .step-nav-item {
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--muted);
+    font-size: 12px;
+    margin-left: -1px;
+    padding: 8px 18px;
+  }
+  .step-nav-item:first-child {
+    border-radius: 6px 0 0 6px;
+    margin-left: 0;
+  }
+  .step-nav-item:last-child {
+    border-radius: 0 6px 6px 0;
+  }
+  .step-nav-item.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    z-index: 1;
+  }
+  .step-nav-item.done {
+    background: var(--surface);
+    color: var(--accent);
+  }
+  .analysis-grid {
+    display: grid;
+    gap: 14px 16px;
+    grid-template-columns: 1fr 1fr;
+  }
+  .full-row {
+    grid-column: 1 / -1;
+  }
+  .analysis-textarea,
+  .prompt-box,
+  .answer-box {
+    border: 1px solid #cfd7d3;
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    padding: 10px;
+    resize: vertical;
+    width: 100%;
+  }
+  .prompt-box {
+    background: var(--bg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    min-height: 320px;
+  }
+  .answer-box {
+    min-height: 200px;
+  }
+  .ev-row {
+    align-items: flex-start;
+    border-bottom: 1px solid var(--border-soft);
+    display: flex;
+    gap: 10px;
+    padding: 9px 0;
+  }
+  .ev-row:last-child {
+    border-bottom: 0;
+  }
+  .ev-check {
+    accent-color: var(--accent);
+    flex: 0 0 auto;
+    height: 16px;
+    margin-top: 3px;
+    width: 16px;
+  }
+  .ev-score {
+    color: var(--muted);
+    flex: 0 0 40px;
+    font-size: 12px;
+    text-align: right;
+  }
+  .ev-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .ev-title {
+    line-height: 1.45;
+  }
+  .ev-meta {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 3px;
+  }
+  .copy-ok {
+    color: var(--sent-fg);
+    display: none;
+    font-size: 12px;
+  }
+  @media (max-width: 760px) {
+    .analysis-grid {
+      grid-template-columns: 1fr;
+    }
+    .step-nav {
+      overflow-x: auto;
+    }
+    .step-nav-item {
+      white-space: nowrap;
+    }
+  }
+</style>
+{% endblock %}
+
 {% block content %}
   <div class="page-head">
     <h1>分析工作台</h1>
-    <div class="meta">Phase 2A 占位</div>
+    <a class="button-link secondary" href="/analyze/history">历史分析</a>
   </div>
 
-  {% if prefill.from_item_id %}
-  <div class="panel" style="margin-bottom:12px">
-    来自消息 <a class="mono" href="/item/{{ prefill.from_item_id }}">{{ prefill.from_item_id }}</a>
-    <div class="meta mono">{{ prefill.window_start }} - {{ prefill.window_end }}</div>
+  <div class="step-nav">
+    {% for item in [
+      ('input', '1 输入'),
+      ('preview', '2 证据预览'),
+      ('prompt', '3 生成 Prompt'),
+      ('answer', '4 回填答案')
+    ] %}
+      {% set step_id = item[0] %}
+      {% set label = item[1] %}
+      <div class="step-nav-item{% if step == step_id %} active{% elif (step == 'preview' and step_id == 'input') or (step == 'prompt' and step_id in ['input', 'preview']) or (step == 'answer' and step_id in ['input', 'preview', 'prompt']) %} done{% endif %}">
+        {{ label }}
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if step == 'input' or not step %}
+  <div class="card card-body">
+    <form method="post" action="/analyze/preview">
+      <div class="analysis-grid">
+        <div class="filter-group full-row">
+          <span class="filter-label">问题 *</span>
+          <input type="text" name="question" required placeholder="例如：BTC 刚才为什么突破 106k？" value="{{ prefill.get('question', '') }}" style="width:100%">
+        </div>
+        <div class="filter-group">
+          <span class="filter-label">分析标的 *</span>
+          <select name="asset">
+            {% for asset in known_assets %}
+            <option value="{{ asset }}"{{ ' selected' if asset == prefill.get('asset', 'BTC') }}>{{ asset }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="filter-group">
+          <span class="filter-label">来源消息 ID</span>
+          <input type="text" name="from_item_id" value="{{ prefill.get('from_item_id', '') }}" placeholder="从详情页跳转时自动填充" style="width:100%">
+        </div>
+        <div class="filter-group">
+          <span class="filter-label">时间窗口开始 *</span>
+          <input type="text" name="window_start" required value="{{ prefill.get('window_start', '') }}" placeholder="2026-05-23 21:00:00" style="width:100%">
+        </div>
+        <div class="filter-group">
+          <span class="filter-label">时间窗口结束 *</span>
+          <input type="text" name="window_end" required value="{{ prefill.get('window_end', '') }}" placeholder="2026-05-23 22:00:00" style="width:100%">
+        </div>
+        <div class="filter-group full-row">
+          <span class="filter-label">补充描述</span>
+          <textarea class="analysis-textarea" name="user_context" rows="3" placeholder="例如：价格从 105200 快速拉到 106100，想确认是否新闻驱动。"></textarea>
+        </div>
+      </div>
+      <div style="align-items:center;display:flex;gap:10px;margin-top:16px">
+        <button type="submit">构建证据包</button>
+        <span class="muted">仅读取本地 SQLite，不调用外部 API</span>
+      </div>
+    </form>
   </div>
   {% endif %}
 
+  {% if step == 'preview' %}
   <div class="card card-body">
-    <h2 style="margin-top:0">Evidence packet + 手工 AI 回填将在 Phase 2A 实现</h2>
-    <p class="muted">
-      当前页面只接收详情页预填参数，不构建证据包，不写分析库，不调用任何模型 API。
-    </p>
+    <div style="align-items:baseline;display:flex;gap:10px;justify-content:space-between;margin-bottom:12px">
+      <div>
+        <strong>{{ asset }}</strong>
+        <span class="muted">{{ window_start }} - {{ window_end }}</span>
+        <div class="summary">{{ question }}</div>
+      </div>
+      <span class="pill">{{ boundary }}</span>
+    </div>
+    <form id="preview-form" method="post" action="/analyze/generate-prompt">
+      <input type="hidden" name="question" value="{{ question }}">
+      <input type="hidden" name="asset" value="{{ asset }}">
+      <input type="hidden" name="window_start" value="{{ window_start }}">
+      <input type="hidden" name="window_end" value="{{ window_end }}">
+      <input type="hidden" name="from_item_id" value="{{ from_item_id }}">
+      <input type="hidden" name="user_context" value="{{ user_context }}">
+      <input id="evidence-json-input" type="hidden" name="evidence_json" value="">
+
+      {% if evidence %}
+      <div class="muted" style="margin-bottom:8px">找到 {{ evidence | length }} 条候选证据。取消勾选明显无关项后生成 Prompt。</div>
+      {% for ev in evidence %}
+      {% set css = priority_css(ev.priority_level) %}
+      <div class="ev-row">
+        <input class="ev-check" type="checkbox" name="sel_{{ ev.news_id }}" value="1" checked>
+        <span class="ev-score">{{ "%.2f"|format(ev.relevance_score) }}</span>
+        <div class="ev-body">
+          <div class="ev-title">
+            <span class="pill {{ css }}">{{ ev.priority_level }}</span>
+            {{ (ev.title or ev.content or '')[:140] }}
+          </div>
+          <div class="ev-meta">
+            {{ ev.published_at[:16] }} · {{ ev.news_source or '—' }}
+            {% if ev.matched_keywords %} · {{ ev.matched_keywords | join('、') }}{% endif %}
+          </div>
+        </div>
+        <a class="muted" href="/item/{{ ev.news_id }}" target="_blank">打开</a>
+      </div>
+      {% endfor %}
+      <div style="display:flex;gap:10px;margin-top:14px">
+        <button type="button" onclick="submitPreview()">生成 Prompt</button>
+        <a class="button-link secondary" href="/analyze">重新输入</a>
+      </div>
+      {% else %}
+      <div class="empty">该时间窗口内没有找到相关快讯。请调整时间窗口或标的。</div>
+      <a class="button-link secondary" href="/analyze">重新输入</a>
+      {% endif %}
+    </form>
   </div>
+  <script>
+    function submitPreview() {
+      const evidence = {{ evidence | tojson }};
+      const checked = new Set([...document.querySelectorAll(".ev-check:checked")].map((item) => item.name.replace("sel_", "")));
+      evidence.forEach((item) => { item.selected = checked.has(item.news_id); });
+      document.getElementById("evidence-json-input").value = JSON.stringify(evidence);
+      document.getElementById("preview-form").submit();
+    }
+  </script>
+  {% endif %}
+
+  {% if step == 'prompt' %}
+  <div class="card card-body">
+    <div style="align-items:center;display:flex;gap:12px;justify-content:space-between;margin-bottom:10px">
+      <div>
+        <strong>Prompt 已生成</strong>
+        <span class="muted mono">run_id: {{ run_id }}</span>
+      </div>
+      <div style="align-items:center;display:flex;gap:8px">
+        <button type="button" onclick="copyPrompt()">复制 Prompt</button>
+        <span id="copy-ok" class="copy-ok">已复制</span>
+      </div>
+    </div>
+    <textarea id="prompt-text" class="prompt-box" readonly>{{ prompt }}</textarea>
+
+    <div style="border-top:1px solid var(--border-soft);margin-top:16px;padding-top:14px">
+      <h2 style="margin-top:0">粘贴 AI 回答</h2>
+      <form method="post" action="/analyze/save-answer">
+        <input type="hidden" name="run_id" value="{{ run_id }}">
+        <input type="hidden" name="manual_prompt" value="{{ prompt }}">
+        <textarea class="answer-box" name="answer_text" placeholder="把 ChatGPT Business / Custom GPT 的 JSON 回答粘贴到这里。"></textarea>
+        <div style="align-items:center;display:flex;gap:10px;margin-top:10px">
+          <button type="submit">保存分析记录</button>
+          <span class="muted">保存后可点击 [#news_id] 回到原始快讯。</span>
+        </div>
+      </form>
+    </div>
+  </div>
+  <script>
+    function copyPrompt() {
+      navigator.clipboard.writeText(document.getElementById("prompt-text").value).then(() => {
+        const item = document.getElementById("copy-ok");
+        item.style.display = "inline";
+        setTimeout(() => { item.style.display = "none"; }, 1600);
+      });
+    }
+  </script>
+  {% endif %}
 {% endblock %}

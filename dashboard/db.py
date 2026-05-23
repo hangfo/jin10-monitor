@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
+from jin10_monitor import HIGH_PRIORITY, KEYWORDS
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_HISTORY_DB = BASE_DIR / "data" / "jin10_history.sqlite3"
@@ -173,21 +175,9 @@ def query_feed_density(*, hours: int = DEFAULT_HOURS) -> list[dict[str, Any]]:
     return [row_to_dict(row) for row in rows]
 
 
-def query_keyword_heatmap(*, hours: int = DEFAULT_HOURS, limit: int = 12) -> list[dict[str, Any]]:
-    keywords = [
-        "美联储",
-        "降息",
-        "通胀",
-        "非农",
-        "CPI",
-        "PCE",
-        "美元",
-        "黄金",
-        "原油",
-        "关税",
-        "特朗普",
-        "就业",
-    ]
+def query_keyword_heatmap(*, hours: int = DEFAULT_HOURS, limit: int = 14) -> list[dict[str, Any]]:
+    high_keywords = set(HIGH_PRIORITY)
+    keywords = list(dict.fromkeys([*HIGH_PRIORITY, *KEYWORDS]))[:50]
     rows: list[dict[str, Any]] = []
     with open_readonly_connection() as conn:
         for keyword in keywords:
@@ -200,7 +190,7 @@ def query_keyword_heatmap(*, hours: int = DEFAULT_HOURS, limit: int = 12) -> lis
                 (since_text(hours), f"%{keyword}%", f"%{keyword}%"),
             ).fetchone()[0]
             if count:
-                rows.append({"keyword": keyword, "count": count})
+                rows.append({"keyword": keyword, "count": count, "is_high": keyword in high_keywords})
     return sorted(rows, key=lambda row: row["count"], reverse=True)[: max(1, min(limit, 24))]
 
 

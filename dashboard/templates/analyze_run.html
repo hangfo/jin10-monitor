@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}分析详情{% endblock %}
+
+{% block head %}
+<style>
+  .run-grid {
+    align-items: start;
+    display: grid;
+    gap: 16px;
+    grid-template-columns: 1fr 320px;
+  }
+  .answer-summary {
+    font-size: 15px;
+    font-weight: 650;
+    line-height: 1.5;
+    margin: 0 0 12px;
+  }
+  .answer-catalysts ol {
+    margin: 8px 0 0 20px;
+    padding: 0;
+  }
+  .answer-catalysts li {
+    line-height: 1.6;
+    margin-bottom: 10px;
+  }
+  .cat-path,
+  .answer-meta,
+  .answer-caveat,
+  .answer-missing {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .conf-high {
+    color: var(--sent-fg);
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .conf-mid {
+    color: var(--warn-fg);
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .conf-low {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .news-ref {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+  }
+  .side-evidence {
+    border-bottom: 1px solid var(--border-soft);
+    display: flex;
+    gap: 8px;
+    padding: 7px 0;
+  }
+  .side-evidence:last-child {
+    border-bottom: 0;
+  }
+  @media (max-width: 900px) {
+    .run-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+  {% if not run %}
+  <div class="card"><div class="empty">找不到分析记录：{{ run_id }}</div></div>
+  {% else %}
+  <div class="page-head">
+    <div>
+      <a class="button-link secondary" href="/analyze/history">历史分析</a>
+      <h1 style="display:inline;margin-left:12px">{{ run.question[:72] }}</h1>
+    </div>
+    <form method="post" action="/analyze/{{ run.id }}/delete" onsubmit="return confirm('确认删除本条分析记录？')">
+      <button type="submit" class="button-link secondary" style="color:var(--fail-fg)">删除</button>
+    </form>
+  </div>
+
+  <div class="panel" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+    <span>标的：<strong>{{ run.asset }}</strong></span>
+    <span>窗口：{{ run.window_start }} - {{ run.window_end }}</span>
+    <span>状态：<span class="pill {{ 'sent' if run.status == 'done' else '' }}">{{ run.status }}</span></span>
+    <span>证据：{{ run.selected_count }} / {{ run.evidence_count }}</span>
+    {% if run.judgement %}<span>类型：{{ run.judgement }}</span>{% endif %}
+    {% if run.overall_confidence %}<span>置信度：{{ "%.0f%%"|format(run.overall_confidence * 100) }}</span>{% endif %}
+    <span class="mono">{{ run.id }}</span>
+  </div>
+
+  {% if run.from_item_id %}
+  <div class="panel" style="margin-bottom:12px">
+    来自消息：<a class="mono" href="/item/{{ run.from_item_id }}">{{ run.from_item_id }}</a>
+  </div>
+  {% endif %}
+
+  <div class="run-grid">
+    <div>
+      {% if run.status == 'done' and answer_html %}
+      <div class="card card-body" style="margin-bottom:16px">
+        <h2 style="margin-top:0">AI 分析结论</h2>
+        {{ answer_html | safe }}
+      </div>
+      {% elif run.status == 'draft' %}
+      <div class="card card-body" style="margin-bottom:16px">
+        <h2 style="margin-top:0">草稿记录：粘贴回答</h2>
+        <form method="post" action="/analyze/save-answer">
+          <input type="hidden" name="run_id" value="{{ run.id }}">
+          <input type="hidden" name="manual_prompt" value="{{ run.manual_prompt }}">
+          <textarea name="answer_text" rows="9" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font:inherit;resize:vertical">{{ run.answer_text }}</textarea>
+          <button type="submit" style="margin-top:10px">保存分析记录</button>
+        </form>
+      </div>
+      {% endif %}
+
+      {% if run.answer_text and run.status == 'done' %}
+      <details>
+        <summary>原始回答文本</summary>
+        <pre>{{ run.answer_text[:3000] }}</pre>
+      </details>
+      {% endif %}
+    </div>
+
+    <aside>
+      <div class="card card-body">
+        <h2 style="margin-top:0">证据列表</h2>
+        {% for ev in run.evidence_rows %}
+        <div class="side-evidence" style="opacity:{{ '1' if ev.selected else '0.45' }}">
+          <span class="muted mono">{{ "%.2f"|format(ev.relevance_score) }}</span>
+          <div>
+            <a href="/item/{{ ev.news_id }}" target="_blank">{{ ev.news_id }}</a>
+            {% if ev.matched_keywords %}<div class="muted">{{ ev.matched_keywords }}</div>{% endif %}
+            {% if ev.llm_confidence %}
+            <div class="muted">LLM {{ "%.0f%%"|format(ev.llm_confidence * 100) }} · {{ ev.llm_direction }}</div>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      {% if run.manual_prompt %}
+      <details style="margin-top:10px">
+        <summary>查看发送的 Prompt</summary>
+        <pre>{{ run.manual_prompt[:5000] }}</pre>
+      </details>
+      {% endif %}
+    </aside>
+  </div>
+  {% endif %}
+{% endblock %}
