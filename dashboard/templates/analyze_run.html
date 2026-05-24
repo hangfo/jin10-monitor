@@ -82,7 +82,9 @@
   <div class="panel" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px">
     <span>标的：<strong>{{ run.asset }}</strong></span>
     <span>窗口：{{ run.window_start }} - {{ run.window_end }}</span>
-    <span>状态：<span class="pill {{ 'sent' if run.status == 'done' else '' }}">{{ run.status }}</span></span>
+    <span>
+      状态：<span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">{{ '已完成' if run.status == 'done' else '草稿' }}</span>
+    </span>
     <span>证据：{{ run.selected_count }} / {{ run.evidence_count }}</span>
     {% if run.judgement %}<span>类型：{{ run.judgement }}</span>{% endif %}
     {% if run.overall_confidence %}<span>置信度：{{ "%.0f%%"|format(run.overall_confidence * 100) }}</span>{% endif %}

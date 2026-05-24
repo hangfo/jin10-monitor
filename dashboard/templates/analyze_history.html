@@ -44,7 +44,11 @@
           <td><strong>{{ run.asset }}</strong></td>
           <td>{{ run.question[:90] }}</td>
           <td class="muted">{{ run.window_start[5:16] }}<br>{{ run.window_end[5:16] }}</td>
-          <td><span class="pill {{ 'sent' if run.status == 'done' else '' }}">{{ run.status }}</span></td>
+          <td>
+            <span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">
+              {{ '已完成' if run.status == 'done' else '草稿' }}
+            </span>
+          </td>
           <td class="muted">{{ run.judgement or '—' }}</td>
           <td>{% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}</td>
           <td class="muted">{{ run.selected_count }}/{{ run.evidence_count }}</td>

@@ -1,9 +1,12 @@
 import json
 import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from dashboard import analysis_db, db, evidence, manual_ai
 from dashboard.app import app
+
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "dashboard" / "templates"
 
 
 def history_ts(minutes_delta=0):
@@ -402,3 +405,17 @@ def test_query_latest_published_at_respects_current_keyword_filter(tmp_path, mon
     latest_ts = db.query_latest_published_at(keyword="美元", hours=24)
 
     assert latest_ts == matching_ts
+
+
+def test_analyze_nav_active_rules_do_not_double_highlight_history():
+    base_template = (TEMPLATE_DIR / "base.html").read_text()
+
+    assert "request.url.path == '/analyze/history'" in base_template
+    assert "not request.url.path.startswith('/analyze/history')" in base_template
+
+
+def test_item_template_truncates_published_at_to_minute():
+    item_template = (TEMPLATE_DIR / "item.html").read_text()
+
+    assert '{{ (center.published_at or "")[:16] }}' in item_template
+    assert '{{ (item.published_at or "")[:16] }}' in item_template

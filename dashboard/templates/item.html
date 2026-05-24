@@ -6,7 +6,7 @@
     <div>
       <a class="button-link secondary" href="/">返回首页</a>
       <h1 style="margin-top:14px">{{ center.title or center.content or center.id }}</h1>
-      <div class="meta">{{ center.published_at }} · {{ center.id }}</div>
+      <div class="meta">{{ (center.published_at or "")[:16] }} · {{ center.id }}</div>
     </div>
     <a class="button-link" href="{{ analyze_url }}">用这段上下文生成证据包</a>
   </div>
@@ -51,7 +51,7 @@
   <div class="card">
     {% for item in context_items %}
     <div class="timeline-item {{ 'center' if item.id == center.id else '' }}">
-      <div class="time mono">{{ item.published_at or '' }}</div>
+      <div class="time mono">{{ (item.published_at or "")[:16] }}</div>
       <div class="priority">
         <span class="pill {{ priority_class(item.priority_level) }}">{{ item.priority_level or 'T0_NONE' }}</span>
       </div>
