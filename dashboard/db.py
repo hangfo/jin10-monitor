@@ -67,6 +67,14 @@ def since_text(hours: int) -> str:
     return (datetime.now() - timedelta(hours=safe_hours)).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(os.getenv(name, str(default)) or default)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
 def parse_history_datetime(value: object) -> Optional[datetime]:
     text = str(value or "").strip()
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
@@ -156,6 +164,43 @@ def query_recent_items(
             params,
         ).fetchall()
     return [row_to_dict(row) for row in rows]
+
+
+def query_latest_published_at(
+    *,
+    priority: str = "",
+    keyword: str = "",
+    hours: int = DEFAULT_HOURS,
+    tg_sent_only: bool = False,
+    with_status: bool = False,
+) -> Optional[str]:
+    clauses = ["h.published_at >= ?"]
+    params: list[object] = [since_text(hours)]
+    if priority:
+        clauses.append("h.priority_level = ?")
+        params.append(priority)
+    if keyword:
+        clauses.append("(h.title LIKE ? OR h.content LIKE ?)")
+        pattern = f"%{keyword[:80]}%"
+        params.extend([pattern, pattern])
+    if tg_sent_only:
+        clauses.append("EXISTS (SELECT 1 FROM delivery_log dl WHERE dl.message_id = h.id)")
+    if with_status:
+        clauses.append("EXISTS (SELECT 1 FROM telegram_delivery_status t WHERE t.message_id = h.id)")
+    where = "WHERE " + " AND ".join(clauses)
+
+    with open_readonly_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT h.published_at
+            FROM flash_history h
+            {where}
+            ORDER BY h.published_at DESC, h.created_at DESC
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    return str(row["published_at"]) if row else None
 
 
 def query_feed_density(*, hours: int = DEFAULT_HOURS) -> list[dict[str, Any]]:
@@ -397,3 +442,86 @@ def query_nav_summary() -> dict[str, Any]:
         return {"ok": True, "t3": t3, "total": total}
     except (FileNotFoundError, sqlite3.Error):
         return {"ok": False, "t3": 0, "total": 0}
+
+
+def query_aggregation_report() -> dict[str, Any]:
+    import re
+
+    since_7d = since_text(24 * 7)
+    agg_enabled = os.getenv("AGGREGATION_V2", "0").lower() in {"1", "true", "yes", "on"}
+    agg_window_seconds = env_int("AGGREGATION_WINDOW_SECONDS", 180, 1, 3600)
+    agg_bypass_important = os.getenv("AGGREGATION_BYPASS_IMPORTANT", "1").lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    similar_pattern = re.compile(r"similar_to=(\S+)")
+
+    with open_readonly_connection() as conn:
+        skipped_7d = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM telegram_delivery_status
+            WHERE status = 'skipped' AND updated_at >= ?
+            """,
+            (since_7d,),
+        ).fetchone()[0]
+        rows = conn.execute(
+            """
+            SELECT t.message_id, t.detail, t.updated_at, t.mode,
+                   h.title, h.content, h.published_at, h.priority_level
+            FROM telegram_delivery_status t
+            LEFT JOIN flash_history h ON h.id = t.message_id
+            WHERE t.status = 'skipped'
+            ORDER BY t.updated_at DESC
+            LIMIT 60
+            """
+        ).fetchall()
+
+        skip_records = []
+        similar_ids = set()
+        for row in rows:
+            detail = str(row["detail"] or "")
+            match = similar_pattern.search(detail)
+            similar_to_id = match.group(1) if match else ""
+            if similar_to_id:
+                similar_ids.add(similar_to_id)
+            record = row_to_dict(row)
+            record["similar_to_id"] = similar_to_id
+            record["summary"] = (str(row["title"] or "") or str(row["content"] or ""))[:100]
+            skip_records.append(record)
+
+        similar_items = {}
+        if similar_ids:
+            placeholders = ",".join("?" for _item in similar_ids)
+            similar_rows = conn.execute(
+                f"""
+                SELECT id, published_at, title, content, priority_level
+                FROM flash_history
+                WHERE id IN ({placeholders})
+                """,
+                list(similar_ids),
+            ).fetchall()
+            similar_items = {str(row["id"]): row_to_dict(row) for row in similar_rows}
+
+        daily_rows = conn.execute(
+            """
+            SELECT strftime('%Y-%m-%d', updated_at) AS day, COUNT(*) AS count
+            FROM telegram_delivery_status
+            WHERE status = 'skipped' AND updated_at >= ?
+            GROUP BY day
+            ORDER BY day DESC
+            """,
+            (since_7d,),
+        ).fetchall()
+
+    return {
+        "agg_enabled": agg_enabled,
+        "agg_window_seconds": agg_window_seconds,
+        "agg_bypass_important": agg_bypass_important,
+        "skipped_7d": skipped_7d,
+        "skip_records": skip_records,
+        "similar_items": similar_items,
+        "daily_counts": [row_to_dict(row) for row in daily_rows],
+    }

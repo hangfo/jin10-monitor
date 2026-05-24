@@ -1,8 +1,13 @@
 import json
 import sqlite3
+from datetime import datetime, timedelta
 
-from dashboard import analysis_db, evidence, manual_ai
+from dashboard import analysis_db, db, evidence, manual_ai
 from dashboard.app import app
+
+
+def history_ts(minutes_delta=0):
+    return (datetime.now() + timedelta(minutes=minutes_delta)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def create_history_db(path):
@@ -218,7 +223,12 @@ def test_evidence_builder_scores_and_labels_news_id(tmp_path, monkeypatch):
         "2026-05-23 10:00:00",
     )
 
-    assert boundary == "local_sqlite_only"
+    assert boundary == {
+        "source": "local_sqlite_only",
+        "label": "local_sqlite_only",
+        "jin10_rest_called": False,
+        "market_data_called": False,
+    }
     assert [item["news_id"] for item in packet] == ["btc-1"]
     assert packet[0]["relevance_score"] > 0
     assert "BTC" in packet[0]["matched_keywords"] or "比特币" in packet[0]["matched_keywords"]
@@ -361,3 +371,34 @@ def test_analysis_routes_are_registered_before_dynamic_detail():
     assert "/analyze/history" in paths
     assert "/analyze/{run_id}" in paths
     assert paths.index("/analyze/history") < paths.index("/analyze/{run_id}")
+
+
+def test_dashboard_docs_routes_are_disabled():
+    paths = [route.path for route in app.routes if hasattr(route, "path")]
+
+    assert "/docs" not in paths
+    assert "/redoc" not in paths
+    assert "/openapi.json" not in paths
+
+
+def test_dashboard_bugfix_routes_are_registered():
+    paths = [route.path for route in app.routes if hasattr(route, "path")]
+
+    assert "/api/feed/latest-ts" in paths
+    assert "/aggregation" in paths
+
+
+def test_query_latest_published_at_respects_current_keyword_filter(tmp_path, monkeypatch):
+    history_path = tmp_path / "history.sqlite3"
+    conn = create_history_db(history_path)
+    matching_ts = history_ts(-20)
+    unrelated_ts = history_ts(-5)
+    insert_flash(conn, "usd-1", matching_ts, "美元指数走高", "美元走强")
+    insert_flash(conn, "btc-newer", unrelated_ts, "比特币快讯", "BTC 价格波动")
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("HISTORY_DB", str(history_path))
+
+    latest_ts = db.query_latest_published_at(keyword="美元", hours=24)
+
+    assert latest_ts == matching_ts

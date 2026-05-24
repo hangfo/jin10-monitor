@@ -1,9 +1,14 @@
 import sqlite3
+from datetime import datetime, timedelta
 
 import pytest
 
 from dashboard.app import feed_params, parse_int
 from dashboard import db
+
+
+def history_ts(minutes_delta=0):
+    return (datetime.now() + timedelta(minutes=minutes_delta)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def create_dashboard_schema(db_path):
@@ -76,7 +81,7 @@ def insert_flash(conn, item_id, published_at, title, priority="T1_NORMAL"):
 def dashboard_history_db(tmp_path, monkeypatch):
     db_path = tmp_path / "dashboard-history.sqlite3"
     conn = create_dashboard_schema(db_path)
-    insert_flash(conn, "dash-1", "2026-05-23 09:30:00", "Dashboard title")
+    insert_flash(conn, "dash-1", history_ts(-10), "Dashboard title")
     conn.execute(
         """
         INSERT INTO telegram_delivery_status (
@@ -84,7 +89,7 @@ def dashboard_history_db(tmp_path, monkeypatch):
         )
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        ("dash-1", "telegram", "realtime", "sent", "", "2026-05-23 09:30:02"),
+        ("dash-1", "telegram", "realtime", "sent", "", history_ts(-9)),
     )
     conn.commit()
     conn.close()
@@ -125,7 +130,7 @@ def test_query_recent_items_filters_confirmed_telegram_delivery(dashboard_histor
     conn = sqlite3.connect(dashboard_history_db)
     conn.execute(
         "INSERT INTO delivery_log (message_id, sent_at) VALUES (?, ?)",
-        ("dash-1", "2026-05-23 09:30:03"),
+        ("dash-1", history_ts(-9)),
     )
     conn.commit()
     conn.close()
@@ -166,11 +171,19 @@ def test_query_keyword_heatmap_uses_configured_keywords(dashboard_history_db, mo
     assert rows[0] == {"keyword": "Dashboard", "count": 1, "is_high": True}
 
 
+def test_query_aggregation_report_is_readonly(dashboard_history_db):
+    report = db.query_aggregation_report()
+
+    assert report["agg_enabled"] is False
+    assert report["skipped_7d"] == 0
+    assert report["skip_records"] == []
+
+
 def test_query_item_context_returns_window(dashboard_history_db):
     conn = sqlite3.connect(dashboard_history_db)
-    insert_flash(conn, "dash-before", "2026-05-23 09:25:00", "Before title")
-    insert_flash(conn, "dash-after", "2026-05-23 09:40:00", "After title")
-    insert_flash(conn, "dash-outside", "2026-05-23 09:41:00", "Outside title")
+    insert_flash(conn, "dash-before", history_ts(-15), "Before title")
+    insert_flash(conn, "dash-after", history_ts(-1), "After title")
+    insert_flash(conn, "dash-outside", history_ts(1), "Outside title")
     conn.commit()
     conn.close()
 

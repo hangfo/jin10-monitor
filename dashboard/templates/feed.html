@@ -4,7 +4,7 @@
 {% block content %}
   <div class="page-head">
     <h1>快讯流</h1>
-    <div class="meta">{{ items | length }} items loaded · 30s 自动刷新</div>
+    <div class="meta">{{ items | length }} items loaded · 有新消息时自动刷新</div>
   </div>
 
   <div class="panel">
@@ -137,12 +137,49 @@
   {% endif %}
 
   <script>
-    setTimeout(() => {
+    const CURRENT_NEWEST = {{ ((items[0].published_at or '') if items else '') | tojson }};
+    const POLL_MS = 20000;
+    let pollTimer = null;
+
+    async function checkForNewItems() {
       const tag = (document.activeElement && document.activeElement.tagName || "").toLowerCase();
       const editing = ["input", "select", "textarea"].includes(tag);
-      if (!editing && !document.hidden) {
-        window.location.reload();
+      if (editing || document.hidden) {
+        return;
       }
-    }, 30000);
+      try {
+        const response = await fetch(`/api/feed/latest-ts${window.location.search}`, {cache: "no-store"});
+        if (!response.ok) {
+          return;
+        }
+        const data = await response.json();
+        if (data.latest_ts && (!CURRENT_NEWEST || data.latest_ts > CURRENT_NEWEST)) {
+          window.location.reload();
+        }
+      } catch (_error) {
+      }
+    }
+
+    function startPolling() {
+      if (!pollTimer) {
+        pollTimer = setInterval(checkForNewItems, POLL_MS);
+      }
+    }
+
+    function stopPolling() {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        startPolling();
+      }
+    });
+    startPolling();
   </script>
 {% endblock %}

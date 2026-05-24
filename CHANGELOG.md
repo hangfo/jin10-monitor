@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 修复独立 Dashboard Phase 2A 细节：禁用默认 `/docs`、`/redoc` 与 `/openapi.json`，补齐分析历史和聚合报告导航，证据边界改为结构化字段，快讯流自动刷新改为保留当前筛选条件的最新时间戳智能轮询，并新增只读聚合报告基础页。
 - 新增独立 Dashboard Phase 2A 手工 AI 分析流：支持从本地只读 SQLite 构建 evidence packet、生成 ChatGPT Business/Custom GPT 复制用 Prompt、回填并解析答案、保存到独立 `data/dashboard_analysis.sqlite3`，并提供分析详情与历史记录页面；快讯流增加安全自动刷新，关键词热力改用真实监控关键词；不接模型 API、不请求金十 REST、不写业务历史库。
 
 ## 2026-05-23

@@ -4,8 +4,11 @@ Date: 2026-05-24
 
 ## Current state
 
-Phase 2A of the standalone FastAPI/Jinja2 dashboard is implemented locally but
-not committed or pushed yet.
+Phase 2A of the standalone FastAPI/Jinja2 dashboard was committed and pushed as
+`bd303ae feat(dashboard): add manual analysis workflow`.
+
+This handoff also records the follow-up dashboard polish/bugfix patch prepared
+for `fix(dashboard): polish phase 2a dashboard`.
 
 Current branch:
 
@@ -13,20 +16,20 @@ Current branch:
 main
 ```
 
-Current local changes include:
+Follow-up patch scope:
 
 - `CHANGELOG.md`
 - `dashboard/app.py`
 - `dashboard/db.py`
-- `dashboard/analysis_db.py`
 - `dashboard/evidence.py`
-- `dashboard/manual_ai.py`
 - `dashboard/templates/feed.html`
 - `dashboard/templates/analyze.html`
-- `dashboard/templates/analyze_run.html`
-- `dashboard/templates/analyze_history.html`
 - `dashboard/templates/base.html`
+- `dashboard/templates/system.html`
+- `dashboard/templates/aggregation.html`
+- `docs/status/035-2026-05-24-dashboard-phase2a-handoff.md`
 - `tests/test_dashboard_analysis.py`
+- `tests/test_dashboard_db.py`
 
 The dashboard dev server is currently running at:
 
@@ -68,8 +71,19 @@ http://127.0.0.1:8765/
   - keyword heatmap now uses the real configured `KEYWORDS` and
     `HIGH_PRIORITY` lists from `jin10_monitor.py`
   - high-priority heatmap keywords are marked for highlighting
-  - the feed page auto-refreshes every 30 seconds, but skips refresh while the
-    user is editing filter inputs or when the page is hidden
+  - the feed page polls `/api/feed/latest-ts` every 20 seconds and refreshes
+    only when a newer `published_at` is detected; polling stops while the page
+    is hidden and refresh skips while the user edits filter inputs
+  - the polling endpoint keeps the current feed filters, so keyword/priority
+    pages are not refreshed by unrelated newer items
+- Added Phase 2A polish/fix items:
+  - disabled default FastAPI `/docs`, `/redoc`, and `/openapi.json`
+  - added navigation links for analysis history and aggregation report
+  - changed evidence boundary from a plain string to a structured object with
+    `source`, `jin10_rest_called`, and `market_data_called`
+  - added a readonly `/aggregation` foundation page backed by skipped
+    `telegram_delivery_status` diagnostics
+  - improved `/system` monitor status with colored Chinese status labels
 - Added focused tests for:
   - analysis DB roundtrip
   - cascade delete
@@ -78,6 +92,8 @@ http://127.0.0.1:8765/
   - answer parsing and link rendering
   - `/analyze/history` route ordering before `/analyze/{run_id}`
   - configured keyword heatmap behavior
+  - disabled docs routes
+  - aggregation report readonly helper
 - Updated `CHANGELOG.md`.
 
 ## Code intake notes
@@ -105,6 +121,16 @@ Issues fixed during merge:
   additional Phase 2A tests, compatible analyze templates where useful, and the
   feed auto-refresh behavior. Its `app.py` was not adopted because it reintroduced
   `Form(...)` / `python-multipart` as a hard startup dependency.
+- The uploaded `phase 2a bug fix.zip` was reviewed and merged selectively:
+  - adopted: docs/openapi disablement, analysis history and aggregation nav,
+    colored `/system` monitor status, structured evidence boundary, readonly
+    `/aggregation`, and timestamp polling for feed refresh
+  - adapted: `/api/feed/latest-ts` now preserves current feed filters; aggregation
+    env parsing is clamped and tolerant of invalid values; tests use dynamic
+    timestamps instead of a fixed current-date fixture
+  - not adopted as-is: wholesale `app.py`, `db.py`, and templates because they
+    would overwrite already validated Phase 2A behavior or reduce compatibility
+    with the existing design system
 
 ## Validation
 
@@ -112,13 +138,13 @@ Latest local test run:
 
 ```text
 .venv/bin/python -m pytest -q
-121 passed in 0.64s
+125 passed in 0.75s
 ```
 
 Route count check:
 
 ```text
-12 dashboard routes:
+14 dashboard routes:
 /
 /item/{message_id}
 /telegram-status
@@ -130,6 +156,8 @@ Route count check:
 /analyze/history
 /analyze/{run_id}
 /analyze/{run_id}/delete
+/api/feed/latest-ts
+/aggregation
 /healthz
 ```
 
@@ -137,11 +165,15 @@ Browser smoke checks passed for:
 
 - `http://127.0.0.1:8765/`
 - `http://127.0.0.1:8765/?keyword=美元&hours=24`
+- `/aggregation`
+- `/system`
 - `/analyze`
 - `/analyze/preview`
 - `/analyze/generate-prompt`
 - `/analyze/history`
 - feed auto-refresh script presence and current filtered feed load
+- `/api/feed/latest-ts`, including a keyword-filtered request
+- `/docs` and `/openapi.json` returning 404
 
 The smoke-test analysis run was deleted after verification, and
 `analysis_runs` was empty afterward.
@@ -174,25 +206,13 @@ The smoke-test analysis run was deleted after verification, and
   context that is absent from the local history DB.
 - `/analyze/preview` does not create the analysis DB; the DB is created on
   prompt generation, answer save, history, detail, or delete.
-- Feed auto-refresh is a simple full-page reload, not HTMX/SSE. It preserves the
-  current query string and skips refresh while editing, but it is still a coarse
-  refresh rather than a live incremental stream.
+- Feed auto-refresh uses lightweight timestamp polling rather than HTMX/SSE. It
+  preserves the current query string and reloads only when a newer matching
+  local SQLite item appears.
 
 ## Next recommended step
 
-Before commit:
-
-1. Review the current diff.
-2. If accepted, keep the current `CHANGELOG.md` entry.
-3. Commit and push as a single Phase 2A dashboard feature.
-
-Suggested commit title:
-
-```text
-feat(dashboard): add manual analysis workflow
-```
-
-Suggested next feature choices after commit:
+Suggested next feature choices:
 
 - Small polish with `GPT-5.5 中`:
   - improve `/analyze` empty/error states
@@ -224,7 +244,8 @@ git pull --rebase
 git log --oneline -8
 
 当前结论：
-- Phase 2A 手工 AI 分析流已本地实现，但还未 commit/push。
+- Phase 2A 手工 AI 分析流已在 bd303ae commit/push。
+- Phase 2A follow-up polish/bugfix 已完成，最新 commit 应包含 `fix(dashboard): polish phase 2a dashboard`。
 - 不修改 jin10_monitor.py。
 - 不继续扩展旧 6330022 in-file dashboard。
 - 不接 Claude / Anthropic / OpenAI 等模型 API 作为 Phase 2A 前置依赖。
@@ -232,6 +253,5 @@ git log --oneline -8
 - 分析结果只写 data/dashboard_analysis.sqlite3，不写业务历史库。
 
 下一步：
-先复查 diff、运行 pytest、浏览器 smoke /analyze 和 /analyze/history。
-如果确认可接受，准备 CHANGELOG 一致性、commit message，并等我确认后 commit/push。
+先确认 `git status` 干净、`git pull --rebase` 无新冲突，再按需要选择下一阶段。
 ```

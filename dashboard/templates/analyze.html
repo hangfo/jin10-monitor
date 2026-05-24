@@ -187,7 +187,7 @@
         <span class="muted">{{ window_start }} - {{ window_end }}</span>
         <div class="summary">{{ question }}</div>
       </div>
-      <span class="pill">{{ boundary }}</span>
+      <span class="pill">{{ boundary.label if boundary is mapping else boundary }}</span>
     </div>
     <form id="preview-form" method="post" action="/analyze/generate-prompt">
       <input type="hidden" name="question" value="{{ question }}">

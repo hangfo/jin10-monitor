@@ -21,12 +21,14 @@ from .db import (
     query_item,
     query_item_context,
     query_keyword_heatmap,
+    query_latest_published_at,
     query_nav_summary,
     query_recent_items,
     query_system_health,
     query_tg_deliveries,
     query_tg_status_for_item,
     query_tg_summary,
+    query_aggregation_report,
 )
 from .evidence import build_evidence_for_preview, known_assets
 from .manual_ai import PROMPT_VERSION, generate_prompt, parse_answer, render_answer_with_links
@@ -116,7 +118,7 @@ def parse_evidence_json(value: object) -> list[dict[str, object]]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Jin10 Monitor Dashboard")
+    app = FastAPI(title="Jin10 Monitor Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
     templates.env.globals["compact_text"] = compact_text
     templates.env.globals["priority_class"] = priority_class
     templates.env.globals["priority_css"] = priority_css
@@ -396,6 +398,38 @@ def create_app() -> FastAPI:
         init_analysis_db()
         delete_run(run_id)
         return RedirectResponse("/analyze/history", status_code=303)
+
+    @app.get("/api/feed/latest-ts")
+    async def api_feed_latest_ts(request: Request):
+        try:
+            health = history_health()
+            if health["status"] != "ok":
+                return JSONResponse({"latest_ts": None})
+            params = feed_params(request)
+            latest_ts = query_latest_published_at(
+                priority=str(params["priority"]),
+                keyword=str(params["keyword"]),
+                hours=int(params["hours"]),
+                tg_sent_only=bool(params["tg_sent_only"]),
+                with_status=bool(params["with_status"]),
+            )
+            return JSONResponse({"latest_ts": latest_ts})
+        except Exception:
+            return JSONResponse({"latest_ts": None})
+
+    @app.get("/aggregation")
+    async def aggregation(request: Request):
+        health = history_health()
+        report = query_aggregation_report() if health["status"] == "ok" else {}
+        return templates.TemplateResponse(
+            request,
+            "aggregation.html",
+            {
+                "health": health,
+                "agg": report,
+                "nav": query_nav_summary(),
+            },
+        )
 
     @app.get("/healthz")
     async def healthz():

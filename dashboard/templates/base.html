@@ -378,7 +378,9 @@
       </a>
       <a class="nav-link {{ 'active' if request.url.path.startswith('/telegram-status') }}" href="/telegram-status">投递状态</a>
       <a class="nav-link {{ 'active' if request.url.path.startswith('/system') }}" href="/system">系统</a>
-      <a class="nav-link {{ 'active' if request.url.path.startswith('/analyze') }}" href="/analyze">分析</a>
+      <a class="nav-link {{ 'active' if request.url.path == '/analyze' }}" href="/analyze">分析</a>
+      <a class="nav-link {{ 'active' if request.url.path.startswith('/analyze/') or request.url.path == '/analyze/history' }}" href="/analyze/history">分析历史</a>
+      <a class="nav-link {{ 'active' if request.url.path.startswith('/aggregation') }}" href="/aggregation">聚合报告</a>
     </nav>
     <main>
       {% if health.status != 'ok' %}

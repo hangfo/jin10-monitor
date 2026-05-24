@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}聚合报告{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <h1>聚合报告</h1>
+    <div class="meta">只读诊断，不修改聚合配置</div>
+  </div>
+
+  {% if not agg %}
+  <div class="card"><div class="empty">历史库不可用，无法读取聚合诊断</div></div>
+  {% else %}
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">AGGREGATION_V2</div>
+      <div class="stat-value" style="font-size:18px">{{ '已开启' if agg.agg_enabled else '已关闭' }}</div>
+      <div class="meta">环境变量状态</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">聚合窗口</div>
+      <div class="stat-value">{{ agg.agg_window_seconds }}s</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">T3 绕过聚合</div>
+      <div class="stat-value" style="font-size:18px">{{ '是' if agg.agg_bypass_important else '否' }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">7天 skipped</div>
+      <div class="stat-value">{{ agg.skipped_7d }}</div>
+    </div>
+  </div>
+
+  {% if not agg.agg_enabled %}
+  <div class="panel" style="margin-bottom:16px">
+    <div class="muted">
+      AGGREGATION_V2 当前关闭。本页只展示历史中已有的 skipped 诊断记录，不会启用聚合、不执行 suppress、不修改业务库。
+    </div>
+  </div>
+  {% endif %}
+
+  {% if agg.daily_counts %}
+  <div class="panel" style="margin-bottom:16px">
+    <div class="muted" style="margin-bottom:8px">最近 7 天 skipped 计数</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      {% for row in agg.daily_counts %}
+      <span class="pill">{{ row.day }} · {{ row.count }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if agg.skip_records %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>跳过时间</th>
+          <th>优先级</th>
+          <th>被跳消息</th>
+          <th>相似原消息</th>
+          <th>模式</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in agg.skip_records %}
+        {% set row_class = priority_class(item.priority_level) %}
+        {% set original = agg.similar_items.get(item.similar_to_id) %}
+        <tr class="row-{{ row_class }}">
+          <td class="mono">{{ (item.updated_at or '')[:19] }}</td>
+          <td><span class="pill {{ row_class }}">{{ item.priority_level or '-' }}</span></td>
+          <td>
+            <a href="/item/{{ item.message_id }}">{{ item.summary or item.message_id }}</a>
+            <div class="meta mono">{{ item.message_id }}</div>
+          </td>
+          <td>
+            {% if original %}
+            <a href="/item/{{ original.id }}">{{ (original.title or original.content or original.id)[:90] }}</a>
+            <div class="meta mono">{{ original.published_at }}</div>
+            {% elif item.similar_to_id %}
+            <span class="mono">{{ item.similar_to_id }}</span>
+            {% else %}
+            <span class="meta">-</span>
+            {% endif %}
+          </td>
+          <td class="meta">{{ item.mode or '-' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card"><div class="empty">暂无 skipped 记录</div></div>
+  {% endif %}
+  {% endif %}
+{% endblock %}

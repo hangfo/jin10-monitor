@@ -76,7 +76,7 @@ def build_evidence_for_preview(
     asset: str,
     window_start: str,
     window_end: str,
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[list[dict[str, Any]], str | dict[str, object]]:
     start_dt = parse_cursor_datetime(str(window_start or ""))
     end_dt = parse_cursor_datetime(str(window_end or ""))
     if not start_dt or not end_dt:
@@ -84,7 +84,12 @@ def build_evidence_for_preview(
     if end_dt <= start_dt:
         return [], "end_before_start"
     evidence = build_evidence_packet(asset, start_dt, end_dt)
-    return evidence, "local_sqlite_only"
+    return evidence, {
+        "source": "local_sqlite_only",
+        "label": "local_sqlite_only",
+        "jin10_rest_called": False,
+        "market_data_called": False,
+    }
 
 
 def build_evidence_packet(
