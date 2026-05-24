@@ -48,6 +48,16 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px;
   }
+  .cat-time {
+    background: var(--bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 999px;
+    color: var(--muted);
+    display: inline-flex;
+    font-size: 12px;
+    margin-right: 4px;
+    padding: 1px 7px;
+  }
   .side-evidence {
     border-bottom: 1px solid var(--border-soft);
     display: flex;
@@ -131,7 +141,12 @@
         <div class="side-evidence" style="opacity:{{ '1' if ev.selected else '0.45' }}">
           <span class="muted mono">{{ "%.2f"|format(ev.relevance_score) }}</span>
           <div>
-            <a href="/item/{{ ev.news_id }}" target="_blank">{{ ev.news_id }}</a>
+            <div>
+              <a href="/item/{{ ev.news_id }}" target="_blank">
+                {{ (ev.published_at or '')[5:16] or ev.news_id[:12] }} · {{ (ev.title or ev.content or ev.news_id)[:34] }}
+              </a>
+            </div>
+            <div class="muted mono" title="{{ ev.news_id }}">{{ ev.news_id[:18] }}{% if ev.news_id|length > 18 %}...{% endif %}</div>
             {% if ev.matched_keywords %}<div class="muted">{{ ev.matched_keywords }}</div>{% endif %}
             {% if ev.llm_confidence %}
             <div class="muted">LLM {{ "%.0f%%"|format(ev.llm_confidence * 100) }} · {{ ev.llm_direction }}</div>

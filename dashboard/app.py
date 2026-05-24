@@ -117,11 +117,31 @@ def parse_evidence_json(value: object) -> list[dict[str, object]]:
     return [item for item in parsed if isinstance(item, dict)]
 
 
+def normalize_datetime_input(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.replace("T", " ")
+    if len(text) == 16:
+        text = f"{text}:00"
+    parsed = parse_history_datetime(text)
+    return parsed.strftime("%Y-%m-%d %H:%M:%S") if parsed else text
+
+
+def datetime_local_value(value: object) -> str:
+    parsed = parse_history_datetime(value)
+    if parsed:
+        return parsed.strftime("%Y-%m-%dT%H:%M")
+    text = str(value or "").strip().replace(" ", "T")
+    return text[:16]
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Jin10 Monitor Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
     templates.env.globals["compact_text"] = compact_text
     templates.env.globals["priority_class"] = priority_class
     templates.env.globals["priority_css"] = priority_css
+    templates.env.globals["datetime_local_value"] = datetime_local_value
 
     @app.get("/")
     async def index(request: Request):
@@ -255,8 +275,8 @@ def create_app() -> FastAPI:
         form = await read_urlencoded_form(request)
         question = form.get("question", "").strip()
         asset = form.get("asset", "BTC").strip() or "BTC"
-        window_start = form.get("window_start", "").strip()
-        window_end = form.get("window_end", "").strip()
+        window_start = normalize_datetime_input(form.get("window_start", ""))
+        window_end = normalize_datetime_input(form.get("window_end", ""))
         from_item_id = form.get("from_item_id", "").strip()
         user_context = form.get("user_context", "").strip()
         evidence, boundary = build_evidence_for_preview(asset, window_start, window_end)
@@ -286,8 +306,8 @@ def create_app() -> FastAPI:
         init_analysis_db()
         question = form.get("question", "").strip()
         asset = form.get("asset", "BTC").strip() or "BTC"
-        window_start = form.get("window_start", "").strip()
-        window_end = form.get("window_end", "").strip()
+        window_start = normalize_datetime_input(form.get("window_start", ""))
+        window_end = normalize_datetime_input(form.get("window_end", ""))
         from_item_id = form.get("from_item_id", "").strip()
         user_context = form.get("user_context", "").strip()
         evidence = parse_evidence_json(form.get("evidence_json", "[]"))

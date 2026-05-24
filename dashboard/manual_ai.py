@@ -149,10 +149,15 @@ def render_answer_with_links(answer_parsed: dict[str, Any]) -> str:
     judgement = str(answer_parsed.get("judgement") or "")
     confidence = clamp_float(answer_parsed.get("overall_confidence"), 0, 1)
     caveat = str(answer_parsed.get("caveat") or "")
+    ref_labels = {
+        str(item.get("news_id") or ""): display_time_label(item.get("time") or "") or short_news_id(item.get("news_id") or "")
+        for item in catalysts
+        if isinstance(item, dict) and item.get("news_id")
+    }
 
     parts: list[str] = []
     if summary:
-        parts.append(f'<p class="answer-summary">{linkify_news_refs(summary)}</p>')
+        parts.append(f'<p class="answer-summary">{linkify_news_refs(summary, ref_labels)}</p>')
 
     if catalysts:
         parts.append('<div class="answer-catalysts"><strong>主要催化因素：</strong><ol>')
@@ -170,11 +175,17 @@ def render_answer_with_links(answer_parsed: dict[str, Any]) -> str:
             direction = str(catalyst.get("direction") or "")
             direction_icon = {"bullish": "up", "bearish": "down", "mixed": "mixed"}.get(direction, "")
             news_id = html.escape(str(catalyst.get("news_id") or ""))
+            catalyst_time = display_time_label(catalyst.get("time") or "")
+            ref_text = ref_labels.get(str(catalyst.get("news_id") or ""), short_news_id(news_id))
+            headline = linkify_news_refs(str(catalyst.get("headline") or ""), ref_labels)
+            impact_path = linkify_news_refs(str(catalyst.get("impact_path") or ""), ref_labels)
+            time_html = f'<span class="cat-time">{html.escape(catalyst_time)}</span> ' if catalyst_time else ""
             parts.append(
                 "<li>"
-                f'<span class="cat-headline">{linkify_news_refs(str(catalyst.get("headline") or ""))}</span> '
-                f'<span class="cat-newsid"><a href="/item/{news_id}" class="news-ref">[#{news_id}]</a></span><br>'
-                f'<span class="cat-path">{linkify_news_refs(str(catalyst.get("impact_path") or ""))}</span><br>'
+                f"{time_html}"
+                f'<span class="cat-headline">{headline}</span> '
+                f'<span class="cat-newsid"><a href="/item/{news_id}" class="news-ref" title="{news_id}">[↗ {html.escape(ref_text)}]</a></span><br>'
+                f'<span class="cat-path">{impact_path}</span><br>'
                 f'<span class="{confidence_class}">置信度 {catalyst_confidence:.0%}</span>'
                 f' <span class="dir-icon">{html.escape(direction_icon)}</span>'
                 "</li>"
@@ -207,16 +218,34 @@ def render_answer_with_links(answer_parsed: dict[str, Any]) -> str:
     return "\n".join(parts) if parts else "<p>（无结构化内容）</p>"
 
 
-def linkify_news_refs(text: str) -> str:
+def linkify_news_refs(text: str, labels: dict[str, str] | None = None) -> str:
+    labels = labels or {}
     escaped = html.escape(text)
     return re.sub(
         r"\[#([^\]]+)\]",
         lambda match: (
-            f'<a href="/item/{html.escape(match.group(1))}" class="news-ref" target="_blank">'
-            f"[#{html.escape(match.group(1))}]</a>"
+            f'<a href="/item/{html.escape(match.group(1))}" class="news-ref" target="_blank" title="{html.escape(match.group(1))}">'
+            f"[↗ {html.escape(labels.get(match.group(1), short_news_id(match.group(1))))}]</a>"
         ),
         escaped,
     )
+
+
+def display_time_label(value: object) -> str:
+    text = str(value or "").strip()
+    match = re.search(r"(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})", text)
+    if match:
+        return f"{match.group(2)}-{match.group(3)} {match.group(4)}:{match.group(5)}"
+    match = re.search(r"(\d{2}):(\d{2})", text)
+    return match.group(0) if match else ""
+
+
+def short_news_id(value: object) -> str:
+    text = str(value or "")
+    match = re.match(r"(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})", text)
+    if match:
+        return f"{match.group(2)}-{match.group(3)} {match.group(4)}:{match.group(5)}"
+    return text[:10] + ("..." if len(text) > 10 else "")
 
 
 def try_json(text: str) -> dict[str, Any] | None:

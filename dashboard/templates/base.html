@@ -145,7 +145,8 @@
       }
       select,
       input[type="number"],
-      input[type="text"] {
+      input[type="text"],
+      input[type="datetime-local"] {
         height: 34px;
         border: 1px solid #cfd7d3;
         border-radius: 6px;
@@ -213,6 +214,42 @@
       .summary {
         line-height: 1.5;
       }
+      .news-message {
+        display: grid;
+        gap: 6px;
+      }
+      .news-message.important {
+        color: #c92f22;
+      }
+      .news-title {
+        color: inherit;
+        font-size: 15px;
+        font-weight: 650;
+        line-height: 1.45;
+        text-decoration: none;
+      }
+      .news-body {
+        color: inherit;
+        line-height: 1.55;
+      }
+      .news-body.bold {
+        font-weight: 650;
+      }
+      .news-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 2px;
+      }
+      .news-thumb {
+        border: 1px solid var(--border-soft);
+        border-radius: 6px;
+        display: block;
+        margin-top: 6px;
+        max-height: 120px;
+        max-width: 220px;
+        object-fit: cover;
+      }
       .time,
       .source,
       .status,
@@ -252,6 +289,10 @@
       .pill.t0 {
         background: var(--t0-bg);
         color: var(--t0-fg);
+      }
+      .pill.none {
+        background: #f3f5f4;
+        color: var(--muted);
       }
       .pill.sent {
         background: var(--sent-bg);

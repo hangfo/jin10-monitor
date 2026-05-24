@@ -340,6 +340,8 @@ def test_manual_answer_parse_and_render_links():
     assert parsed["parse_error"] is False
     assert parsed["catalysts"][0]["news_id"] == "n1"
     assert 'href="/item/n1"' in rendered
+    assert "05-23 09:30" in rendered
+    assert "[↗ 05-23 09:30]" in rendered
 
 
 def test_parse_answer_valid_json():
@@ -412,6 +414,7 @@ def test_analyze_nav_active_rules_do_not_double_highlight_history():
 
     assert "request.url.path == '/analyze/history'" in base_template
     assert "not request.url.path.startswith('/analyze/history')" in base_template
+    assert ".pill.none" in base_template
 
 
 def test_item_template_truncates_published_at_to_minute():

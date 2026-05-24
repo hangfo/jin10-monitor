@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from dashboard.app import feed_params, parse_int
+from dashboard.app import datetime_local_value, feed_params, normalize_datetime_input, parse_int
 from dashboard import db
 
 
@@ -121,6 +121,8 @@ def test_query_recent_items_reads_latest_status(dashboard_history_db):
     assert rows[0]["id"] == "dash-1"
     assert rows[0]["telegram_status"] == "sent"
     assert rows[0]["telegram_mode"] == "realtime"
+    assert rows[0]["has_title"] == ""
+    assert rows[0]["style_flags"] == ""
 
 
 def test_query_recent_items_filters_confirmed_telegram_delivery(dashboard_history_db):
@@ -204,6 +206,12 @@ def test_parse_int_clamps_invalid_and_out_of_range_values():
     assert parse_int("bad", 80, 1, 300) == 80
     assert parse_int("0", 80, 1, 300) == 1
     assert parse_int("999", 80, 1, 300) == 300
+
+
+def test_datetime_local_helpers_normalize_browser_values():
+    assert normalize_datetime_input("2026-05-24T21:30") == "2026-05-24 21:30:00"
+    assert normalize_datetime_input("2026-05-24 21:30:45") == "2026-05-24 21:30:45"
+    assert datetime_local_value("2026-05-24 21:30:45") == "2026-05-24T21:30"
 
 
 def test_feed_params_normalizes_query_values():

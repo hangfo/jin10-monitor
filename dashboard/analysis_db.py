@@ -278,6 +278,11 @@ def get_run(run_id: str, path: Optional[Path] = None) -> Optional[dict[str, Any]
         run = row_to_dict(row)
         run["evidence_packet"] = parse_json_list(run.get("evidence_packet_json"))
         run["answer_parsed"] = parse_json_dict(run.get("answer_json"))
+        packet_by_id = {
+            str(item.get("news_id") or item.get("id") or ""): item
+            for item in run["evidence_packet"]
+            if isinstance(item, dict)
+        }
         evidence_rows = conn.execute(
             """
             SELECT *
@@ -287,7 +292,18 @@ def get_run(run_id: str, path: Optional[Path] = None) -> Optional[dict[str, Any]
             """,
             (run_id,),
         ).fetchall()
-        run["evidence_rows"] = [row_to_dict(evidence) for evidence in evidence_rows]
+        enriched_rows = []
+        for evidence in evidence_rows:
+            row_dict = row_to_dict(evidence)
+            packet_item = packet_by_id.get(str(row_dict.get("news_id") or ""), {})
+            if packet_item:
+                row_dict["published_at"] = packet_item.get("published_at", "")
+                row_dict["title"] = packet_item.get("title", "")
+                row_dict["content"] = packet_item.get("content", "")
+                row_dict["priority_level"] = packet_item.get("priority_level", "")
+                row_dict["news_source"] = packet_item.get("news_source", "")
+            enriched_rows.append(row_dict)
+        run["evidence_rows"] = enriched_rows
     return run
 
 

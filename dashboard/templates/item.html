@@ -21,14 +21,25 @@
       <span class="pill {{ center.telegram_status }}">Telegram {{ center.telegram_status }}</span>
       {% endif %}
     </div>
-    {% if center.content and center.content != center.title %}
-    <div style="line-height:1.65;white-space:pre-wrap">{{ center.content }}</div>
-    {% endif %}
+    {% set center_has_title = center.has_title not in ['', 0, '0', none, false] and center.title %}
+    <div class="news-message {{ 'important' if center.important else '' }}">
+      {% if center_has_title %}
+      <div class="news-title">{{ center.title }}</div>
+      {% endif %}
+      {% if center.content and center.content != center.title %}
+      <div class="news-body {{ 'bold' if center.has_bold else '' }}" style="white-space:pre-wrap">{{ center.content }}</div>
+      {% elif not center_has_title %}
+      <div class="news-body {{ 'bold' if center.has_bold else '' }}" style="white-space:pre-wrap">{{ center.title or center.id }}</div>
+      {% endif %}
+    </div>
     {% if center.source_url or center.pic_url %}
     <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px">
       {% if center.source_url %}<a href="{{ center.source_url }}">来源链接</a>{% endif %}
       {% if center.pic_url %}<a href="{{ center.pic_url }}">图片链接</a>{% endif %}
     </div>
+    {% endif %}
+    {% if center.has_pic and center.pic_url %}
+    <a href="{{ center.pic_url }}" target="_blank"><img class="news-thumb" src="{{ center.pic_url }}" loading="lazy" alt="快讯图片"></a>
     {% endif %}
     {% if tg_status and tg_status.detail %}
     <div class="meta mono" style="margin-top:12px">Telegram detail: {{ tg_status.detail }}</div>
@@ -56,7 +67,7 @@
         <span class="pill {{ priority_class(item.priority_level) }}">{{ item.priority_level or 'T0_NONE' }}</span>
       </div>
       <div class="summary">
-        <a href="/item/{{ item.id }}?minutes={{ minutes }}">{{ item.summary or item.id }}</a>
+        <a class="{{ 'news-body bold' if item.has_bold else '' }} {{ 'important' if item.important else '' }}" href="/item/{{ item.id }}?minutes={{ minutes }}">{{ item.summary or item.id }}</a>
         {% if item.id == center.id %}<span class="meta"> · 中心消息</span>{% endif %}
       </div>
     </div>
