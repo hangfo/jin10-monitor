@@ -8,10 +8,20 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from .analysis_db import create_run, delete_run, get_run, init_analysis_db, list_runs, save_answer
+from .analysis_db import (
+    BASE_DIR,
+    create_run,
+    delete_run,
+    get_run,
+    get_screenshot,
+    init_analysis_db,
+    list_runs,
+    save_answer,
+    save_screenshot,
+)
 from .db import (
     DEFAULT_HOURS,
     HOURS_OPTIONS,
@@ -22,6 +32,7 @@ from .db import (
     query_item_context,
     query_keyword_heatmap,
     query_latest_published_at,
+    query_feed_page,
     query_nav_summary,
     query_recent_items,
     query_system_health,
@@ -52,6 +63,11 @@ STATUS_OPTIONS = [
 ALLOWED_STATUSES = {value for value, _label in STATUS_OPTIONS}
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
+CONFIDENCE_HELP = (
+    "置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。"
+    "≥75% 较可信；50-75% 仅供参考；<50% 证据不足。"
+)
 
 
 def compact_text(*parts: object, limit: int = 120) -> str:
@@ -92,7 +108,7 @@ def feed_params(request: Request) -> dict[str, object]:
     if priority not in ALLOWED_PRIORITIES:
         priority = ""
     return {
-        "limit": parse_int(query.get("limit", "80"), 80, 1, 300),
+        "limit": parse_int(query.get("limit", "50"), 50, 1, 300),
         "priority": priority,
         "keyword": str(query.get("keyword", "") or "").strip()[:80],
         "hours": parse_int(query.get("hours", str(DEFAULT_HOURS)), DEFAULT_HOURS, 1, 720),
@@ -115,6 +131,61 @@ def parse_evidence_json(value: object) -> list[dict[str, object]]:
     if not isinstance(parsed, list):
         return []
     return [item for item in parsed if isinstance(item, dict)]
+
+
+def append_screenshot_context(user_context: str, screenshot_id: str = "", screenshot_description: str = "") -> str:
+    parts = [user_context.strip()] if user_context.strip() else []
+    description = screenshot_description.strip()
+    if screenshot_id or description:
+        line = "截图上下文："
+        if screenshot_id:
+            line += f" screenshot_id={screenshot_id}"
+        if description:
+            line += f"；{description}"
+        parts.append(line)
+    return "\n".join(parts)
+
+
+def parse_multipart_upload(body: bytes, content_type: str) -> tuple[bytes, str, str, str]:
+    marker = "boundary="
+    if marker not in content_type:
+        raise ValueError("not multipart")
+    boundary = content_type.split(marker, 1)[1].split(";", 1)[0].strip().strip('"')
+    if not boundary:
+        raise ValueError("missing boundary")
+    file_bytes = b""
+    filename = "screenshot.png"
+    mime_type = ""
+    description = ""
+    for part in body.split(("--" + boundary).encode()):
+        if b"Content-Disposition" not in part:
+            continue
+        header, _, data = part.partition(b"\r\n\r\n")
+        if not _:
+            continue
+        data = data.rstrip(b"\r\n")
+        header_text = header.decode("utf-8", errors="ignore")
+        disposition = header_text.lower()
+        if 'name="description"' in disposition:
+            description = data.decode("utf-8", errors="ignore").strip()
+            continue
+        if 'name="file"' not in disposition:
+            continue
+        disposition_line = ""
+        for line in header_text.splitlines():
+            lower = line.lower()
+            if lower.startswith("content-disposition:"):
+                disposition_line = line
+            if lower.startswith("content-type:"):
+                mime_type = line.split(":", 1)[1].strip()
+        for segment in disposition_line.split(";"):
+            segment = segment.strip()
+            if segment.startswith("filename="):
+                filename = Path(segment.split("=", 1)[1].strip().strip('"')).name or filename
+        file_bytes = data
+    if not file_bytes:
+        raise ValueError("no file in request")
+    return file_bytes, filename, mime_type, description
 
 
 def normalize_datetime_input(value: object) -> str:
@@ -142,6 +213,7 @@ def create_app() -> FastAPI:
     templates.env.globals["priority_class"] = priority_class
     templates.env.globals["priority_css"] = priority_css
     templates.env.globals["datetime_local_value"] = datetime_local_value
+    templates.env.globals["confidence_help"] = CONFIDENCE_HELP
 
     @app.get("/")
     async def index(request: Request):
@@ -278,6 +350,8 @@ def create_app() -> FastAPI:
         window_start = normalize_datetime_input(form.get("window_start", ""))
         window_end = normalize_datetime_input(form.get("window_end", ""))
         from_item_id = form.get("from_item_id", "").strip()
+        screenshot_id = form.get("screenshot_id", "").strip()
+        screenshot_description = form.get("screenshot_description", "").strip()
         user_context = form.get("user_context", "").strip()
         evidence, boundary = build_evidence_for_preview(asset, window_start, window_end)
         return templates.TemplateResponse(
@@ -291,6 +365,8 @@ def create_app() -> FastAPI:
                 "window_start": window_start,
                 "window_end": window_end,
                 "from_item_id": from_item_id,
+                "screenshot_id": screenshot_id,
+                "screenshot_description": screenshot_description,
                 "user_context": user_context,
                 "evidence": evidence,
                 "boundary": boundary,
@@ -309,7 +385,13 @@ def create_app() -> FastAPI:
         window_start = normalize_datetime_input(form.get("window_start", ""))
         window_end = normalize_datetime_input(form.get("window_end", ""))
         from_item_id = form.get("from_item_id", "").strip()
-        user_context = form.get("user_context", "").strip()
+        screenshot_id = form.get("screenshot_id", "").strip()
+        screenshot_description = form.get("screenshot_description", "").strip()
+        user_context = append_screenshot_context(
+            form.get("user_context", ""),
+            screenshot_id=screenshot_id,
+            screenshot_description=screenshot_description,
+        )
         evidence = parse_evidence_json(form.get("evidence_json", "[]"))
         selected_ids = {
             key.removeprefix("sel_")
@@ -334,6 +416,7 @@ def create_app() -> FastAPI:
             window_end=window_end,
             evidence_packet=evidence,
             from_item_id=from_item_id,
+            screenshot_id=screenshot_id,
             user_context=user_context,
             manual_prompt=prompt,
             prompt_version=PROMPT_VERSION,
@@ -350,6 +433,7 @@ def create_app() -> FastAPI:
                 "window_start": window_start,
                 "window_end": window_end,
                 "from_item_id": from_item_id,
+                "screenshot_id": screenshot_id,
                 "user_context": user_context,
                 "evidence": evidence,
                 "prompt": prompt,
@@ -418,6 +502,71 @@ def create_app() -> FastAPI:
         init_analysis_db()
         delete_run(run_id)
         return RedirectResponse("/analyze/history", status_code=303)
+
+    @app.post("/api/screenshots/upload")
+    async def api_screenshot_upload(request: Request):
+        try:
+            body = await request.body()
+            file_bytes, filename, mime_type, description = parse_multipart_upload(
+                body,
+                request.headers.get("content-type", ""),
+            )
+            if not mime_type.lower().startswith("image/"):
+                return JSONResponse({"ok": False, "error": "only image uploads are accepted"}, status_code=400)
+            if len(file_bytes) > MAX_SCREENSHOT_BYTES:
+                return JSONResponse({"ok": False, "error": "image is larger than 8 MB"}, status_code=413)
+            init_analysis_db()
+            screenshot_id = save_screenshot(file_bytes, filename, user_description=description)
+            return JSONResponse({"ok": True, "screenshot_id": screenshot_id, "filename": filename})
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+    @app.get("/screenshots/{screenshot_id}")
+    async def screenshot_file(screenshot_id: str):
+        init_analysis_db()
+        screenshot = get_screenshot(screenshot_id)
+        if not screenshot:
+            raise HTTPException(status_code=404, detail="screenshot not found")
+        file_path = (BASE_DIR / str(screenshot.get("file_path") or "")).resolve()
+        screenshots_root = (BASE_DIR / "data" / "screenshots").resolve()
+        if screenshots_root not in file_path.parents or not file_path.exists():
+            raise HTTPException(status_code=404, detail="screenshot file not found")
+        return FileResponse(file_path)
+
+    @app.get("/api/feed/page")
+    async def api_feed_page(request: Request):
+        try:
+            health = history_health()
+            if health["status"] != "ok":
+                return JSONResponse({"html": "", "items_count": 0, "has_more": False, "next_offset": 0})
+            query = request.query_params
+            params = feed_params(request)
+            offset = parse_int(query.get("offset", "0"), 0, 0, 1000000)
+            limit = parse_int(query.get("limit", "30"), 30, 1, 50)
+            items = query_feed_page(
+                offset=offset,
+                limit=limit,
+                priority=str(params["priority"]),
+                keyword=str(params["keyword"]),
+                hours=int(params["hours"]),
+                tg_sent_only=bool(params["tg_sent_only"]),
+                with_status=bool(params["with_status"]),
+            )
+            for item in items:
+                item["summary"] = compact_text(item.get("title"), item.get("content"), limit=140)
+            html = templates.env.get_template("_feed_rows.html").render(request=request, items=items)
+            return JSONResponse(
+                {
+                    "html": html,
+                    "items_count": len(items),
+                    "has_more": len(items) == limit,
+                    "next_offset": offset + len(items),
+                }
+            )
+        except Exception:
+            return JSONResponse({"html": "", "items_count": 0, "has_more": False, "next_offset": 0})
 
     @app.get("/api/feed/latest-ts")
     async def api_feed_latest_ts(request: Request):

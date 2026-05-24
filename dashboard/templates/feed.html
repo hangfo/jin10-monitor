@@ -103,53 +103,9 @@
           <th>Telegram</th>
         </tr>
       </thead>
-      <tbody>
-        {% for item in items %}
-        {% set row_class = priority_class(item.priority_level) %}
-        <tr class="row-{{ row_class }}">
-          <td class="time mono">{{ item.published_at or '' }}</td>
-          <td class="priority">
-            <span class="pill {{ row_class }}">{{ item.priority_level or 'T0_NONE' }}</span>
-          </td>
-          <td class="summary">
-            {% set has_title = item.has_title not in ['', 0, '0', none, false] and item.title %}
-            {% set body_text = item.content if item.content and item.content != item.title else '' %}
-            <div class="news-message {{ 'important' if item.important else '' }}">
-              {% if has_title %}
-              <a class="news-title" href="/item/{{ item.id }}">{{ item.title }}</a>
-              {% else %}
-              <a class="news-body {{ 'bold' if item.has_bold else '' }}" href="/item/{{ item.id }}">{{ item.content or item.title or item.id }}</a>
-              {% endif %}
-              {% if body_text %}
-              <div class="news-body {{ 'bold' if item.has_bold else '' }}">{{ body_text }}</div>
-              {% endif %}
-              {% if item.has_pic and item.pic_url %}
-              <a href="{{ item.pic_url }}" target="_blank"><img class="news-thumb" src="{{ item.pic_url }}" loading="lazy" alt="快讯图片" onerror="this.closest('a').style.display='none'"></a>
-              {% endif %}
-              <div class="news-links meta">
-                {% if item.news_source %}<span>{{ item.news_source }}</span>{% endif %}
-                {% if item.source_url %}<a href="{{ item.source_url }}" target="_blank">来源链接</a>{% endif %}
-                {% if item.style_flags %}<span class="mono">{{ item.style_flags }}</span>{% endif %}
-              </div>
-            </div>
-          </td>
-          <td class="source meta">
-            {{ item.source or '' }}
-            {% if item.has_pic %}
-            <div>图片</div>
-            {% endif %}
-          </td>
-          <td class="status">
-            {% if item.tg_confirmed_sent %}
-            <span class="pill sent">sent</span>
-            {% elif item.telegram_status %}
-            <span class="pill {{ item.telegram_status }}">{{ item.telegram_status }}</span>
-            {% else %}
-            <span class="meta">-</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
+      <tbody id="feed-tbody">
+        {% include "_feed_rows.html" %}
+        <tr id="feed-sentinel"><td colspan="5" class="meta" style="height:10px;text-align:center"></td></tr>
       </tbody>
     </table>
   </div>
@@ -160,12 +116,58 @@
   <script>
     const CURRENT_NEWEST = {{ ((items[0].published_at or '') if items else '') | tojson }};
     const POLL_MS = 20000;
+    const PAGE_SIZE = 30;
+    const MAX_ITEMS = 500;
+    let offset = {{ items | length }};
+    let loadingMore = false;
+    let exhausted = false;
     let pollTimer = null;
+
+    function updateSentinel(text) {
+      const sentinel = document.getElementById("feed-sentinel");
+      if (sentinel) {
+        sentinel.innerHTML = `<td colspan="5" class="meta" style="text-align:center;padding:12px">${text || ""}</td>`;
+      }
+    }
+
+    async function loadMoreItems() {
+      if (loadingMore || exhausted || document.hidden || offset >= MAX_ITEMS) {
+        if (offset >= MAX_ITEMS) {
+          exhausted = true;
+          updateSentinel(`已加载 ${offset} 条`);
+        }
+        return;
+      }
+      loadingMore = true;
+      updateSentinel("加载中...");
+      try {
+        const params = new URLSearchParams(window.location.search);
+        params.set("offset", String(offset));
+        params.set("limit", String(PAGE_SIZE));
+        const response = await fetch(`/api/feed/page?${params.toString()}`, {cache: "no-store"});
+        if (!response.ok) {
+          updateSentinel("");
+          return;
+        }
+        const data = await response.json();
+        const sentinel = document.getElementById("feed-sentinel");
+        if (data.html && sentinel) {
+          sentinel.insertAdjacentHTML("beforebegin", data.html);
+        }
+        offset = data.next_offset || offset + (data.items_count || 0);
+        exhausted = !data.has_more || offset >= MAX_ITEMS;
+        updateSentinel(exhausted ? `已加载 ${offset} 条` : "");
+      } catch (_error) {
+        updateSentinel("");
+      } finally {
+        loadingMore = false;
+      }
+    }
 
     async function checkForNewItems() {
       const tag = (document.activeElement && document.activeElement.tagName || "").toLowerCase();
       const editing = ["input", "select", "textarea"].includes(tag);
-      if (editing || document.hidden) {
+      if (editing || document.hidden || loadingMore) {
         return;
       }
       try {
@@ -202,5 +204,14 @@
       }
     });
     startPolling();
+
+    const sentinel = document.getElementById("feed-sentinel");
+    if (sentinel && "IntersectionObserver" in window) {
+      new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) {
+          loadMoreItems();
+        }
+      }, {rootMargin: "200px"}).observe(sentinel);
+    }
   </script>
 {% endblock %}

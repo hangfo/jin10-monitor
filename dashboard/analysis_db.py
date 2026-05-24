@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     window_start TEXT NOT NULL DEFAULT '',
     window_end TEXT NOT NULL DEFAULT '',
     from_item_id TEXT NOT NULL DEFAULT '',
+    screenshot_id TEXT NOT NULL DEFAULT '',
     user_context TEXT NOT NULL DEFAULT '',
     evidence_packet_json TEXT NOT NULL DEFAULT '[]',
     manual_prompt TEXT NOT NULL DEFAULT '',
@@ -99,11 +100,18 @@ def open_analysis_db(path: Optional[Path] = None) -> sqlite3.Connection:
 def init_analysis_db(path: Optional[Path] = None) -> None:
     with open_analysis_db(path) as conn:
         conn.executescript(SCHEMA_SQL)
+        ensure_analysis_columns(conn)
         conn.commit()
 
 
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
+
+
+def ensure_analysis_columns(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_runs)").fetchall()}
+    if "screenshot_id" not in columns:
+        conn.execute("ALTER TABLE analysis_runs ADD COLUMN screenshot_id TEXT NOT NULL DEFAULT ''")
 
 
 def now_text() -> str:
@@ -126,6 +134,7 @@ def create_run(
     evidence_packet: list[dict[str, Any]],
     *,
     from_item_id: str = "",
+    screenshot_id: str = "",
     user_context: str = "",
     manual_prompt: str = "",
     model_label: str = "manual_chatgpt_business",
@@ -141,11 +150,11 @@ def create_run(
             """
             INSERT INTO analysis_runs (
                 id, question, asset, window_start, window_end, from_item_id,
-                user_context, evidence_packet_json, manual_prompt, model_label,
+                screenshot_id, user_context, evidence_packet_json, manual_prompt, model_label,
                 prompt_version, evidence_count, selected_count, status,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
             """,
             (
                 run_id,
@@ -154,6 +163,7 @@ def create_run(
                 window_start,
                 window_end,
                 from_item_id,
+                screenshot_id,
                 user_context,
                 packet_json,
                 manual_prompt,
@@ -276,6 +286,8 @@ def get_run(run_id: str, path: Optional[Path] = None) -> Optional[dict[str, Any]
         if not row:
             return None
         run = row_to_dict(row)
+        screenshot_id = str(run.get("screenshot_id") or "")
+        run["screenshot"] = get_screenshot(screenshot_id, path=path) if screenshot_id else None
         run["evidence_packet"] = parse_json_list(run.get("evidence_packet_json"))
         run["answer_parsed"] = parse_json_dict(run.get("answer_json"))
         packet_by_id = {
@@ -355,7 +367,10 @@ def save_screenshot(
     suffix = Path(original_filename).suffix or ".png"
     file_path = SCREENSHOT_DIR / f"{screenshot_id}{suffix}"
     file_path.write_bytes(file_bytes)
-    relative_path = str(file_path.relative_to(BASE_DIR))
+    try:
+        relative_path = str(file_path.relative_to(BASE_DIR))
+    except ValueError:
+        relative_path = str(file_path)
     with open_analysis_db(path) as conn:
         conn.execute(
             """
@@ -374,6 +389,14 @@ def save_screenshot(
         )
         conn.commit()
     return screenshot_id
+
+
+def get_screenshot(screenshot_id: str, path: Optional[Path] = None) -> Optional[dict[str, Any]]:
+    if not screenshot_id:
+        return None
+    with open_analysis_db(path) as conn:
+        row = conn.execute("SELECT * FROM screenshots WHERE id = ?", (screenshot_id,)).fetchone()
+    return row_to_dict(row) if row else None
 
 
 def parse_json_list(value: object) -> list[dict[str, Any]]:

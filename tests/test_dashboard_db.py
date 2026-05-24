@@ -164,6 +164,20 @@ def test_query_recent_items_filters_priority(dashboard_history_db):
     assert rows == []
 
 
+def test_query_feed_page_applies_offset_limit_and_filters(dashboard_history_db):
+    conn = sqlite3.connect(dashboard_history_db)
+    insert_flash(conn, "dash-2", history_ts(-8), "Second Dashboard title")
+    insert_flash(conn, "noise-1", history_ts(-7), "Other title")
+    conn.commit()
+    conn.close()
+
+    rows = db.query_feed_page(offset=1, limit=1, keyword="Dashboard")
+
+    assert [row["id"] for row in rows] == ["dash-1"]
+    assert rows[0]["has_title"] == ""
+    assert rows[0]["style_flags"] == ""
+
+
 def test_query_keyword_heatmap_uses_configured_keywords(dashboard_history_db, monkeypatch):
     monkeypatch.setattr(db, "HIGH_PRIORITY", ["Dashboard"])
     monkeypatch.setattr(db, "KEYWORDS", ["Dashboard", "unused-custom-keyword"])

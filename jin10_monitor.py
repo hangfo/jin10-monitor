@@ -580,7 +580,18 @@ def format_message(item: dict, priority_level: str, *, catchup: bool = False) ->
         parts.append(f"来源链接：<a href=\"{escape(source_url, quote=True)}\">查看</a>")
     if metadata["pic_url"]:
         parts.append(f"图片：<a href=\"{escape(metadata['pic_url'], quote=True)}\">查看</a>")
+    dashboard_url = dashboard_item_url(item)
+    if dashboard_url:
+        parts.append(f"Dashboard：<a href=\"{escape(dashboard_url, quote=True)}\">查看详情</a>")
     return "\n".join(parts)
+
+
+def dashboard_item_url(item: dict) -> str:
+    base_url = os.getenv("DASHBOARD_URL", "").strip()
+    message_id = str(item.get("id") or "").strip()
+    if not base_url or not message_id:
+        return ""
+    return f"{base_url.rstrip('/')}/item/{urllib.parse.quote(message_id, safe='')}"
 
 
 ANSI_RED = "\033[31m"

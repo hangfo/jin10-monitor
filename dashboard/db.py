@@ -169,6 +169,70 @@ def query_recent_items(
     return [row_to_dict(row) for row in rows]
 
 
+def query_feed_page(
+    *,
+    offset: int = 0,
+    limit: int = 30,
+    priority: str = "",
+    keyword: str = "",
+    hours: int = DEFAULT_HOURS,
+    tg_sent_only: bool = False,
+    with_status: bool = False,
+) -> list[dict[str, Any]]:
+    safe_offset = max(0, int(offset))
+    safe_limit = max(1, min(int(limit), 50))
+    clauses = ["h.published_at >= ?"]
+    params: list[object] = [since_text(hours)]
+    if priority:
+        clauses.append("h.priority_level = ?")
+        params.append(priority)
+    if keyword:
+        clauses.append("(h.title LIKE ? OR h.content LIKE ?)")
+        pattern = f"%{keyword[:80]}%"
+        params.extend([pattern, pattern])
+    if tg_sent_only:
+        clauses.append("EXISTS (SELECT 1 FROM delivery_log dl WHERE dl.message_id = h.id)")
+    if with_status:
+        clauses.append("EXISTS (SELECT 1 FROM telegram_delivery_status t WHERE t.message_id = h.id)")
+    where = "WHERE " + " AND ".join(clauses)
+    params.extend([safe_limit, safe_offset])
+
+    with open_readonly_connection() as conn:
+        columns = table_columns(conn, "flash_history")
+        rows = conn.execute(
+            f"""
+            SELECT h.id, h.published_at, h.title, h.content, h.hit, h.high, h.important,
+                   h.has_bold, h.priority_level, h.has_pic, h.pic_url, h.news_source,
+                   h.source_url, h.source, h.created_at,
+                   {optional_column(columns, "has_title")},
+                   {optional_column(columns, "style_flags")},
+                   (
+                       SELECT t.status
+                       FROM telegram_delivery_status t
+                       WHERE t.message_id = h.id
+                       ORDER BY t.updated_at DESC
+                       LIMIT 1
+                   ) AS telegram_status,
+                   (
+                       SELECT t.mode
+                       FROM telegram_delivery_status t
+                       WHERE t.message_id = h.id
+                       ORDER BY t.updated_at DESC
+                       LIMIT 1
+                   ) AS telegram_mode,
+                   EXISTS (
+                       SELECT 1 FROM delivery_log dl WHERE dl.message_id = h.id
+                   ) AS tg_confirmed_sent
+            FROM flash_history h
+            {where}
+            ORDER BY h.published_at DESC, h.created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            params,
+        ).fetchall()
+    return [row_to_dict(row) for row in rows]
+
+
 def query_latest_published_at(
     *,
     priority: str = "",

@@ -56,6 +56,19 @@
   .full-row {
     grid-column: 1 / -1;
   }
+  .screenshot-preview {
+    align-items: center;
+    display: none;
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .screenshot-preview img {
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    max-height: 110px;
+    max-width: 220px;
+    object-fit: contain;
+  }
   .analysis-textarea,
   .prompt-box,
   .answer-box {
@@ -193,8 +206,24 @@
           </div>
         </div>
         <div class="filter-group full-row">
+          <span class="filter-label">截图（可选）</span>
+          <div style="align-items:center;display:flex;gap:10px;flex-wrap:wrap">
+            <input id="screenshot-file" type="file" accept="image/*">
+            <input id="screenshot-id" type="hidden" name="screenshot_id" value="">
+            <button type="button" class="button-link secondary" onclick="uploadScreenshot()">上传截图</button>
+            <span id="screenshot-status" class="muted"></span>
+          </div>
+          <div id="screenshot-preview" class="screenshot-preview">
+            <img id="screenshot-preview-img" alt="截图预览">
+          </div>
+        </div>
+        <div class="filter-group full-row">
+          <span class="filter-label">截图描述（可选）</span>
+          <textarea class="analysis-textarea" id="screenshot-description" name="screenshot_description" rows="2" placeholder="例如：1 分钟 K 线放量突破，突破前横盘约 20 分钟。"></textarea>
+        </div>
+        <div class="filter-group full-row">
           <span class="filter-label">补充描述</span>
-          <textarea class="analysis-textarea" name="user_context" rows="3" placeholder="例如：价格从 105200 快速拉到 106100，想确认是否新闻驱动。"></textarea>
+          <textarea class="analysis-textarea" name="user_context" rows="3" placeholder="例如：价格从 105200 快速拉到 106100，想确认是否新闻驱动。">{{ prefill.get('user_context', '') }}</textarea>
         </div>
       </div>
       <div style="align-items:center;display:flex;gap:10px;margin-top:16px">
@@ -226,6 +255,49 @@
     if (!document.getElementById("window-start").value && !document.getElementById("window-end").value) {
       setQuickWindow(30);
     }
+
+    document.getElementById("screenshot-file").addEventListener("change", (event) => {
+      const file = event.target.files[0];
+      const preview = document.getElementById("screenshot-preview");
+      const image = document.getElementById("screenshot-preview-img");
+      document.getElementById("screenshot-id").value = "";
+      if (!file) {
+        preview.style.display = "none";
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        image.src = reader.result;
+        preview.style.display = "flex";
+      };
+      reader.readAsDataURL(file);
+    });
+
+    async function uploadScreenshot() {
+      const input = document.getElementById("screenshot-file");
+      const status = document.getElementById("screenshot-status");
+      const file = input.files[0];
+      if (!file) {
+        status.textContent = "未选择图片";
+        return;
+      }
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("description", document.getElementById("screenshot-description").value || "");
+      status.textContent = "上传中...";
+      try {
+        const response = await fetch("/api/screenshots/upload", {method: "POST", body: formData});
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          status.textContent = data.error || "上传失败";
+          return;
+        }
+        document.getElementById("screenshot-id").value = data.screenshot_id;
+        status.textContent = `已保存 ${data.screenshot_id}`;
+      } catch (_error) {
+        status.textContent = "上传失败";
+      }
+    }
   </script>
   {% endif %}
 
@@ -245,6 +317,8 @@
       <input type="hidden" name="window_start" value="{{ window_start }}">
       <input type="hidden" name="window_end" value="{{ window_end }}">
       <input type="hidden" name="from_item_id" value="{{ from_item_id }}">
+      <input type="hidden" name="screenshot_id" value="{{ screenshot_id }}">
+      <input type="hidden" name="screenshot_description" value="{{ screenshot_description }}">
       <input type="hidden" name="user_context" value="{{ user_context }}">
       <input id="evidence-json-input" type="hidden" name="evidence_json" value="">
 

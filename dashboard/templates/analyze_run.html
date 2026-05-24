@@ -97,13 +97,23 @@
     </span>
     <span>证据：{{ run.selected_count }} / {{ run.evidence_count }}</span>
     {% if run.judgement %}<span>类型：{{ run.judgement }}</span>{% endif %}
-    {% if run.overall_confidence %}<span>置信度：{{ "%.0f%%"|format(run.overall_confidence * 100) }}</span>{% endif %}
+    {% if run.overall_confidence %}
+    <span title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。≥75% 较可信；50-75% 仅供参考；<50% 证据不足。">置信度：{{ "%.0f%%"|format(run.overall_confidence * 100) }}</span>
+    {% endif %}
     <span class="mono">{{ run.id }}</span>
   </div>
 
   {% if run.from_item_id %}
   <div class="panel" style="margin-bottom:12px">
     来自消息：<a class="mono" href="/item/{{ run.from_item_id }}">{{ run.from_item_id }}</a>
+  </div>
+  {% endif %}
+
+  {% if run.screenshot %}
+  <div class="panel" style="margin-bottom:12px">
+    截图：<a class="mono" href="/screenshots/{{ run.screenshot.id }}" target="_blank">{{ run.screenshot.id }}</a>
+    <span class="muted">{{ run.screenshot.original_filename }}</span>
+    {% if run.screenshot.user_description %}<div class="muted">{{ run.screenshot.user_description }}</div>{% endif %}
   </div>
   {% endif %}
 
@@ -149,7 +159,7 @@
             <div class="muted mono" title="{{ ev.news_id }}">{{ ev.news_id[:18] }}{% if ev.news_id|length > 18 %}...{% endif %}</div>
             {% if ev.matched_keywords %}<div class="muted">{{ ev.matched_keywords }}</div>{% endif %}
             {% if ev.llm_confidence %}
-            <div class="muted">LLM {{ "%.0f%%"|format(ev.llm_confidence * 100) }} · {{ ev.llm_direction }}</div>
+            <div class="muted" title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。≥75% 较可信；50-75% 仅供参考；<50% 证据不足。">LLM {{ "%.0f%%"|format(ev.llm_confidence * 100) }} · {{ ev.llm_direction }}</div>
             {% endif %}
           </div>
         </div>

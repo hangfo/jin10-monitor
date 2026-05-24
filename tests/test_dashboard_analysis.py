@@ -1,10 +1,11 @@
 import json
 import sqlite3
 from datetime import datetime, timedelta
+from html import escape
 from pathlib import Path
 
 from dashboard import analysis_db, db, evidence, manual_ai
-from dashboard.app import app
+from dashboard.app import app, append_screenshot_context, parse_multipart_upload
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "dashboard" / "templates"
 
@@ -149,6 +150,32 @@ def test_analysis_db_init_creates_tables(tmp_path):
         }
 
     assert {"analysis_runs", "analysis_evidence", "screenshots"}.issubset(tables)
+
+
+def test_analysis_db_links_screenshot_to_run(tmp_path, monkeypatch):
+    db_path = tmp_path / "analysis.sqlite3"
+    monkeypatch.setattr(analysis_db, "SCREENSHOT_DIR", tmp_path / "screenshots")
+    analysis_db.init_analysis_db(db_path)
+    screenshot_id = analysis_db.save_screenshot(
+        b"fakepng",
+        "chart.png",
+        user_description="突破截图",
+        path=db_path,
+    )
+    run_id = analysis_db.create_run(
+        "Question",
+        "BTC",
+        "2026-05-23 09:00:00",
+        "2026-05-23 10:00:00",
+        [],
+        screenshot_id=screenshot_id,
+        path=db_path,
+    )
+
+    run = analysis_db.get_run(run_id, path=db_path)
+
+    assert run["screenshot_id"] == screenshot_id
+    assert run["screenshot"]["user_description"] == "突破截图"
 
 
 def test_analysis_db_is_separate_from_business_history(tmp_path):
@@ -342,6 +369,7 @@ def test_manual_answer_parse_and_render_links():
     assert 'href="/item/n1"' in rendered
     assert "05-23 09:30" in rendered
     assert "[↗ 05-23 09:30]" in rendered
+    assert escape(manual_ai.CONFIDENCE_HELP) in rendered
 
 
 def test_parse_answer_valid_json():
@@ -390,6 +418,9 @@ def test_dashboard_bugfix_routes_are_registered():
     paths = [route.path for route in app.routes if hasattr(route, "path")]
 
     assert "/api/feed/latest-ts" in paths
+    assert "/api/feed/page" in paths
+    assert "/api/screenshots/upload" in paths
+    assert "/screenshots/{screenshot_id}" in paths
     assert "/aggregation" in paths
 
 
@@ -422,3 +453,39 @@ def test_item_template_truncates_published_at_to_minute():
 
     assert '{{ (center.published_at or "")[:16] }}' in item_template
     assert '{{ (item.published_at or "")[:16] }}' in item_template
+
+
+def test_multipart_upload_parser_extracts_image_and_description():
+    boundary = "abc123"
+    body = (
+        b"--abc123\r\n"
+        b'Content-Disposition: form-data; name="description"\r\n\r\n'
+        b"\xe4\xbb\xb7\xe6\xa0\xbc\xe7\xaa\x81\xe7\xa0\xb4\r\n"
+        b"--abc123\r\n"
+        b'Content-Disposition: form-data; name="file"; filename="chart.png"\r\n'
+        b"Content-Type: image/png\r\n\r\n"
+        b"\x89PNG\r\n"
+        b"--abc123--\r\n"
+    )
+
+    file_bytes, filename, mime_type, description = parse_multipart_upload(
+        body,
+        "multipart/form-data; boundary=abc123",
+    )
+
+    assert file_bytes == b"\x89PNG"
+    assert filename == "chart.png"
+    assert mime_type == "image/png"
+    assert description == "价格突破"
+
+
+def test_append_screenshot_context_includes_manual_description():
+    context = append_screenshot_context(
+        "原始补充",
+        screenshot_id="sc_1",
+        screenshot_description="1 分钟 K 线放量突破",
+    )
+
+    assert "原始补充" in context
+    assert "screenshot_id=sc_1" in context
+    assert "1 分钟 K 线放量突破" in context

@@ -61,6 +61,7 @@ pytest
 - `HISTORY_DB`：本地历史库路径，默认 `data/jin10_history.sqlite3`。
 - `JIN10_APP_IDS`：REST 请求头 app id 列表，逗号分隔。默认先用当前页面常见 app id，再自动降级到旧 app id。
 - `PUSH_IMPORTANT`：是否直接推送金十红色重要消息，默认 `1`。设为 `0` 时只按关键词推送。
+- `DASHBOARD_URL`：可选，本地 Dashboard 地址，例如 `http://127.0.0.1:8765`。配置后 Telegram 消息末尾会附 `/item/{id}` 详情链接；留空或未配置时 Telegram 文本保持原样。
 - `AGGREGATION_V2`：事件聚合防刷屏开关，默认 `0`。开启后相似实时快讯在窗口内只推第一条，后续仍入库但跳过 Telegram，并记录为 `skipped` 诊断状态。
 - `AGGREGATION_WINDOW_SECONDS`：聚合窗口秒数，默认 180，范围 `0-3600`；设为 `0` 可关闭窗口。
 - `AGGREGATION_BYPASS_IMPORTANT`：T3 金十重要消息是否绕过聚合直推，默认 `1`。
@@ -127,7 +128,7 @@ pip install -r requirements.txt
 python run_dashboard.py
 ```
 
-默认同样监听 `http://127.0.0.1:8765/`。该入口与 `jin10_monitor.py` 解耦，目前提供快讯流、单条上下文、Telegram 投递状态、系统健康和分析占位页。独立 Dashboard 只读打开本地 SQLite，不写业务库、不触发金十 REST、不发送 Telegram；“仅已推 Telegram”筛选以 `delivery_log` 为已确认发送来源。
+默认同样监听 `http://127.0.0.1:8765/`。该入口与 `jin10_monitor.py` 解耦，目前提供快讯流、单条上下文、Telegram 投递状态、系统健康、手工 AI 分析、截图上传和分析历史。独立 Dashboard 只读打开本地 SQLite，不写业务库、不触发金十 REST、不发送 Telegram；“仅已推 Telegram”筛选以 `delivery_log` 为已确认发送来源。
 
 ## Telegram 投递状态
 

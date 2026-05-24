@@ -522,3 +522,22 @@ def test_format_message_bolds_bold_content_when_title_is_absent(monkeypatch):
     message = jm.format_message(item, jm.PRIORITY_HIGH)
 
     assert "<b>Important content</b>" in message
+
+
+def test_format_message_is_unchanged_when_dashboard_url_is_unset(monkeypatch):
+    monkeypatch.delenv("DASHBOARD_URL", raising=False)
+    item = news_item(data={"title": "Title", "content": "Content"})
+
+    message = jm.format_message(item, jm.PRIORITY_NORMAL)
+
+    assert "Dashboard" not in message
+    assert "/item/test-1" not in message
+
+
+def test_format_message_appends_dashboard_item_link(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_URL", "http://127.0.0.1:8765/")
+    item = news_item(id="news id/1", data={"title": "Title", "content": "Content"})
+
+    message = jm.format_message(item, jm.PRIORITY_NORMAL)
+
+    assert 'Dashboard：<a href="http://127.0.0.1:8765/item/news%20id%2F1">查看详情</a>' in message
