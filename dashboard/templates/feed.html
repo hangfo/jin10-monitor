@@ -124,7 +124,7 @@
               <div class="news-body {{ 'bold' if item.has_bold else '' }}">{{ body_text }}</div>
               {% endif %}
               {% if item.has_pic and item.pic_url %}
-              <a href="{{ item.pic_url }}" target="_blank"><img class="news-thumb" src="{{ item.pic_url }}" loading="lazy" alt="快讯图片"></a>
+              <a href="{{ item.pic_url }}" target="_blank"><img class="news-thumb" src="{{ item.pic_url }}" loading="lazy" alt="快讯图片" onerror="this.closest('a').style.display='none'"></a>
               {% endif %}
               <div class="news-links meta">
                 {% if item.news_source %}<span>{{ item.news_source }}</span>{% endif %}

@@ -39,7 +39,7 @@
     </div>
     {% endif %}
     {% if center.has_pic and center.pic_url %}
-    <a href="{{ center.pic_url }}" target="_blank"><img class="news-thumb" src="{{ center.pic_url }}" loading="lazy" alt="快讯图片"></a>
+    <a href="{{ center.pic_url }}" target="_blank"><img class="news-thumb" src="{{ center.pic_url }}" loading="lazy" alt="快讯图片" onerror="this.closest('a').style.display='none'"></a>
     {% endif %}
     {% if tg_status and tg_status.detail %}
     <div class="meta mono" style="margin-top:12px">Telegram detail: {{ tg_status.detail }}</div>

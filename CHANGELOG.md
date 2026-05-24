@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 新增项目状态摘要 037：记录 `phase 2a function 2&4&5.zip` 评估结论、仅采用图片死链兜底的原因、003 Phase 2B / Phase 3 规格落地情况和下一步 Phase 3A Telegram 深链计划。
+- 新增 Dashboard Phase 2B / Phase 3 规格文档：明确 Telegram `/item/{id}` 深链、快讯流无限加载、截图上传、置信度说明、LLM provider adapter、Vision 识别和行情叠加的实现边界与推荐顺序。
 - 增强独立 Dashboard 体验：分析页改用原生日期时间选择器并提供 5/15/30 分钟、1 小时、4 小时快捷窗口，快讯流和详情页按金十消息样式渲染重要、标题、加粗、图片和来源链接，分析详情页催化因素与证据列表改为优先显示时间和标题并弱化内部 news_id。
 - 修复独立 Dashboard 模板细节：`/item/{id}` 时间显示统一到分钟，分析相关导航高亮避免 `/analyze/history` 与分析页双高亮，并将分析记录状态展示为中文草稿/已完成。
 - 修复独立 Dashboard Phase 2A 细节：禁用默认 `/docs`、`/redoc` 与 `/openapi.json`，补齐分析历史和聚合报告导航，证据边界改为结构化字段，快讯流自动刷新改为保留当前筛选条件的最新时间戳智能轮询，并新增只读聚合报告基础页。
