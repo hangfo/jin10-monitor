@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 新增项目状态摘要 038：记录 Dashboard v1/v2 补丁包评估、`304929a` V2 bugfix 基线、003 与 004 计划差异、下一步分析对比 / 行情 adapter / Provider Adapter 的推荐编排。
 - 修复 Dashboard 快讯流与分析页细节：不再展示 `style_flags` 内部调试字段，隐藏空内容快讯，避免正文重复显示，时间列统一到分钟，补拉消息显示“补拉”标签，Telegram 状态和 AI 方向标签中文化为催化语义；同时加固截图上传（读入前 `Content-Length` 预检、限定 png/jpeg/webp/gif、500 错误脱敏），并将同秒消息排序 tie-breaker 改为金十消息 `id`。
 - 新增 Dashboard V2 开发计划定稿 004：对照 v1/v2 两版补丁包和当前 repo，确认 v2 为修复基线、保留 v1 路线图价值但不接入 HTML 页面，冻结后续分析对比、可选行情叠加、Phase 2B Provider Adapter 和 Vision 识别边界。
 - 完成 Dashboard Phase 3A/3B/3C 增强：Telegram 消息支持通过可选 `DASHBOARD_URL` 追加本地 `/item/{id}` 详情链接，未配置时 Telegram 文本保持原样；快讯流首屏默认 50 条并支持滚动分页加载；分析页支持本地截图上传、预览、手工截图描述和分析记录截图关联；置信度展示增加“主观估计、非交易信号”的悬停说明。
