@@ -177,7 +177,7 @@ def render_answer_with_links(answer_parsed: dict[str, Any]) -> str:
                 else "conf-low"
             )
             direction = str(catalyst.get("direction") or "")
-            direction_icon = {"bullish": "up", "bearish": "down", "mixed": "mixed"}.get(direction, "")
+            direction_icon = {"bullish": "▲ 偏利多", "bearish": "▼ 偏利空", "mixed": "◆ 多空混合"}.get(direction, "")
             news_id = html.escape(str(catalyst.get("news_id") or ""))
             catalyst_time = display_time_label(catalyst.get("time") or "")
             ref_text = ref_labels.get(str(catalyst.get("news_id") or ""), short_news_id(news_id))

@@ -161,7 +161,7 @@ def query_recent_items(
                    ) AS tg_confirmed_sent
             FROM flash_history h
             {where}
-            ORDER BY h.published_at DESC, h.created_at DESC
+            ORDER BY h.published_at DESC, h.id DESC
             LIMIT ?
             """,
             params,
@@ -225,7 +225,7 @@ def query_feed_page(
                    ) AS tg_confirmed_sent
             FROM flash_history h
             {where}
-            ORDER BY h.published_at DESC, h.created_at DESC
+            ORDER BY h.published_at DESC, h.id DESC
             LIMIT ? OFFSET ?
             """,
             params,
@@ -262,7 +262,7 @@ def query_latest_published_at(
             SELECT h.published_at
             FROM flash_history h
             {where}
-            ORDER BY h.published_at DESC, h.created_at DESC
+            ORDER BY h.published_at DESC, h.id DESC
             LIMIT 1
             """,
             params,
@@ -366,7 +366,7 @@ def query_item_context(message_id: str, *, minutes: int = 15) -> tuple[Optional[
             SELECT {select_fields}
             FROM flash_history h
             WHERE h.published_at BETWEEN datetime(?, ?) AND datetime(?, ?)
-            ORDER BY h.published_at ASC, h.created_at ASC
+            ORDER BY h.published_at ASC, h.id ASC
             """,
             (
                 center["published_at"],

@@ -5,7 +5,13 @@ from html import escape
 from pathlib import Path
 
 from dashboard import analysis_db, db, evidence, manual_ai
-from dashboard.app import app, append_screenshot_context, parse_multipart_upload
+from dashboard.app import (
+    ALLOWED_SCREENSHOT_MIME_TYPES,
+    app,
+    append_screenshot_context,
+    normalize_news_text,
+    parse_multipart_upload,
+)
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "dashboard" / "templates"
 
@@ -369,6 +375,7 @@ def test_manual_answer_parse_and_render_links():
     assert 'href="/item/n1"' in rendered
     assert "05-23 09:30" in rendered
     assert "[↗ 05-23 09:30]" in rendered
+    assert "▲ 偏利多" in rendered
     assert escape(manual_ai.CONFIDENCE_HELP) in rendered
 
 
@@ -446,6 +453,7 @@ def test_analyze_nav_active_rules_do_not_double_highlight_history():
     assert "request.url.path == '/analyze/history'" in base_template
     assert "not request.url.path.startswith('/analyze/history')" in base_template
     assert ".pill.none" in base_template
+    assert "box-sizing: border-box" in base_template
 
 
 def test_item_template_truncates_published_at_to_minute():
@@ -453,6 +461,19 @@ def test_item_template_truncates_published_at_to_minute():
 
     assert '{{ (center.published_at or "")[:16] }}' in item_template
     assert '{{ (item.published_at or "")[:16] }}' in item_template
+
+
+def test_feed_rows_hide_internal_fields_and_empty_messages():
+    feed_rows = (TEMPLATE_DIR / "_feed_rows.html").read_text()
+
+    assert "style_flags" not in feed_rows
+    assert "is_empty" in feed_rows
+    assert "display_content or display_title" in feed_rows
+    assert "补拉" in feed_rows
+
+
+def test_normalize_news_text_collapses_invisible_spacing():
+    assert normalize_news_text("  A\u00a0 \n B\tC  ") == "A B C"
 
 
 def test_multipart_upload_parser_extracts_image_and_description():
@@ -477,6 +498,14 @@ def test_multipart_upload_parser_extracts_image_and_description():
     assert filename == "chart.png"
     assert mime_type == "image/png"
     assert description == "价格突破"
+
+
+def test_screenshot_mime_whitelist_excludes_svg():
+    assert "image/png" in ALLOWED_SCREENSHOT_MIME_TYPES
+    assert "image/jpeg" in ALLOWED_SCREENSHOT_MIME_TYPES
+    assert "image/webp" in ALLOWED_SCREENSHOT_MIME_TYPES
+    assert "image/gif" in ALLOWED_SCREENSHOT_MIME_TYPES
+    assert "image/svg+xml" not in ALLOWED_SCREENSHOT_MIME_TYPES
 
 
 def test_append_screenshot_context_includes_manual_description():

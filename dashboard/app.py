@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode
@@ -63,7 +64,9 @@ STATUS_OPTIONS = [
 ALLOWED_STATUSES = {value for value, _label in STATUS_OPTIONS}
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+log = logging.getLogger(__name__)
 MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
+ALLOWED_SCREENSHOT_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 CONFIDENCE_HELP = (
     "置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。"
     "≥75% 较可信；50-75% 仅供参考；<50% 证据不足。"
@@ -74,6 +77,10 @@ def compact_text(*parts: object, limit: int = 120) -> str:
     text = " ".join(str(part or "").strip() for part in parts if str(part or "").strip())
     text = " ".join(text.split())
     return text if len(text) <= limit else text[: limit - 1] + "..."
+
+
+def normalize_news_text(value: object) -> str:
+    return " ".join(str(value or "").split())
 
 
 def priority_class(level: object) -> str:
@@ -214,6 +221,7 @@ def create_app() -> FastAPI:
     templates.env.globals["priority_css"] = priority_css
     templates.env.globals["datetime_local_value"] = datetime_local_value
     templates.env.globals["confidence_help"] = CONFIDENCE_HELP
+    templates.env.globals["normalize_news_text"] = normalize_news_text
 
     @app.get("/")
     async def index(request: Request):
@@ -506,13 +514,23 @@ def create_app() -> FastAPI:
     @app.post("/api/screenshots/upload")
     async def api_screenshot_upload(request: Request):
         try:
+            content_length = str(request.headers.get("content-length", "") or "").strip()
+            if content_length:
+                try:
+                    if int(content_length) > MAX_SCREENSHOT_BYTES:
+                        return JSONResponse({"ok": False, "error": "image is larger than 8 MB"}, status_code=413)
+                except ValueError:
+                    pass
             body = await request.body()
             file_bytes, filename, mime_type, description = parse_multipart_upload(
                 body,
                 request.headers.get("content-type", ""),
             )
-            if not mime_type.lower().startswith("image/"):
-                return JSONResponse({"ok": False, "error": "only image uploads are accepted"}, status_code=400)
+            if mime_type.lower() not in ALLOWED_SCREENSHOT_MIME_TYPES:
+                return JSONResponse(
+                    {"ok": False, "error": "only png/jpeg/webp/gif uploads are accepted"},
+                    status_code=400,
+                )
             if len(file_bytes) > MAX_SCREENSHOT_BYTES:
                 return JSONResponse({"ok": False, "error": "image is larger than 8 MB"}, status_code=413)
             init_analysis_db()
@@ -520,8 +538,9 @@ def create_app() -> FastAPI:
             return JSONResponse({"ok": True, "screenshot_id": screenshot_id, "filename": filename})
         except ValueError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-        except Exception as exc:
-            return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+        except Exception:
+            log.exception("screenshot upload failed")
+            return JSONResponse({"ok": False, "error": "upload failed"}, status_code=500)
 
     @app.get("/screenshots/{screenshot_id}")
     async def screenshot_file(screenshot_id: str):

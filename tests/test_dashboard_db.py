@@ -178,6 +178,52 @@ def test_query_feed_page_applies_offset_limit_and_filters(dashboard_history_db):
     assert rows[0]["style_flags"] == ""
 
 
+def test_same_second_feed_order_uses_message_id_tiebreaker(dashboard_history_db):
+    same_second = history_ts(-5)
+    conn = sqlite3.connect(dashboard_history_db)
+    insert_flash(conn, "20260529090000000001", same_second, "same-second lower")
+    insert_flash(conn, "20260529090000000002", same_second, "same-second upper")
+    conn.execute(
+        "UPDATE flash_history SET created_at = ? WHERE id = ?",
+        (history_ts(-1), "20260529090000000001"),
+    )
+    conn.execute(
+        "UPDATE flash_history SET created_at = ? WHERE id = ?",
+        (history_ts(-20), "20260529090000000002"),
+    )
+    conn.commit()
+    conn.close()
+
+    recent_rows = db.query_recent_items(limit=2, keyword="same-second")
+    page_rows = db.query_feed_page(offset=0, limit=2, keyword="same-second")
+    latest_ts = db.query_latest_published_at(keyword="same-second")
+
+    assert [row["id"] for row in recent_rows] == ["20260529090000000002", "20260529090000000001"]
+    assert [row["id"] for row in page_rows] == ["20260529090000000002", "20260529090000000001"]
+    assert latest_ts == same_second
+
+
+def test_context_window_orders_same_second_items_by_message_id(dashboard_history_db):
+    same_second = history_ts(-5)
+    conn = sqlite3.connect(dashboard_history_db)
+    insert_flash(conn, "20260529090000000001", same_second, "context lower")
+    insert_flash(conn, "20260529090000000002", same_second, "context upper")
+    conn.execute(
+        "UPDATE flash_history SET created_at = ? WHERE id = ?",
+        (history_ts(-1), "20260529090000000001"),
+    )
+    conn.execute(
+        "UPDATE flash_history SET created_at = ? WHERE id = ?",
+        (history_ts(-20), "20260529090000000002"),
+    )
+    conn.commit()
+    conn.close()
+
+    _center, rows = db.query_item_context("20260529090000000001", minutes=0)
+
+    assert [row["id"] for row in rows] == ["20260529090000000001", "20260529090000000002"]
+
+
 def test_query_keyword_heatmap_uses_configured_keywords(dashboard_history_db, monkeypatch):
     monkeypatch.setattr(db, "HIGH_PRIORITY", ["Dashboard"])
     monkeypatch.setattr(db, "KEYWORDS", ["Dashboard", "unused-custom-keyword"])
