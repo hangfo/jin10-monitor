@@ -1,10 +1,59 @@
 {% extends "base.html" %}
 {% block title %}历史分析{% endblock %}
 
+{% block head %}
+<style>
+  .compare-check {
+    accent-color: var(--accent);
+    height: 15px;
+    width: 15px;
+  }
+  .history-actions {
+    display: inline-flex;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  #compare-bar {
+    align-items: center;
+    background: var(--accent);
+    border-top: 1px solid rgba(255, 255, 255, 0.25);
+    bottom: 0;
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.14);
+    color: #fff;
+    display: none;
+    gap: 12px;
+    margin-top: 10px;
+    padding: 10px 14px;
+    position: sticky;
+    z-index: 4;
+  }
+  #compare-bar.visible {
+    display: flex;
+  }
+  #compare-hint {
+    flex: 1;
+    font-size: 13px;
+  }
+  #compare-bar .button-link {
+    border-color: #fff;
+    background: #fff;
+    color: var(--accent);
+  }
+  #compare-bar .button-link.ghost {
+    border-color: rgba(255, 255, 255, 0.55);
+    background: transparent;
+    color: #fff;
+  }
+</style>
+{% endblock %}
+
 {% block content %}
   <div class="page-head">
     <h1>历史分析</h1>
-    <a class="button-link" href="/analyze">新建分析</a>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <a class="button-link secondary" href="/analyze/compare">对比</a>
+      <a class="button-link" href="/analyze">新建分析</a>
+    </div>
   </div>
 
   <form class="filters" method="get" action="/analyze/history">
@@ -23,9 +72,10 @@
 
   {% if runs %}
   <div class="table-wrap">
-    <table>
+    <table id="history-table">
       <thead>
         <tr>
+          <th style="width:34px">对比</th>
           <th>时间</th>
           <th>标的</th>
           <th>问题</th>
@@ -34,16 +84,17 @@
           <th>类型</th>
           <th title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。≥75% 较可信；50-75% 仅供参考；<50% 证据不足。">置信度</th>
           <th>证据</th>
-          <th></th>
+          <th>操作</th>
         </tr>
       </thead>
       <tbody>
         {% for run in runs %}
         <tr>
-          <td class="mono">{{ run.created_at[:16] }}</td>
+          <td><input class="compare-check" type="checkbox" value="{{ run.id }}" onchange="updateCompare()"></td>
+          <td class="mono">{{ (run.created_at or '')[:16] }}</td>
           <td><strong>{{ run.asset }}</strong></td>
-          <td>{{ run.question[:90] }}</td>
-          <td class="muted">{{ run.window_start[5:16] }}<br>{{ run.window_end[5:16] }}</td>
+          <td>{{ (run.question or '')[:90] }}</td>
+          <td class="muted">{{ (run.window_start or '')[5:16] }}<br>{{ (run.window_end or '')[5:16] }}</td>
           <td>
             <span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">
               {{ '已完成' if run.status == 'done' else '草稿' }}
@@ -52,12 +103,57 @@
           <td class="muted">{{ run.judgement or '—' }}</td>
           <td>{% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}</td>
           <td class="muted">{{ run.selected_count }}/{{ run.evidence_count }}</td>
-          <td><a class="button-link secondary" href="/analyze/{{ run.id }}">详情</a></td>
+          <td>
+            <span class="history-actions">
+              <a class="button-link secondary" href="/analyze/{{ run.id }}">详情</a>
+              <a class="button-link secondary" href="/analyze?asset={{ (run.asset or '')|urlencode }}&window_start={{ (run.window_start or '')|urlencode }}&window_end={{ (run.window_end or '')|urlencode }}&question={{ (run.question or '')|urlencode }}">重新分析</a>
+            </span>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+
+  <div id="compare-bar">
+    <span id="compare-hint">已选 0 条</span>
+    <button id="compare-btn" class="button-link" type="button" onclick="goCompare()" disabled>对比这两条</button>
+    <button class="button-link ghost" type="button" onclick="clearCompare()">取消</button>
+  </div>
+
+  <script>
+    function checkedCompareBoxes() {
+      return Array.from(document.querySelectorAll(".compare-check:checked"));
+    }
+
+    function updateCompare() {
+      const checked = checkedCompareBoxes();
+      if (checked.length > 2) {
+        checked[0].checked = false;
+        updateCompare();
+        return;
+      }
+      const ids = checkedCompareBoxes().map((box) => box.value);
+      const bar = document.getElementById("compare-bar");
+      const hint = document.getElementById("compare-hint");
+      const button = document.getElementById("compare-btn");
+      bar.classList.toggle("visible", ids.length > 0);
+      hint.textContent = ids.length === 1 ? "已选 1 条" : `已选 ${ids.length} 条`;
+      button.disabled = ids.length !== 2;
+    }
+
+    function goCompare() {
+      const ids = checkedCompareBoxes().map((box) => box.value);
+      if (ids.length === 2) {
+        window.location.href = `/analyze/compare?ids=${ids.join(",")}`;
+      }
+    }
+
+    function clearCompare() {
+      checkedCompareBoxes().forEach((box) => { box.checked = false; });
+      updateCompare();
+    }
+  </script>
   {% else %}
   <div class="card"><div class="empty">暂无分析记录{% if asset_filter %}（标的：{{ asset_filter }}）{% endif %}。</div></div>
   {% endif %}

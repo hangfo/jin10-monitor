@@ -349,6 +349,29 @@ def list_runs(
     return [row_to_dict(row) for row in rows]
 
 
+def get_runs_for_compare(run_ids: list[str], path: Optional[Path] = None) -> list[dict[str, Any]]:
+    clean_ids = [str(run_id or "").strip() for run_id in run_ids if str(run_id or "").strip()][:2]
+    if not clean_ids:
+        return []
+    placeholders = ",".join("?" for _ in clean_ids)
+    with open_analysis_db(path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM analysis_runs
+            WHERE id IN ({placeholders})
+            """,
+            clean_ids,
+        ).fetchall()
+    runs_by_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        run = row_to_dict(row)
+        run["evidence_packet"] = parse_json_list(run.get("evidence_packet_json"))
+        run["answer_parsed"] = parse_json_dict(run.get("answer_json"))
+        runs_by_id[str(run.get("id") or "")] = run
+    return [runs_by_id[run_id] for run_id in clean_ids if run_id in runs_by_id]
+
+
 def delete_run(run_id: str, path: Optional[Path] = None) -> None:
     with open_analysis_db(path) as conn:
         conn.execute("DELETE FROM analysis_runs WHERE id = ?", (run_id,))

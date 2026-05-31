@@ -184,6 +184,49 @@ def test_analysis_db_links_screenshot_to_run(tmp_path, monkeypatch):
     assert run["screenshot"]["user_description"] == "突破截图"
 
 
+def test_get_runs_for_compare_returns_input_order_and_parsed_json(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    first_id = analysis_db.create_run(
+        "First question",
+        "ETH",
+        "2026-05-23 09:00:00",
+        "2026-05-23 10:00:00",
+        [{"news_id": "n1", "selected": True}],
+        path=db_path,
+    )
+    second_id = analysis_db.create_run(
+        "Second question",
+        "ETH",
+        "2026-05-24 09:00:00",
+        "2026-05-24 10:00:00",
+        [{"news_id": "n2", "selected": True}],
+        path=db_path,
+    )
+    analysis_db.save_answer(
+        first_id,
+        "raw",
+        answer_json={"judgement": "news_driven", "catalysts": [{"news_id": "n1"}]},
+        judgement="news_driven",
+        overall_confidence=0.8,
+        path=db_path,
+    )
+
+    runs = analysis_db.get_runs_for_compare([second_id, first_id], path=db_path)
+
+    assert [run["id"] for run in runs] == [second_id, first_id]
+    assert runs[1]["answer_parsed"]["judgement"] == "news_driven"
+    assert runs[1]["evidence_packet"][0]["news_id"] == "n1"
+
+
+def test_get_runs_for_compare_empty_and_missing_ids(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+
+    assert analysis_db.get_runs_for_compare([], path=db_path) == []
+    assert analysis_db.get_runs_for_compare(["missing"], path=db_path) == []
+
+
 def test_analysis_db_is_separate_from_business_history(tmp_path):
     history_path = tmp_path / "history.sqlite3"
     analysis_path = tmp_path / "dashboard_analysis.sqlite3"
@@ -408,8 +451,10 @@ def test_analysis_routes_are_registered_before_dynamic_detail():
     assert "/analyze/preview" in paths
     assert "/analyze/generate-prompt" in paths
     assert "/analyze/save-answer" in paths
+    assert "/analyze/compare" in paths
     assert "/analyze/history" in paths
     assert "/analyze/{run_id}" in paths
+    assert paths.index("/analyze/compare") < paths.index("/analyze/{run_id}")
     assert paths.index("/analyze/history") < paths.index("/analyze/{run_id}")
 
 
@@ -426,6 +471,7 @@ def test_dashboard_bugfix_routes_are_registered():
 
     assert "/api/feed/latest-ts" in paths
     assert "/api/feed/page" in paths
+    assert "/api/market/klines" in paths
     assert "/api/screenshots/upload" in paths
     assert "/screenshots/{screenshot_id}" in paths
     assert "/aggregation" in paths
@@ -452,8 +498,52 @@ def test_analyze_nav_active_rules_do_not_double_highlight_history():
 
     assert "request.url.path == '/analyze/history'" in base_template
     assert "not request.url.path.startswith('/analyze/history')" in base_template
+    assert "not request.url.path.startswith('/analyze/compare')" in base_template
+    assert "/analyze/compare" in base_template
     assert ".pill.none" in base_template
+    assert ".pill.normal" in base_template
+    assert "tr.row-normal" in base_template
+    assert "tr.row-none" in base_template
     assert "box-sizing: border-box" in base_template
+
+
+def test_analyze_compare_template_loads():
+    from jinja2 import Environment, FileSystemLoader
+
+    env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
+
+    assert env.get_template("analyze_compare.html") is not None
+
+
+def test_provider_and_market_boundaries_are_inert_without_config(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("MARKET_ADAPTER", raising=False)
+
+    from dashboard.market.base import configured_market_adapter_name, get_market_adapter
+    from dashboard.providers.base import CompletionResult, ProviderError, get_provider, provider_statuses
+
+    assert "text" in CompletionResult.__dataclass_fields__
+    assert issubclass(ProviderError, Exception)
+    assert get_provider("manual") is None
+    assert get_provider("openai") is None
+    assert get_provider("anthropic") is None
+    assert configured_market_adapter_name() == ""
+    assert get_market_adapter() is None
+    statuses = {status.key: status for status in provider_statuses()}
+    assert statuses["manual"].available is True
+    assert statuses["openai"].available is False
+    assert statuses["anthropic"].available is False
+
+
+def test_provider_stubs_report_configured_keys_without_network(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+
+    from dashboard.providers.base import get_provider
+
+    assert get_provider("openai").is_available() is True
+    assert get_provider("anthropic").is_available() is True
 
 
 def test_item_template_truncates_published_at_to_minute():

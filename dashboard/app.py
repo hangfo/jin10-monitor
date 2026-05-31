@@ -17,6 +17,7 @@ from .analysis_db import (
     create_run,
     delete_run,
     get_run,
+    get_runs_for_compare,
     get_screenshot,
     init_analysis_db,
     list_runs,
@@ -43,7 +44,9 @@ from .db import (
     query_aggregation_report,
 )
 from .evidence import build_evidence_for_preview, known_assets
+from .market.base import configured_market_adapter_name, get_market_adapter
 from .manual_ai import PROMPT_VERSION, generate_prompt, parse_answer, render_answer_with_links
+from .providers.base import provider_statuses
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 PRIORITY_OPTIONS = [
@@ -325,6 +328,7 @@ def create_app() -> FastAPI:
             {
                 "health": health,
                 "system_health": system_health,
+                "provider_statuses": provider_statuses(),
                 "nav": query_nav_summary(),
             },
         )
@@ -469,6 +473,23 @@ def create_app() -> FastAPI:
         )
         return RedirectResponse(f"/analyze/{run_id}", status_code=303)
 
+    @app.get("/analyze/compare")
+    async def analyze_compare(request: Request):
+        raw_ids = str(request.query_params.get("ids", "") or "")
+        run_ids = [run_id.strip() for run_id in raw_ids.split(",") if run_id.strip()][:2]
+        init_analysis_db()
+        runs = get_runs_for_compare(run_ids) if run_ids else []
+        return templates.TemplateResponse(
+            request,
+            "analyze_compare.html",
+            {
+                "health": history_health(),
+                "runs": runs,
+                "run_ids": run_ids,
+                "nav": query_nav_summary(),
+            },
+        )
+
     @app.get("/analyze/history")
     async def analyze_history(request: Request):
         asset_filter = str(request.query_params.get("asset", "") or "")
@@ -604,6 +625,36 @@ def create_app() -> FastAPI:
             return JSONResponse({"latest_ts": latest_ts})
         except Exception:
             return JSONResponse({"latest_ts": None})
+
+    @app.get("/api/market/klines")
+    async def api_market_klines(request: Request):
+        query = request.query_params
+        symbol = str(query.get("symbol", "") or "").upper()[:20]
+        interval = str(query.get("interval", "1m") or "1m")[:12]
+        start = str(query.get("start", "") or "")[:32]
+        end = str(query.get("end", "") or "")[:32]
+        adapter_name = configured_market_adapter_name()
+        adapter = get_market_adapter(adapter_name)
+        if not adapter:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "market adapter not configured" if not adapter_name else "market adapter not implemented",
+                    "adapter": adapter_name,
+                    "hint": "configure a market adapter before enabling price overlays",
+                    "symbol": symbol,
+                    "interval": interval,
+                    "start": start,
+                    "end": end,
+                    "klines": [],
+                }
+            )
+        try:
+            klines = adapter.fetch_klines(symbol=symbol, interval=interval, start=start, end=end)
+            return JSONResponse({"ok": True, "adapter": adapter.name, "klines": [kline.__dict__ for kline in klines]})
+        except Exception:
+            log.exception("market klines fetch failed")
+            return JSONResponse({"ok": False, "error": "market data unavailable", "adapter": adapter.name, "klines": []})
 
     @app.get("/aggregation")
     async def aggregation(request: Request):

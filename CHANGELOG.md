@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 修复实时采集韧性：WebSocket 主连接增加空闲超时主动重连，避免半开连接长时间不入库；REST 轮询在金十接口连续 403 时改为退避和汇总告警，减少日志刷屏与 dashboard “超时/补拉”噪声，并补充无网络单测保护。
+- 新增 Dashboard V2 第二轮能力：分析历史支持勾选两条记录进入 `/analyze/compare` 双栏对比，分析详情和历史页新增“重新分析”入口；新增 `dashboard/providers/` Provider Adapter 骨架、`dashboard/market/` 行情 adapter 边界和 `/api/market/klines` 占位端点；系统页展示 Provider 配置状态，并补齐 `.pill.normal`、`row-normal`、`row-none` 样式。
 - 新增项目状态摘要 038：记录 Dashboard v1/v2 补丁包评估、`304929a` V2 bugfix 基线、003 与 004 计划差异、下一步分析对比 / 行情 adapter / Provider Adapter 的推荐编排。
 - 修复 Dashboard 快讯流与分析页细节：不再展示 `style_flags` 内部调试字段，隐藏空内容快讯，避免正文重复显示，时间列统一到分钟，补拉消息显示“补拉”标签，Telegram 状态和 AI 方向标签中文化为催化语义；同时加固截图上传（读入前 `Content-Length` 预检、限定 png/jpeg/webp/gif、500 错误脱敏），并将同秒消息排序 tie-breaker 改为金十消息 `id`。
 - 新增 Dashboard V2 开发计划定稿 004：对照 v1/v2 两版补丁包和当前 repo，确认 v2 为修复基线、保留 v1 路线图价值但不接入 HTML 页面，冻结后续分析对比、可选行情叠加、Phase 2B Provider Adapter 和 Vision 识别边界。

@@ -61,4 +61,25 @@
     </table>
   </div>
   {% endif %}
+
+  <div class="panel" style="margin-top:14px">
+    <h2 style="margin-top:0">LLM Provider 状态</h2>
+    <table style="min-width:0">
+      <tbody>
+        {% for provider in provider_statuses %}
+        <tr>
+          <th>{{ provider.label }}</th>
+          <td>
+            {% if provider.available %}
+            <span class="pill sent">{{ '永久可用' if provider.key == 'manual' else '已配置' }}</span>
+            {% else %}
+            <span class="pill none">未配置</span>
+            {% endif %}
+          </td>
+          <td class="meta">{{ provider.note }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 {% endblock %}

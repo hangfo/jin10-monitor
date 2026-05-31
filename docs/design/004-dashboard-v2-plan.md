@@ -82,3 +82,40 @@
 - 不默认开启事件聚合 V2。
 - 不把截图上传扩展为任意文件上传。
 - 不把 V1 HTML 计划页作为 Dashboard 路由上线。
+
+## V2 第二轮实现记录
+
+日期：2026-05-31
+
+本轮对照 `004` 与原 V2 HTML 蓝图后，补齐了高价值且符合当前边界的缺口。
+
+### 已实现
+
+- 分析对比：新增 `/analyze/compare`，支持并排比较两条历史分析的判断类型、置信度、催化因素、缺失证据，并可跳回原始 `/item/{id}`。
+- 历史页交互：`/analyze/history` 支持勾选两条记录后进入对比，并提供“重新分析”入口复用原问题与时间窗口。
+- 分析详情快捷入口：`/analyze/{run_id}` 新增“重新分析”和“对比”按钮。
+- Provider Adapter 骨架：新增 `dashboard/providers/`，定义 `BaseProvider`、`CompletionResult`、`ProviderError` 与 provider 状态；OpenAI / Anthropic 目前只是 stub，不会发起网络请求。
+- Market Adapter 边界：新增 `dashboard/market/` 与 `/api/market/klines` 占位端点；未配置 adapter 时返回空数据和降级提示，不影响 dashboard 启动。
+- 系统页状态：`/system` 展示手工流、OpenAI、Anthropic 的配置状态。
+- CSS 修复：补齐 `.pill.normal`、`tr.row-normal`、`tr.row-none`，让 `priority_class()` 返回值与样式定义一致。
+
+当前 Dashboard 路由数为 19 条，新增：
+
+- `GET /analyze/compare`
+- `GET /api/market/klines`
+
+### 保留但暂不实现
+
+- 不把行情叠加硬编码成 Binance-first；下一步如做价格图，先实现 market adapter 的数据源与缓存策略。
+- 不把 OpenAI / Anthropic stub 填成真实 API 调用；Phase 2B 需要单独设计超时、错误、成本、流式返回和降级路径。
+- 不在系统页加入空消息过滤统计；当前空消息只在展示层隐藏，若要统计应先在只读 DB 查询层设计独立诊断指标，避免把 UI 过滤逻辑混入健康页。
+
+### 验证
+
+```text
+.venv/bin/python -m pytest -q
+144 passed
+
+Dashboard routes
+19
+```

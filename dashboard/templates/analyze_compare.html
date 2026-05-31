@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}对比分析{% endblock %}
+
+{% block head %}
+<style>
+  .compare-grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: 1fr 1fr;
+  }
+  .compare-col {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 16px;
+  }
+  .compare-col h2 {
+    margin-top: 0;
+  }
+  .summary-diff {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    padding: 12px 14px;
+  }
+  .summary-diff.same {
+    background: var(--sent-bg);
+    color: var(--sent-fg);
+  }
+  .summary-diff.diff {
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+  }
+  .confidence-track {
+    background: var(--border-soft);
+    border-radius: 999px;
+    height: 7px;
+    margin: 8px 0 12px;
+    overflow: hidden;
+  }
+  .confidence-bar {
+    background: var(--sent-fg);
+    border-radius: 999px;
+    height: 7px;
+  }
+  .compare-catalyst {
+    border-bottom: 1px solid var(--border-soft);
+    padding: 9px 0;
+  }
+  .compare-catalyst:last-child {
+    border-bottom: 0;
+  }
+  .dir-bullish {
+    color: var(--sent-fg);
+    font-weight: 650;
+  }
+  .dir-bearish {
+    color: var(--fail-fg);
+    font-weight: 650;
+  }
+  .dir-mixed {
+    color: var(--warn-fg);
+    font-weight: 650;
+  }
+  @media (max-width: 900px) {
+    .compare-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <a class="button-link secondary" href="/analyze/history">历史分析</a>
+      <h1 style="display:inline;margin-left:12px">对比分析</h1>
+    </div>
+    <a class="button-link" href="/analyze">新建分析</a>
+  </div>
+
+  {% if runs | length < 2 %}
+  <div class="card">
+    <div class="empty">
+      请从历史分析中选择两条记录进行对比。
+      {% if run_ids %}<div class="mono" style="margin-top:8px">已加载：{{ run_ids | join(', ') }}</div>{% endif %}
+    </div>
+  </div>
+  {% else %}
+  {% set first = runs[0] %}
+  {% set second = runs[1] %}
+  {% set same_judgement = first.judgement == second.judgement %}
+  {% set confidence_diff = ((second.overall_confidence or 0) - (first.overall_confidence or 0)) | abs %}
+
+  <div class="summary-diff {{ 'same' if same_judgement else 'diff' }}">
+    {% if same_judgement %}
+    两次判断类型相同：<strong>{{ first.judgement or '未分类' }}</strong>。
+    {% else %}
+    两次判断类型不同：<strong>{{ first.judgement or '未分类' }}</strong> vs <strong>{{ second.judgement or '未分类' }}</strong>。
+    {% endif %}
+    {% if confidence_diff > 0.1 %}
+    置信度相差 {{ "%.0f%%"|format(confidence_diff * 100) }}。
+    {% endif %}
+  </div>
+
+  <div class="compare-grid">
+    {% for run in runs %}
+    {% set parsed = run.answer_parsed or {} %}
+    {% set catalysts = parsed.catalysts or [] %}
+    {% set missing = parsed.missing_evidence or [] %}
+    <section class="compare-col">
+      <h2>{{ run.asset }} · {{ (run.window_start or '')[5:16] }} - {{ (run.window_end or '')[5:16] }}</h2>
+      <div class="meta">
+        {{ (run.created_at or '')[:16] }} ·
+        <span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">{{ '已完成' if run.status == 'done' else '草稿' }}</span>
+        · {{ run.judgement or '未分类' }}
+      </div>
+
+      <p style="line-height:1.5">{{ run.question }}</p>
+
+      <div class="meta" title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。">
+        置信度 {% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}
+      </div>
+      <div class="confidence-track">
+        <div class="confidence-bar" style="width:{{ '%.0f%%'|format((run.overall_confidence or 0) * 100) }}"></div>
+      </div>
+
+      {% if catalysts %}
+      <h3>催化因素</h3>
+      {% for catalyst in catalysts[:6] %}
+      {% set direction = catalyst.direction or '' %}
+      <div class="compare-catalyst">
+        <div>
+          <span class="mono">{{ (catalyst.time or '')[5:16] }}</span>
+          {% if catalyst.news_id %}
+          <a href="/item/{{ catalyst.news_id }}" target="_blank">{{ (catalyst.headline or catalyst.news_id)[:72] }}</a>
+          {% else %}
+          {{ (catalyst.headline or '')[:72] }}
+          {% endif %}
+        </div>
+        <div class="meta">
+          {% if catalyst.confidence %}{{ "%.0f%%"|format(catalyst.confidence * 100) }}{% else %}—{% endif %}
+          <span class="dir-{{ direction }}">{{ {'bullish': '▲ 偏利多', 'bearish': '▼ 偏利空', 'mixed': '◆ 多空混合'}.get(direction, direction) }}</span>
+        </div>
+      </div>
+      {% endfor %}
+      {% else %}
+      <div class="empty" style="padding:14px">暂无催化因素</div>
+      {% endif %}
+
+      {% if missing %}
+      <div class="meta" style="margin-top:12px">缺失证据：{{ missing | join('、') }}</div>
+      {% endif %}
+
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <a class="button-link secondary" href="/analyze/{{ run.id }}">查看详情</a>
+        <a class="button-link secondary" href="/analyze?asset={{ (run.asset or '')|urlencode }}&window_start={{ (run.window_start or '')|urlencode }}&window_end={{ (run.window_end or '')|urlencode }}&question={{ (run.question or '')|urlencode }}">重新分析</a>
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endblock %}

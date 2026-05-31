@@ -216,6 +216,8 @@ HIGH_PRIORITY = load_keyword_file("HIGH_PRIORITY_FILE", DEFAULT_HIGH_PRIORITY)
 
 POLL_INTERVAL = env_range_float("POLL_INTERVAL", 3, 1.0, 60.0)  # 轮询间隔（秒）
 WS_RECONNECT_DELAY = env_min_float("WS_RECONNECT_DELAY", 5, 1.0)  # WebSocket 断线重连间隔（秒）
+WS_IDLE_TIMEOUT = env_range_int("WS_IDLE_TIMEOUT", 180, 30, 3600)  # WS 长时间无消息时主动重连
+REST_FORBIDDEN_BACKOFF_SECONDS = env_range_int("REST_FORBIDDEN_BACKOFF_SECONDS", 180, 30, 3600)
 
 # ─── 请求头池 ────────────────────────────────────────────────────────────────
 
@@ -2026,6 +2028,8 @@ def is_new(item: dict) -> bool:
 # ─── REST 轮询（备用 / 冷启动） ───────────────────────────────────────────────
 
 FLASH_API = "https://flash-api.jin10.com/get_flash_list"
+rest_forbidden_backoff_until = 0.0
+rest_forbidden_streak = 0
 
 
 def flash_params(*, mode: str, max_time: Optional[str] = None) -> dict:
@@ -2042,8 +2046,16 @@ def flash_params(*, mode: str, max_time: Optional[str] = None) -> dict:
 
 
 async def poll_once(session: aiohttp.ClientSession) -> list[dict]:
+    global rest_forbidden_backoff_until, rest_forbidden_streak
+    now = time.time()
+    if now < rest_forbidden_backoff_until:
+        remaining = int(rest_forbidden_backoff_until - now)
+        log.debug("REST 因连续 403 暂停轮询，%ss 后重试", remaining)
+        return []
+
     attempts = [("channel", app_id) for app_id in APP_IDS]
     attempts.extend(("legacy", app_id) for app_id in APP_IDS)
+    forbidden_count = 0
     for mode, app_id in attempts:
         try:
             async with session.get(
@@ -2054,12 +2066,36 @@ async def poll_once(session: aiohttp.ClientSession) -> list[dict]:
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json(content_type=None)
+                    if rest_forbidden_streak:
+                        log.info("REST 已恢复：此前连续 403 %s 轮", rest_forbidden_streak)
+                    rest_forbidden_streak = 0
+                    rest_forbidden_backoff_until = 0.0
                     return data.get("data", [])
-                log.warning("REST 状态码: %s (mode=%s app_id=%s)", resp.status, mode, app_id)
+                if resp.status == 403:
+                    forbidden_count += 1
+                    log.debug("REST 403 (mode=%s app_id=%s)", mode, app_id)
+                else:
+                    log.warning("REST 状态码: %s (mode=%s app_id=%s)", resp.status, mode, app_id)
         except asyncio.TimeoutError:
             log.warning("REST 超时 (mode=%s app_id=%s)", mode, app_id)
         except Exception as e:
             log.warning("REST 异常: %s (mode=%s app_id=%s)", e, mode, app_id)
+    if attempts and forbidden_count == len(attempts):
+        rest_forbidden_streak += 1
+        backoff = min(
+            REST_FORBIDDEN_BACKOFF_SECONDS * rest_forbidden_streak,
+            REST_FORBIDDEN_BACKOFF_SECONDS * 5,
+        )
+        rest_forbidden_backoff_until = time.time() + backoff
+        log.warning(
+            "REST 连续被 403 拒绝：%s/%s 个入口不可用，暂停 REST %.0fs；WebSocket 继续作为实时主路",
+            forbidden_count,
+            len(attempts),
+            backoff,
+        )
+    else:
+        rest_forbidden_streak = 0
+        rest_forbidden_backoff_until = 0.0
     return []
 
 
@@ -2750,7 +2786,8 @@ async def ws_loop(session: aiohttp.ClientSession) -> None:
                 log.info("✅ WebSocket 已连接: %s", ws_url)
                 secret = ""
                 skipped_initial_list = False
-                async for raw in ws:
+                while True:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=WS_IDLE_TIMEOUT)
                     if not isinstance(raw, (bytes, bytearray)):
                         continue
 
@@ -2794,6 +2831,9 @@ async def ws_loop(session: aiohttp.ClientSession) -> None:
                         for item in data:
                             if isinstance(item, dict) and item.get("action") in {1, 2} and is_new(item):
                                 await handle_item(session, item, source="ws")
+        except asyncio.TimeoutError:
+            log.warning("WebSocket %.0fs 未收到消息，主动重连", WS_IDLE_TIMEOUT)
+            await asyncio.sleep(WS_RECONNECT_DELAY)
         except Exception as e:
             log.warning("WebSocket 断线: %s，%ss 后重连", e, WS_RECONNECT_DELAY)
             await asyncio.sleep(WS_RECONNECT_DELAY)

@@ -84,9 +84,13 @@
       <a class="button-link secondary" href="/analyze/history">历史分析</a>
       <h1 style="display:inline;margin-left:12px">{{ run.question[:72] }}</h1>
     </div>
-    <form method="post" action="/analyze/{{ run.id }}/delete" onsubmit="return confirm('确认删除本条分析记录？')">
-      <button type="submit" class="button-link secondary" style="color:var(--fail-fg)">删除</button>
-    </form>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+      <a class="button-link secondary" href="/analyze?asset={{ (run.asset or '')|urlencode }}&window_start={{ (run.window_start or '')|urlencode }}&window_end={{ (run.window_end or '')|urlencode }}&question={{ (run.question or '')|urlencode }}">重新分析</a>
+      <a class="button-link secondary" href="/analyze/compare?ids={{ run.id }}">对比</a>
+      <form method="post" action="/analyze/{{ run.id }}/delete" onsubmit="return confirm('确认删除本条分析记录？')">
+        <button type="submit" class="button-link secondary" style="color:var(--fail-fg)">删除</button>
+      </form>
+    </div>
   </div>
 
   <div class="panel" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px">

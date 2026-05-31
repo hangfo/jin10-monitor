@@ -67,6 +67,7 @@
         font-weight: 650;
         margin-right: 16px;
         padding: 14px 0;
+        white-space: nowrap;
       }
       .nav-link {
         display: inline-flex;
@@ -76,6 +77,7 @@
         color: var(--muted);
         padding: 14px 12px 12px;
         font-size: 13px;
+        white-space: nowrap;
       }
       .nav-link.active {
         border-bottom-color: var(--accent);
@@ -299,6 +301,10 @@
         background: #f3f5f4;
         color: var(--muted);
       }
+      .pill.normal {
+        background: var(--t1-bg);
+        color: var(--t1-fg);
+      }
       .pill.sent {
         background: var(--sent-bg);
         color: var(--sent-fg);
@@ -317,6 +323,12 @@
       }
       tr.row-high {
         box-shadow: inset 3px 0 0 #d8911d;
+      }
+      tr.row-normal {
+        box-shadow: inset 2px 0 0 #4c9070;
+      }
+      tr.row-none {
+        box-shadow: none;
       }
       .empty {
         color: var(--muted);
@@ -424,8 +436,9 @@
       </a>
       <a class="nav-link {{ 'active' if request.url.path.startswith('/telegram-status') }}" href="/telegram-status">投递状态</a>
       <a class="nav-link {{ 'active' if request.url.path.startswith('/system') }}" href="/system">系统</a>
-      <a class="nav-link {{ 'active' if request.url.path == '/analyze' or (request.url.path.startswith('/analyze') and not request.url.path.startswith('/analyze/history')) }}" href="/analyze">分析</a>
+      <a class="nav-link {{ 'active' if request.url.path == '/analyze' or (request.url.path.startswith('/analyze') and not request.url.path.startswith('/analyze/history') and not request.url.path.startswith('/analyze/compare')) }}" href="/analyze">分析</a>
       <a class="nav-link {{ 'active' if request.url.path == '/analyze/history' }}" href="/analyze/history">分析历史</a>
+      <a class="nav-link {{ 'active' if request.url.path.startswith('/analyze/compare') }}" href="/analyze/compare" title="对比两次历史分析">对比</a>
       <a class="nav-link {{ 'active' if request.url.path.startswith('/aggregation') }}" href="/aggregation">聚合报告</a>
     </nav>
     <main>

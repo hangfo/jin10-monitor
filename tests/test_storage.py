@@ -1505,3 +1505,38 @@ def test_poll_loop_skips_auto_catch_up_when_disabled_or_gap_below_threshold(
 
     with pytest.raises(StopPollLoop):
         asyncio.run(jm.poll_loop(object()))
+
+
+def test_poll_once_backs_off_after_all_rest_entries_return_403(monkeypatch, caplog):
+    class FakeResponse:
+        status = 403
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, *args, **kwargs):
+            self.calls += 1
+            return FakeResponse()
+
+    session = FakeSession()
+    monkeypatch.setattr(jm, "APP_IDS", ["app-a", "app-b"])
+    monkeypatch.setattr(jm, "REST_FORBIDDEN_BACKOFF_SECONDS", 30)
+    monkeypatch.setattr(jm, "rest_forbidden_backoff_until", 0.0)
+    monkeypatch.setattr(jm, "rest_forbidden_streak", 0)
+    caplog.set_level("WARNING", logger="jin10")
+
+    assert asyncio.run(jm.poll_once(session)) == []
+    assert session.calls == 4
+    assert jm.rest_forbidden_streak == 1
+    assert jm.rest_forbidden_backoff_until > 0
+    assert "REST 连续被 403 拒绝" in caplog.text
+
+    assert asyncio.run(jm.poll_once(session)) == []
+    assert session.calls == 4
