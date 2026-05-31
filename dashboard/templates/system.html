@@ -83,6 +83,12 @@
           <td>
             {% if source.key == 'rest' and system_health.rest_status == 'no_recent_success' %}
             <span class="pill skipped">近期无成功入库</span>
+            {% elif source.key == 'rest' and system_health.rest_status == 'forbidden_backoff' %}
+            <span class="pill unknown_timeout">403 退避中</span>
+            {% elif source.key == 'rest' and system_health.rest_status == 'ok' %}
+            <span class="pill sent">已恢复</span>
+            {% elif source.key == 'rest' and system_health.rest_status == 'error' %}
+            <span class="pill failed">最近异常</span>
             {% elif source.latest_published_at %}
             <span class="pill sent">有入库</span>
             {% else %}
@@ -94,6 +100,17 @@
       </tbody>
     </table>
     <div class="meta" style="margin-top:10px">本页只读展示本地 SQLite 状态；不会触发补拉、REST 请求、Telegram 重试或发送。</div>
+    {% if system_health.rest_state.status %}
+    <div class="meta" style="margin-top:8px">
+      REST 状态：
+      <span class="mono">{{ system_health.rest_state.status }}</span>
+      {% if system_health.rest_state.forbidden_streak %} · 连续 403 {{ system_health.rest_state.forbidden_streak }} 轮{% endif %}
+      {% if system_health.rest_state.backoff_until %} · 退避至 <span class="mono">{{ system_health.rest_state.backoff_until }}</span>{% endif %}
+      {% if system_health.rest_state.backoff_remaining_seconds %} · 剩余约 {{ system_health.rest_state.backoff_remaining_seconds }}s{% endif %}
+      {% if system_health.rest_state.last_ok_at %} · 最近恢复 <span class="mono">{{ system_health.rest_state.last_ok_at }}</span>{% endif %}
+      {% if system_health.rest_state.last_error %} · {{ system_health.rest_state.last_error }}{% endif %}
+    </div>
+    {% endif %}
   </div>
 
   <div class="panel" style="margin-top:14px">

@@ -221,6 +221,31 @@ def test_query_system_health_includes_realtime_pipeline_diagnostics(dashboard_hi
     assert health["catchup_summary_latest"]["message_id"] == "catchup_summary:gap:start:end"
 
 
+def test_query_system_health_reads_persisted_rest_backoff_state(dashboard_history_db):
+    conn = sqlite3.connect(dashboard_history_db)
+    conn.executemany(
+        "INSERT INTO runtime_state (key, value) VALUES (?, ?)",
+        [
+            ("rest_status", "forbidden_backoff"),
+            ("rest_forbidden_streak", "3"),
+            ("rest_backoff_until", history_ts(5)),
+            ("rest_last_error", "HTTP 403 4/4 entries; backoff 90s"),
+            ("rest_last_error_at", history_ts(-1)),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    health = db.query_system_health()
+
+    assert health["rest_status"] == "forbidden_backoff"
+    assert health["rest_state"]["status"] == "forbidden_backoff"
+    assert health["rest_state"]["forbidden_streak"] == "3"
+    assert health["rest_state"]["backoff_until"]
+    assert health["rest_state"]["backoff_remaining_seconds"] > 0
+    assert "HTTP 403" in health["rest_state"]["last_error"]
+
+
 def test_query_feed_page_applies_offset_limit_and_filters(dashboard_history_db):
     conn = sqlite3.connect(dashboard_history_db)
     insert_flash(conn, "dash-2", history_ts(-8), "Second Dashboard title")

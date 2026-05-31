@@ -527,7 +527,26 @@ def query_system_health() -> dict[str, Any]:
         source.setdefault("count_24h", 0)
 
     rest_recent = sources.get("rest", {})
-    rest_status = "recent" if rest_recent.get("latest_published_at") else "no_recent_success"
+    rest_state = {
+        "status": state.get("rest_status", ""),
+        "forbidden_streak": state.get("rest_forbidden_streak", ""),
+        "backoff_until": state.get("rest_backoff_until", ""),
+        "last_error": state.get("rest_last_error", ""),
+        "last_error_at": state.get("rest_last_error_at", ""),
+        "last_ok_at": state.get("rest_last_ok_at", ""),
+    }
+    backoff_dt = parse_history_datetime(rest_state["backoff_until"])
+    rest_state["backoff_remaining_seconds"] = (
+        max(0, int((backoff_dt - datetime.now()).total_seconds())) if backoff_dt else 0
+    )
+    if rest_state["status"] == "forbidden_backoff":
+        rest_status = "forbidden_backoff"
+    elif rest_state["status"] == "ok":
+        rest_status = "ok"
+    elif rest_state["status"] == "error":
+        rest_status = "error"
+    else:
+        rest_status = "recent" if rest_recent.get("latest_published_at") else "no_recent_success"
     return {
         "monitor_status": monitor_status,
         "minutes_stale": minutes_stale,
@@ -545,6 +564,7 @@ def query_system_health() -> dict[str, Any]:
         "today_failed": today_failed,
         "realtime_sources": realtime_sources,
         "rest_status": rest_status,
+        "rest_state": rest_state,
         "delivery_latest": delivery_latest,
         "catchup_summary_latest": row_to_dict(catchup_summary_row) if catchup_summary_row else {},
     }

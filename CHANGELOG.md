@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 持久化 REST 运行状态：REST 轮询成功、连续 403 退避或其它异常时写入 `runtime_state`，`/system` 可直接显示 `ok`、`forbidden_backoff`、`error`、连续 403 轮数、退避截止时间、最近错误和最近恢复时间；仅增强诊断，不改变 REST 请求、补拉或 Telegram 发送语义。
 - 增强 Dashboard `/system` 只读运行诊断面板：展示最近 WebSocket、REST、自动补拉、手动补拉入库时间和 24h 数量，补充 `last_ingested_id`、缺口摘要时间、Telegram 最新 sent/unknown_timeout/failed 与补拉摘要状态；页面明确不触发补拉、REST 请求、Telegram 重试或发送。
 - 修复实时采集韧性：WebSocket 主连接增加空闲超时主动重连，避免半开连接长时间不入库；REST 轮询在金十接口连续 403 时改为退避和汇总告警，减少日志刷屏与 dashboard “超时/补拉”噪声，并补充无网络单测保护。
 - 新增 Dashboard V2 第二轮能力：分析历史支持勾选两条记录进入 `/analyze/compare` 双栏对比，分析详情和历史页新增“重新分析”入口；新增 `dashboard/providers/` Provider Adapter 骨架、`dashboard/market/` 行情 adapter 边界和 `/api/market/klines` 占位端点；系统页展示 Provider 配置状态，并补齐 `.pill.normal`、`row-normal`、`row-none` 样式。

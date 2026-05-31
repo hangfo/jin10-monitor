@@ -1507,7 +1507,7 @@ def test_poll_loop_skips_auto_catch_up_when_disabled_or_gap_below_threshold(
         asyncio.run(jm.poll_loop(object()))
 
 
-def test_poll_once_backs_off_after_all_rest_entries_return_403(monkeypatch, caplog):
+def test_poll_once_backs_off_after_all_rest_entries_return_403(temp_history_db, monkeypatch, caplog):
     class FakeResponse:
         status = 403
 
@@ -1537,6 +1537,42 @@ def test_poll_once_backs_off_after_all_rest_entries_return_403(monkeypatch, capl
     assert jm.rest_forbidden_streak == 1
     assert jm.rest_forbidden_backoff_until > 0
     assert "REST 连续被 403 拒绝" in caplog.text
+    conn = sqlite3.connect(temp_history_db)
+    assert state_value(conn, "rest_status") == jm.REST_STATUS_FORBIDDEN_BACKOFF
+    assert state_value(conn, "rest_forbidden_streak") == "1"
+    assert "HTTP 403 4/4 entries" in state_value(conn, "rest_last_error")
+    assert state_value(conn, "rest_backoff_until")
 
     assert asyncio.run(jm.poll_once(session)) == []
     assert session.calls == 4
+
+
+def test_poll_once_records_rest_recovery_after_success(temp_history_db, monkeypatch):
+    class FakeResponse:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def json(self, content_type=None):
+            return {"data": [{"id": "rest-ok"}]}
+
+    class FakeSession:
+        def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(jm, "APP_IDS", ["app-a"])
+    monkeypatch.setattr(jm, "rest_forbidden_backoff_until", 0.0)
+    monkeypatch.setattr(jm, "rest_forbidden_streak", 2)
+
+    assert asyncio.run(jm.poll_once(FakeSession())) == [{"id": "rest-ok"}]
+    assert jm.rest_forbidden_streak == 0
+    assert jm.rest_forbidden_backoff_until == 0.0
+    conn = sqlite3.connect(temp_history_db)
+    assert state_value(conn, "rest_status") == jm.REST_STATUS_OK
+    assert state_value(conn, "rest_forbidden_streak") == "0"
+    assert state_value(conn, "rest_last_error") == ""
+    assert state_value(conn, "rest_last_ok_at")

@@ -2030,6 +2030,9 @@ def is_new(item: dict) -> bool:
 FLASH_API = "https://flash-api.jin10.com/get_flash_list"
 rest_forbidden_backoff_until = 0.0
 rest_forbidden_streak = 0
+REST_STATUS_OK = "ok"
+REST_STATUS_FORBIDDEN_BACKOFF = "forbidden_backoff"
+REST_STATUS_ERROR = "error"
 
 
 def flash_params(*, mode: str, max_time: Optional[str] = None) -> dict:
@@ -2045,6 +2048,34 @@ def flash_params(*, mode: str, max_time: Optional[str] = None) -> dict:
     return {"category": "-1", "id": "0", "vip": "0"}
 
 
+def record_rest_runtime_status(
+    status: str,
+    *,
+    forbidden_streak: int = 0,
+    backoff_until: float = 0.0,
+    detail: str = "",
+) -> None:
+    try:
+        conn = get_db()
+        now_text = datetime.now().replace(microsecond=0).isoformat(sep=" ")
+        backoff_text = (
+            datetime.fromtimestamp(backoff_until).replace(microsecond=0).isoformat(sep=" ")
+            if backoff_until
+            else ""
+        )
+        set_state(conn, "rest_status", status)
+        set_state(conn, "rest_forbidden_streak", forbidden_streak)
+        set_state(conn, "rest_backoff_until", backoff_text)
+        set_state(conn, "rest_last_error", detail)
+        if status == REST_STATUS_OK:
+            set_state(conn, "rest_last_ok_at", now_text)
+        else:
+            set_state(conn, "rest_last_error_at", now_text)
+        conn.commit()
+    except sqlite3.Error as exc:
+        log.debug("REST 状态写入 runtime_state 失败：%s", exc)
+
+
 async def poll_once(session: aiohttp.ClientSession) -> list[dict]:
     global rest_forbidden_backoff_until, rest_forbidden_streak
     now = time.time()
@@ -2056,6 +2087,7 @@ async def poll_once(session: aiohttp.ClientSession) -> list[dict]:
     attempts = [("channel", app_id) for app_id in APP_IDS]
     attempts.extend(("legacy", app_id) for app_id in APP_IDS)
     forbidden_count = 0
+    last_error = ""
     for mode, app_id in attempts:
         try:
             async with session.get(
@@ -2070,15 +2102,20 @@ async def poll_once(session: aiohttp.ClientSession) -> list[dict]:
                         log.info("REST 已恢复：此前连续 403 %s 轮", rest_forbidden_streak)
                     rest_forbidden_streak = 0
                     rest_forbidden_backoff_until = 0.0
+                    record_rest_runtime_status(REST_STATUS_OK)
                     return data.get("data", [])
                 if resp.status == 403:
                     forbidden_count += 1
+                    last_error = f"HTTP 403 mode={mode} app_id={app_id}"
                     log.debug("REST 403 (mode=%s app_id=%s)", mode, app_id)
                 else:
+                    last_error = f"HTTP {resp.status} mode={mode} app_id={app_id}"
                     log.warning("REST 状态码: %s (mode=%s app_id=%s)", resp.status, mode, app_id)
         except asyncio.TimeoutError:
+            last_error = f"timeout mode={mode} app_id={app_id}"
             log.warning("REST 超时 (mode=%s app_id=%s)", mode, app_id)
         except Exception as e:
+            last_error = f"{e} mode={mode} app_id={app_id}"
             log.warning("REST 异常: %s (mode=%s app_id=%s)", e, mode, app_id)
     if attempts and forbidden_count == len(attempts):
         rest_forbidden_streak += 1
@@ -2087,6 +2124,12 @@ async def poll_once(session: aiohttp.ClientSession) -> list[dict]:
             REST_FORBIDDEN_BACKOFF_SECONDS * 5,
         )
         rest_forbidden_backoff_until = time.time() + backoff
+        record_rest_runtime_status(
+            REST_STATUS_FORBIDDEN_BACKOFF,
+            forbidden_streak=rest_forbidden_streak,
+            backoff_until=rest_forbidden_backoff_until,
+            detail=f"HTTP 403 {forbidden_count}/{len(attempts)} entries; backoff {int(backoff)}s",
+        )
         log.warning(
             "REST 连续被 403 拒绝：%s/%s 个入口不可用，暂停 REST %.0fs；WebSocket 继续作为实时主路",
             forbidden_count,
@@ -2096,6 +2139,8 @@ async def poll_once(session: aiohttp.ClientSession) -> list[dict]:
     else:
         rest_forbidden_streak = 0
         rest_forbidden_backoff_until = 0.0
+        if last_error:
+            record_rest_runtime_status(REST_STATUS_ERROR, detail=last_error)
     return []
 
 
