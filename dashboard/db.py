@@ -468,8 +468,42 @@ def query_system_health() -> dict[str, Any]:
             "SELECT COUNT(*) FROM telegram_delivery_status WHERE status = 'failed' AND updated_at >= ?",
             (since,),
         ).fetchone()[0]
+        source_rows = conn.execute(
+            """
+            SELECT source, MAX(published_at) AS latest_published_at, COUNT(*) AS count_24h
+            FROM flash_history
+            WHERE source IN ('ws', 'ws_initial', 'rest', 'catchup_auto', 'catchup_manual')
+              AND published_at >= ?
+            GROUP BY source
+            """,
+            (since,),
+        ).fetchall()
+        delivery_rows = conn.execute(
+            """
+            SELECT status, mode, message_id, detail, updated_at
+            FROM (
+                SELECT status, mode, message_id, detail, updated_at,
+                       ROW_NUMBER() OVER (PARTITION BY status ORDER BY updated_at DESC) AS rn
+                FROM telegram_delivery_status
+                WHERE status IN ('sent', 'unknown_timeout', 'failed')
+            )
+            WHERE rn = 1
+            ORDER BY status
+            """
+        ).fetchall()
+        catchup_summary_row = conn.execute(
+            """
+            SELECT status, mode, message_id, detail, updated_at
+            FROM telegram_delivery_status
+            WHERE mode = 'catchup_summary'
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
         state_rows = conn.execute("SELECT key, value FROM runtime_state").fetchall()
     state = {str(row["key"]): str(row["value"]) for row in state_rows}
+    sources = {str(row["source"]): row_to_dict(row) for row in source_rows}
+    delivery_latest = {str(row["status"]): row_to_dict(row) for row in delivery_rows}
     last_ingested_at = state.get("last_ingested_at", "")
     last_dt = parse_history_datetime(last_ingested_at)
     minutes_stale = round((datetime.now() - last_dt).total_seconds() / 60, 1) if last_dt else None
@@ -481,12 +515,27 @@ def query_system_health() -> dict[str, Any]:
         monitor_status = "warn"
     else:
         monitor_status = "error"
+    realtime_sources = [
+        {"key": "ws", "label": "WebSocket 实时", **sources.get("ws", {})},
+        {"key": "ws_initial", "label": "WebSocket 初始历史", **sources.get("ws_initial", {})},
+        {"key": "rest", "label": "REST 轮询", **sources.get("rest", {})},
+        {"key": "catchup_auto", "label": "自动补拉", **sources.get("catchup_auto", {})},
+        {"key": "catchup_manual", "label": "手动补拉", **sources.get("catchup_manual", {})},
+    ]
+    for source in realtime_sources:
+        source.setdefault("latest_published_at", "")
+        source.setdefault("count_24h", 0)
+
+    rest_recent = sources.get("rest", {})
+    rest_status = "recent" if rest_recent.get("latest_published_at") else "no_recent_success"
     return {
         "monitor_status": monitor_status,
         "minutes_stale": minutes_stale,
         "last_ingested_at": last_ingested_at,
+        "last_ingested_id": state.get("last_ingested_id", ""),
         "last_startup": state.get("last_startup_at", ""),
         "last_catchup_at": state.get("last_catchup_at", ""),
+        "last_gap_summary_telegram_at": state.get("last_gap_summary_telegram_at", ""),
         "db_path": str(db_path),
         "db_size_mb": round(db_path.stat().st_size / 1024 / 1024, 2) if db_path.exists() else 0,
         "total_items": total_items,
@@ -494,6 +543,10 @@ def query_system_health() -> dict[str, Any]:
         "today_t2": today_t2,
         "today_sent": today_sent,
         "today_failed": today_failed,
+        "realtime_sources": realtime_sources,
+        "rest_status": rest_status,
+        "delivery_latest": delivery_latest,
+        "catchup_summary_latest": row_to_dict(catchup_summary_row) if catchup_summary_row else {},
     }
 
 

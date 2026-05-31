@@ -164,6 +164,63 @@ def test_query_recent_items_filters_priority(dashboard_history_db):
     assert rows == []
 
 
+def test_query_system_health_includes_realtime_pipeline_diagnostics(dashboard_history_db):
+    conn = sqlite3.connect(dashboard_history_db)
+    insert_flash(conn, "ws-1", history_ts(-4), "WebSocket title")
+    conn.execute("UPDATE flash_history SET source = ? WHERE id = ?", ("ws", "ws-1"))
+    insert_flash(conn, "catchup-1", history_ts(-30), "Catchup title")
+    conn.execute("UPDATE flash_history SET source = ? WHERE id = ?", ("catchup_auto", "catchup-1"))
+    conn.executemany(
+        "INSERT INTO runtime_state (key, value) VALUES (?, ?)",
+        [
+            ("last_ingested_at", history_ts(-4)),
+            ("last_ingested_id", "ws-1"),
+            ("last_startup_at", history_ts(-60)),
+            ("last_catchup_at", history_ts(-30)),
+            ("last_gap_summary_telegram_at", history_ts(-20)),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO telegram_delivery_status (
+            message_id, channel, mode, status, detail, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("ws-1", "telegram", "realtime", "sent", "", history_ts(-3)),
+            ("timeout-1", "telegram", "realtime", "unknown_timeout", "timeout", history_ts(-2)),
+            ("failed-1", "telegram", "catchup", "failed", "bad request", history_ts(-1)),
+            (
+                "catchup_summary:gap:start:end",
+                "telegram",
+                "catchup_summary",
+                "sent",
+                "stored=1",
+                history_ts(-1),
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    health = db.query_system_health()
+
+    assert health["last_ingested_id"] == "ws-1"
+    assert health["last_startup"]
+    assert health["last_catchup_at"]
+    assert health["last_gap_summary_telegram_at"]
+    sources = {source["key"]: source for source in health["realtime_sources"]}
+    assert sources["ws"]["count_24h"] == 1
+    assert sources["ws"]["latest_published_at"]
+    assert sources["rest"]["count_24h"] == 1
+    assert health["rest_status"] == "recent"
+    assert health["delivery_latest"]["sent"]["message_id"] in {"ws-1", "catchup_summary:gap:start:end"}
+    assert health["delivery_latest"]["unknown_timeout"]["message_id"] == "timeout-1"
+    assert health["delivery_latest"]["failed"]["message_id"] == "failed-1"
+    assert health["catchup_summary_latest"]["message_id"] == "catchup_summary:gap:start:end"
+
+
 def test_query_feed_page_applies_offset_limit_and_filters(dashboard_history_db):
     conn = sqlite3.connect(dashboard_history_db)
     insert_flash(conn, "dash-2", history_ts(-8), "Second Dashboard title")

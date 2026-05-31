@@ -51,12 +51,94 @@
     <table style="min-width:0">
       <tbody>
         <tr><th>最后入库</th><td class="mono">{{ system_health.last_ingested_at or '-' }}</td></tr>
+        <tr><th>最后入库 ID</th><td class="mono">{{ system_health.last_ingested_id or '-' }}</td></tr>
         <tr><th>最后启动</th><td class="mono">{{ system_health.last_startup or '-' }}</td></tr>
         <tr><th>最后补拉</th><td class="mono">{{ system_health.last_catchup_at or '-' }}</td></tr>
+        <tr><th>最后缺口摘要</th><td class="mono">{{ system_health.last_gap_summary_telegram_at or '-' }}</td></tr>
         <tr><th>历史库路径</th><td class="mono">{{ system_health.db_path }}</td></tr>
         <tr><th>业务库写入</th><td class="mono">False</td></tr>
         <tr><th>金十 REST</th><td class="mono">False</td></tr>
         <tr><th>Telegram 发送</th><td class="mono">False</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <h2 style="margin-top:0">实时链路诊断</h2>
+    <table style="min-width:0">
+      <thead>
+        <tr>
+          <th>链路</th>
+          <th>最近入库</th>
+          <th>24h 入库数</th>
+          <th>状态</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for source in system_health.realtime_sources %}
+        <tr>
+          <td>{{ source.label }}</td>
+          <td class="mono">{{ source.latest_published_at or '-' }}</td>
+          <td class="mono">{{ source.count_24h }}</td>
+          <td>
+            {% if source.key == 'rest' and system_health.rest_status == 'no_recent_success' %}
+            <span class="pill skipped">近期无成功入库</span>
+            {% elif source.latest_published_at %}
+            <span class="pill sent">有入库</span>
+            {% else %}
+            <span class="pill none">无记录</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="meta" style="margin-top:10px">本页只读展示本地 SQLite 状态；不会触发补拉、REST 请求、Telegram 重试或发送。</div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <h2 style="margin-top:0">Telegram 与补拉状态</h2>
+    <table style="min-width:0">
+      <thead>
+        <tr>
+          <th style="min-width:64px">类型</th>
+          <th style="min-width:92px">最近状态</th>
+          <th>模式</th>
+          <th>更新时间</th>
+          <th>消息</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for status_key, label in [('sent', '成功'), ('unknown_timeout', '超时未知'), ('failed', '失败')] %}
+        {% set row = system_health.delivery_latest.get(status_key, {}) %}
+        <tr>
+          <td style="white-space:nowrap">{{ label }}</td>
+          <td>
+            {% if row.status %}
+            <span class="pill {{ row.status }}">{{ row.status }}</span>
+            {% else %}
+            <span class="pill none">无记录</span>
+            {% endif %}
+          </td>
+          <td class="mono">{{ row.mode or '-' }}</td>
+          <td class="mono">{{ row.updated_at or '-' }}</td>
+          <td class="mono" style="word-break:break-all">{{ row.message_id or '-' }}</td>
+        </tr>
+        {% endfor %}
+        {% set summary = system_health.catchup_summary_latest %}
+        <tr>
+          <td style="white-space:nowrap">补拉摘要</td>
+          <td>
+            {% if summary.status %}
+            <span class="pill {{ summary.status }}">{{ summary.status }}</span>
+            {% else %}
+            <span class="pill none">无记录</span>
+            {% endif %}
+          </td>
+          <td class="mono">{{ summary.mode or '-' }}</td>
+          <td class="mono">{{ summary.updated_at or '-' }}</td>
+          <td class="mono" style="word-break:break-all">{{ summary.message_id or '-' }}</td>
+        </tr>
       </tbody>
     </table>
   </div>
