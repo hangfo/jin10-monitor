@@ -1,224 +1,216 @@
-# Dashboard Phase 2B / Phase 3 Spec
+# Dashboard Phase 2B / Phase 3 规格
 
-Date: 2026-05-25
+日期：2026-05-25
 
-## 1. Purpose
+更新时间：2026-05-31（Asia/Shanghai）
 
-This document freezes the next dashboard development boundary after Phase 2A.
-It extends `002-dashboard-ai-full-spec.md` without replacing it.
+## 1. 目的
 
-Phase 2A is complete:
+本文冻结 Phase 2A 之后的下一阶段 Dashboard 开发边界。
+它是在 `002-dashboard-ai-full-spec.md` 基础上的延伸，不替代原文档。
 
-- standalone FastAPI/Jinja2 dashboard
-- local readonly evidence packet builder
-- manual ChatGPT Business / Custom GPT prompt flow
-- isolated `data/dashboard_analysis.sqlite3`
-- analysis history and traceable `/item/{id}` links
+Phase 2A 已完成：
 
-The next work must keep the same safety posture:
+- 独立 FastAPI/Jinja2 dashboard
+- 本地只读 evidence packet 构建器
+- 手工 ChatGPT Business / Custom GPT prompt 流程
+- 独立 `data/dashboard_analysis.sqlite3`
+- 分析历史和可追溯的 `/item/{id}` 链接
 
-- dashboard remains a local sidecar tool
-- business history DB remains readonly
-- manual AI flow remains available
-- model APIs are optional adapters, not startup requirements
-- Telegram semantics are protected
+下一阶段必须继续保持相同安全姿态：
 
-## 2. Global Boundaries
+- dashboard 仍是本地 sidecar 工具
+- 业务历史库仍保持只读
+- 手工 AI 流程仍保持可用
+- 模型 API 只是可选 adapter，不是启动要求
+- Telegram 语义必须受保护
 
-Always preserve:
+## 2. 全局边界
 
-- no business-history writes from dashboard code
-- no dashboard-triggered Jin10 REST catch-up
-- no dashboard-triggered WebSocket connection
-- no dashboard-triggered Telegram resend or retry
-- no provider API key as a requirement for opening dashboard pages
-- no deletion or weakening of the manual copy/paste analysis flow
+始终保持：
 
-When a feature needs `jin10_monitor.py`, it must be isolated in its own commit
-and must include before/after tests for unchanged default behavior.
+- dashboard 代码不写业务历史库
+- dashboard 不触发金十 REST 补拉
+- dashboard 不触发 WebSocket 连接
+- dashboard 不触发 Telegram 重发或重试
+- 打开 dashboard 页面不要求 provider API key
+- 不删除或削弱手工复制粘贴分析流程
 
-## 3. Phase 3A - Telegram Dashboard Deep Links
+如果某个功能需要改 `jin10_monitor.py`，必须放在独立 commit 中，并且包含变更前后默认行为不变的测试。
 
-### Goal
+## 3. Phase 3A - Telegram Dashboard 深链
 
-Every Telegram push can optionally include a local dashboard link back to the
-original news detail page:
+### 目标
+
+每条 Telegram 推送可以可选地附带一个本地 dashboard 链接，指回原始快讯详情页：
 
 ```text
 http://127.0.0.1:8765/item/{news_id}
 ```
 
-### Configuration
+### 配置
 
-Add optional environment variable:
+新增可选环境变量：
 
 ```text
 DASHBOARD_URL=http://127.0.0.1:8765
 ```
 
-Rules:
+规则：
 
-- empty or unset `DASHBOARD_URL`: Telegram message text must remain unchanged
-- set `DASHBOARD_URL`: append a dashboard link to the message
-- trim trailing slash before appending `/item/{id}`
-- do not change Telegram dedupe keys
-- do not change `delivery_log`
-- do not add callback receiver or inbound Telegram handling
+- `DASHBOARD_URL` 为空或未设置时，Telegram 消息文本必须保持不变
+- 设置 `DASHBOARD_URL` 时，在消息中追加 dashboard 链接
+- 追加 `/item/{id}` 前先去掉尾部斜杠
+- 不改变 Telegram 去重 key
+- 不改变 `delivery_log`
+- 不新增 callback receiver 或 inbound Telegram 处理
 
-### Implementation Scope
+### 实现范围
 
-Likely files:
+可能涉及文件：
 
 - `jin10_monitor.py`
 - `.env.example`
 - `README.md`
-- tests covering `format_message()`
+- 覆盖 `format_message()` 的测试
 
-### Acceptance
+### 验收
 
-- tests prove default formatted messages are unchanged when `DASHBOARD_URL` is
-  unset
-- tests prove configured URL appends one `/item/{id}` link
-- no send/retry/backfill behavior changes
+- 测试证明未设置 `DASHBOARD_URL` 时默认格式化消息不变
+- 测试证明配置 URL 后只追加一个 `/item/{id}` 链接
+- 不改变发送、重试、补发行为
 
-## 4. Phase 3B - Feed Infinite Loading
+## 4. Phase 3B - 快讯流无限加载
 
-### Goal
+### 目标
 
-The feed should load fast on first render and allow reading more history without
-manual page reloads.
+快讯流首屏应快速加载，并且可以在不手动刷新页面的情况下继续阅读更多历史。
 
-This is a single-column timeline/infinite loading feature, not a multi-column
-masonry layout.
+这是单列时间线 / 无限加载功能，不是多列 masonry 布局。
 
-### Recommended UX
+### 推荐 UX
 
-- first page: 50 items
-- automatic append: 30 items per request
-- automatic cap: 500 visible items
-- after cap: show a manual "load more" action or stop with a clear label
-- preserve current filters: priority, keyword, hours, Telegram sent only, status
+- 首屏：50 条
+- 自动追加：每次请求 30 条
+- 自动上限：500 条可见消息
+- 达到上限后：显示手动“load more”操作，或用清晰标签停止继续加载
+- 保留当前筛选：priority、keyword、hours、仅 Telegram 已发送、status
 
-### Backend
+### 后端
 
-Add a readonly endpoint:
+新增只读端点：
 
 ```text
 GET /api/feed/page?offset=N&limit=30&...
 ```
 
-Options:
+可选方案：
 
-- return HTML fragments rendered by a small row partial
-- or return JSON and render client-side
+- 返回由小型 row partial 渲染的 HTML 片段
+- 或返回 JSON 并在客户端渲染
 
-Prefer an HTML partial if it keeps styling consistent with Jinja templates and
-avoids duplicating rendering rules in JavaScript.
+如果 HTML partial 能保持 Jinja 模板样式一致，并避免在 JavaScript 中重复渲染规则，则优先使用 HTML partial。
 
-### Load and Pressure
+### 负载与压力
 
-Expected pressure is low:
+预期压力较低：
 
-- readonly SQLite
-- bounded `LIMIT/OFFSET`
-- local-only dashboard
+- 只读 SQLite
+- 有界 `LIMIT/OFFSET`
+- 本地 dashboard
 
-Mitigations:
+缓解措施：
 
-- cap `limit` to 50
-- cap total auto-loaded rows to 500
-- reuse existing filter normalization
-- avoid polling and infinite loading fighting each other; auto-refresh should
-  not reload while a pagination request is in progress
+- 将 `limit` 上限限制为 50
+- 将自动加载总行数限制为 500
+- 复用现有筛选归一化逻辑
+- 避免轮询和无限加载互相打架；分页请求进行中时 auto-refresh 不应 reload
 
-### Acceptance
+### 验收
 
-- initial page still works without JavaScript
-- scroll appends more rows
-- filters are preserved
-- no writes to business DB
-- no network calls beyond local dashboard
+- 初始页面在没有 JavaScript 时仍可工作
+- 滚动会追加更多行
+- 筛选条件保持不变
+- 不写业务 DB
+- 除本地 dashboard 外不发生网络调用
 
-## 5. Phase 3C - Screenshot Upload with Manual Description
+## 5. Phase 3C - 截图上传与手工描述
 
-### Goal
+### 目标
 
-Allow users to attach a chart screenshot to an analysis run and manually describe
-what the chart shows.
+允许用户给分析记录附加一张图表截图，并手工描述图表内容。
 
-This does not require a model API.
+这个阶段不需要模型 API。
 
-### Current Asset
+### 当前资产
 
-The analysis database already has:
+分析数据库已经有：
 
 ```text
 screenshots(id, file_path, original_filename, user_description, uploaded_at)
 ```
 
-and helper code for saving screenshots.
+以及保存截图的辅助代码。
 
-### Recommended UX
+### 推荐 UX
 
-In `/analyze`:
+在 `/analyze` 中：
 
-- file picker for image upload
-- small preview
-- text field for manual description
-- description is appended to `user_context`
-- saved screenshot can be linked from the analysis run
+- 图片文件选择器
+- 小预览图
+- 手工描述文本框
+- 描述追加到 `user_context`
+- 保存后的截图可以从分析记录链接访问
 
-### Boundaries
+### 边界
 
-- store files under `data/screenshots/`
-- accept image MIME types only
-- enforce a size cap, suggested 8 MB
-- do not send images to any external API in Phase 3C
-- manual description is the authoritative chart context until Vision exists
+- 文件存储在 `data/screenshots/`
+- 只接受图片 MIME 类型
+- 强制大小上限，建议 8 MB
+- Phase 3C 不把图片发送到任何外部 API
+- 在 Vision 出现前，手工描述是权威图表上下文
 
-### Acceptance
+### 验收
 
-- upload succeeds without API keys
-- screenshot is saved outside business history DB
-- deleting analysis history does not delete business news
-- prompt includes user-supplied chart description
+- 无 API key 也能上传成功
+- 截图保存在业务历史 DB 之外
+- 删除分析历史不会删除业务快讯
+- prompt 包含用户提供的图表描述
 
-## 6. Confidence Tooltip
+## 6. 置信度说明
 
-### Goal
+### 目标
 
-Make clear that model confidence is a subjective estimate, not a trading signal
-or statistical probability.
+明确说明模型置信度是主观估计，不是交易信号或统计概率。
 
-### Suggested UI Copy
+### 建议 UI 文案
 
 ```text
 置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。
 ≥75% 较可信；50-75% 仅供参考；<50% 证据不足。
 ```
 
-### Placement
+### 放置位置
 
-- `/analyze/{run_id}` next to overall confidence
-- catalyst-level confidence hover/help text
-- optionally `/analyze/history` column header
+- `/analyze/{run_id}` 的整体置信度旁边
+- catalyst 级别置信度 hover/help 文本
+- 可选：`/analyze/history` 列头
 
-### Acceptance
+### 验收
 
-- users can see the explanation without leaving the analysis page
-- no schema change
-- no provider dependency
+- 用户不用离开分析页面即可看到说明
+- 不改 schema
+- 不依赖 provider
 
 ## 7. Phase 2B - LLM Provider Adapter
 
-### Goal
+### 目标
 
-Add optional automatic model calls while keeping the manual copy/paste flow as a
-permanent fallback.
+在永久保留手工复制粘贴流程作为 fallback 的同时，新增可选自动模型调用。
 
-### Provider Interface
+### Provider 接口
 
-Suggested structure:
+建议结构：
 
 ```text
 dashboard/providers/
@@ -228,7 +220,7 @@ dashboard/providers/
 └── anthropic_provider.py
 ```
 
-Base interface:
+基础接口：
 
 ```python
 class AnalysisProvider:
@@ -241,7 +233,7 @@ class AnalysisProvider:
         ...
 ```
 
-Provider result:
+Provider 结果：
 
 ```python
 @dataclass
@@ -251,44 +243,41 @@ class ProviderResult:
     usage: dict[str, object]
 ```
 
-### Rules
+### 规则
 
-- no API key: provider unavailable, manual flow still works
-- provider failure: show error and keep generated prompt visible
-- save provider result through the same `save_answer()` path
-- `analysis_runs.model_label` records actual model
-- do not change evidence builder boundaries
-- do not send screenshots unless the selected provider explicitly supports
-  Vision and user opts in
+- 没有 API key 时：provider 不可用，手工流程仍可工作
+- provider 失败时：显示错误，并保留已生成的 prompt
+- provider 结果通过同一个 `save_answer()` 路径保存
+- `analysis_runs.model_label` 记录实际模型
+- 不改变 evidence builder 边界
+- 除非所选 provider 明确支持 Vision 且用户主动选择，否则不发送截图
 
-### Acceptance
+### 验收
 
-- manual flow works with no provider packages or keys
-- automatic path can be disabled
-- provider errors do not lose prompt or evidence packet
-- tests cover unavailable-provider fallback
+- 没有 provider package 或 key 时，手工流程仍可工作
+- 自动路径可以禁用
+- provider 错误不会丢失 prompt 或 evidence packet
+- 测试覆盖 provider 不可用时的 fallback
 
-## 8. Vision Recognition
+## 8. Vision 识别
 
-### Goal
+### 目标
 
-Automatically interpret uploaded chart screenshots when a Vision provider is
-available.
+当 Vision provider 可用时，自动解释上传的图表截图。
 
-### Requirement
+### 要求
 
-Reliable chart interpretation needs a vision-capable model. Local OCR is not
-enough for:
+可靠的图表解释需要具备视觉能力的模型。仅靠本地 OCR 不足以完成：
 
-- symbol detection
-- time-axis interpretation
-- price-axis interpretation
-- K-line movement
-- timeframe and exchange context
+- symbol 识别
+- 时间轴解释
+- 价格轴解释
+- K 线走势
+- 时间周期和交易所上下文
 
-### Output
+### 输出
 
-Vision should return structured chart context:
+Vision 应返回结构化图表上下文：
 
 ```json
 {
@@ -301,67 +290,62 @@ Vision should return structured chart context:
 }
 ```
 
-The recognized text should enter `user_context`, not overwrite user input.
+识别出的文字应进入 `user_context`，不能覆盖用户输入。
 
 ## 9. Market Data Overlay
 
-### Goal
+### 目标
 
-Show minute-level market context beside news context on `/item/{id}` and later
-inside evidence packets.
+在 `/item/{id}` 上、后续也在 evidence packet 中，展示新闻上下文旁边的分钟级行情上下文。
 
-### Candidate Sources
+### 候选来源
 
-- Binance public REST for crypto pairs
-- other market APIs later, if needed
+- Binance public REST，用于加密货币交易对
+- 其他 market API，后续按需加入
 
-### Boundaries
+### 边界
 
-- market data is read-only
-- cache responses locally or in memory to avoid repeated calls
-- dashboard should work when market API is unavailable
-- do not make market data a prerequisite for evidence packet generation
+- 行情数据只读
+- 本地或内存缓存响应，避免重复调用
+- market API 不可用时 dashboard 仍应工作
+- 行情数据不能成为 evidence packet 生成的前置条件
 
-### Acceptance
+### 验收
 
-- `/item/{id}` can show a small nearby price timeline
-- failures degrade to "market data unavailable"
-- no business DB writes unless a separate cache design is approved
+- `/item/{id}` 可以展示一段小型邻近价格时间线
+- 失败时降级为“market data unavailable”
+- 除非单独批准缓存设计，否则不写业务 DB
 
-## 10. Recommended Order
+## 10. 推荐顺序
 
-1. Phase 3A: Telegram dashboard deep links
-2. Phase 3B: feed infinite loading
-3. Phase 3C: screenshot upload with manual description
-4. Confidence tooltip
+1. Phase 3A：Telegram dashboard 深链
+2. Phase 3B：快讯流无限加载
+3. Phase 3C：截图上传与手工描述
+4. 置信度说明
 5. Phase 2B provider adapter
-6. Vision recognition
+6. Vision 识别
 7. Market data overlay
 
-Reasoning:
+理由：
 
-- Telegram links have the highest daily usefulness but touch Telegram formatting,
-  so they need `GPT-5.5 高`.
-- Infinite loading and screenshot upload are local dashboard features with no
-  API dependency.
-- Confidence tooltip is small and can be bundled with analysis UI polish.
-- Provider and Vision work should wait until API keys and provider preference
-  are clear.
-- Market data overlay is useful, but it introduces external data reliability and
-  caching questions.
+- Telegram 链接日常价值最高，但会触及 Telegram 格式，因此需要 `GPT-5.5 高`。
+- 无限加载和截图上传是本地 dashboard 功能，没有 API 依赖。
+- 置信度说明很小，可以和分析 UI polish 合并。
+- Provider 和 Vision 工作应等 API key 与 provider 偏好明确后再做。
+- Market data overlay 有用，但会引入外部数据可靠性和缓存问题。
 
-## 11. Testing Strategy
+## 11. 测试策略
 
-Every phase must include:
+每个阶段必须包含：
 
-- focused no-network unit tests where possible
-- browser smoke for changed dashboard pages
+- 尽可能使用 focused no-network unit tests
+- 对变更的 dashboard 页面做 browser smoke
 - `git diff --check`
-- full `pytest` before commit
+- commit 前跑完整 `pytest`
 
-For Telegram changes specifically:
+对于 Telegram 变更，特别需要：
 
-- tests for default no-`DASHBOARD_URL` formatting
-- tests for configured dashboard links
-- no Telegram send in tests
-- no changes to delivery dedupe semantics
+- 测试默认无 `DASHBOARD_URL` 的格式化
+- 测试配置 dashboard 链接的情况
+- 测试中不发送 Telegram
+- 不改变 delivery dedupe 语义

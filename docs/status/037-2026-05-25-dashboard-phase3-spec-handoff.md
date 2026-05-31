@@ -1,27 +1,28 @@
-# 037 - Dashboard Phase 3 spec handoff
+# 037 - Dashboard Phase 3 规格交接
 
-Date: 2026-05-25
+日期：2026-05-25
 
-## Current state
+更新时间：2026-05-31（Asia/Shanghai）
 
-The latest local commit prepared by this handoff is:
+## 当前状态
+
+本交接准备的最新本地提交是：
 
 ```text
 4726a97 docs(dashboard): define phase 2b and phase 3 plan
 ```
 
-Before starting this handoff, the latest pushed dashboard UX commit was:
+开始本交接前，最新已推送 dashboard UX 提交是：
 
 ```text
 7b190c4 feat(dashboard): improve analysis timing and news rendering
 ```
 
-This handoff records the Phase 2B / Phase 3 planning checkpoint after reviewing
-the `phase 2a function 2&4&5.zip` proposal.
+本交接记录了在审核 `phase 2a function 2&4&5.zip` proposal 后形成的 Phase 2B / Phase 3 规划检查点。
 
-## Zip review result
+## Zip 审核结果
 
-The zip contained six files:
+zip 包含六个文件：
 
 - `manual_ai.py`
 - `analyze.html`
@@ -30,65 +31,59 @@ The zip contained six files:
 - `feed.html`
 - `item.html`
 
-The current repository implementation is already more complete for most of
-these files. Direct replacement would regress the current UX in several places:
+当前仓库实现对其中大多数文件已经更完整。直接替换会在多个地方让当前 UX 回退：
 
-- `manual_ai.py`: would revert friendlier timestamp-based news links back toward
-  raw `[#news_id]` style labels.
-- `analyze.html`: would replace the cleaner `data-minutes` quick-window
-  controls with more inline JavaScript.
-- `analyze_run.html`: would reduce the evidence sidebar from
-  time + headline/content + relevance to a thinner ID/time display.
-- `base.html`: would remove or rewrite existing shared news and datetime styles.
-- `feed.html` and `item.html`: the message-rendering approach was not better
-  than the current Jin10-style renderer.
+- `manual_ai.py`：会把更友好的基于时间戳的新闻链接，回退到 raw `[#news_id]` 风格标签。
+- `analyze.html`：会用更多 inline JavaScript 替换更清晰的 `data-minutes` 快速窗口控件。
+- `analyze_run.html`：会把 evidence sidebar 从时间 + headline/content + relevance 缩减为更薄的 ID/time 展示。
+- `base.html`：会删除或重写现有共享新闻和 datetime 样式。
+- `feed.html` 和 `item.html`：消息渲染方案不比当前类金十渲染器更好。
 
-Only one useful behavior was adopted:
+只采用了一个有用行为：
 
-- image thumbnails now hide themselves if `pic_url` is dead or fails to load
+- 如果 `pic_url` 失效或加载失败，图片缩略图会隐藏自身
   (`onerror="this.closest('a').style.display='none'"`)
 
-## What changed
+## 变更内容
 
-### 1. Phase 2B / Phase 3 spec
+### 1. Phase 2B / Phase 3 规格
 
-Added:
+新增：
 
 ```text
 docs/design/003-phase2b-phase3-spec.md
 ```
 
-The spec freezes the next dashboard plan:
+该规格冻结下一步 dashboard 计划：
 
-1. Phase 3A: Telegram `/item/{id}` deep links through `DASHBOARD_URL`
-2. Phase 3B: feed infinite loading with safe caps
-3. Phase 3C: screenshot upload with manual chart context
-4. confidence tooltip explaining that model confidence is subjective
-5. Phase 2B provider adapter for optional LLM API usage
-6. Vision recognition after provider/API keys are available
-7. market data overlay for item timelines
+1. Phase 3A：通过 `DASHBOARD_URL` 增加 Telegram `/item/{id}` 深链
+2. Phase 3B：带安全上限的快讯流无限加载
+3. Phase 3C：截图上传与手工图表上下文
+4. 置信度 tooltip，说明模型置信度是主观估计
+5. Phase 2B provider adapter，用于可选 LLM API
+6. provider / API key 可用后再做 Vision recognition
+7. item 时间线的 market data overlay
 
-### 2. Image fallback
+### 2. 图片 fallback
 
-Updated:
+更新：
 
 - `dashboard/templates/feed.html`
 - `dashboard/templates/item.html`
 
-If a Jin10 image URL fails, the broken thumbnail link is hidden instead of
-leaving a broken image in the feed or item detail page.
+如果金十图片 URL 加载失败，隐藏 broken thumbnail link，避免在快讯流或详情页留下破图。
 
 ### 3. Changelog
 
-Updated:
+更新：
 
 - `CHANGELOG.md`
 
-The changelog now records the new 003 spec and its planned boundaries.
+Changelog 现在记录了新的 003 spec 及其计划边界。
 
-## Validation
+## 验证
 
-Latest validation:
+最新验证：
 
 ```text
 .venv/bin/python -m pytest -q
@@ -104,39 +99,38 @@ curl -s -o /tmp/jin10_analyze.html -w "%{http_code}" http://127.0.0.1:8765/analy
 200
 ```
 
-## Boundaries preserved
+## 已保留的边界
 
-- Did not modify `jin10_monitor.py`.
-- Did not modify launchd config.
-- Did not add dependencies.
-- Did not add `python-multipart`.
-- Did not connect any model API.
-- Did not call Jin10 REST or market-data APIs.
-- Did not send Telegram.
-- Did not write the business history DB.
-- Analysis writes remain isolated to `data/dashboard_analysis.sqlite3`.
+- 未修改 `jin10_monitor.py`。
+- 未修改 launchd config。
+- 未新增依赖。
+- 未新增 `python-multipart`。
+- 未连接任何模型 API。
+- 未调用金十 REST 或 market-data APIs。
+- 未发送 Telegram。
+- 未写业务历史 DB。
+- 分析写入仍隔离在 `data/dashboard_analysis.sqlite3`。
 
-## Next recommended work
+## 下一步建议工作
 
-Recommended next sequence:
+建议顺序：
 
-1. Push the local planning commit if it has not already been pushed.
-2. Phase 3A: add Telegram `/item/{id}` deep links.
-3. Phase 3B: add feed infinite loading with:
-   - initial page: 50 rows
-   - each append: 30 rows
-   - automatic cap: 500 rows
-4. Phase 3C: add screenshot upload and manual chart description.
-5. Add confidence tooltip to analysis results.
-6. Phase 2B provider adapter only after API keys are available.
+1. 如果本地规划提交尚未推送，先推送它。
+2. Phase 3A：增加 Telegram `/item/{id}` 深链。
+3. Phase 3B：增加快讯流无限加载：
+   - 首屏：50 行
+   - 每次追加：30 行
+   - 自动上限：500 行
+4. Phase 3C：增加截图上传和手工图表描述。
+5. 给分析结果增加置信度 tooltip。
+6. 只有在 API key 可用后再做 Phase 2B provider adapter。
 
-Suggested model:
+建议模型：
 
-- GPT-5.5 高 for Phase 3A because it touches Telegram message formatting.
-- GPT-5.5 中 is enough for feed infinite loading and confidence tooltip after
-  Phase 3A is committed.
+- Phase 3A 会触及 Telegram 消息格式，使用 `GPT-5.5 高`。
+- Phase 3A 提交后，快讯流无限加载和置信度 tooltip 用 `GPT-5.5 中` 足够。
 
-## Ready-to-paste next-session prompt
+## 可直接复制的 next-session prompt
 
 ```text
 请继续 /Users/rich/jin10-monitor 项目。

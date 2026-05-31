@@ -1,77 +1,75 @@
-# 038 - Dashboard V2 bugfix and plan handoff
+# 038 - Dashboard V2 bugfix 和计划交接
 
-Date: 2026-05-29
+日期：2026-05-29
 
-## Current state
+更新时间：2026-05-31（Asia/Shanghai）
 
-Latest pushed commit:
+## 当前状态
+
+最新已推送提交：
 
 ```text
 304929a fix(dashboard): polish feed bugs and v2 plan
 ```
 
-Branch state after push:
+推送后的分支状态：
 
 ```text
 main...origin/main
 ```
 
-The standalone Dashboard entry remains:
+独立 Dashboard 入口仍是：
 
 ```text
 run_dashboard.py + dashboard/
 ```
 
-Do not resume work by extending the old `jin10_monitor.py --dashboard` prototype.
+不要通过扩展旧 `jin10_monitor.py --dashboard` 原型来继续工作。
 
-## What this session completed
+## 本 session 已完成内容
 
-Reviewed two proposal bundles:
+审核了两个 proposal bundles：
 
 - `phase 2a:b:c bug fix和dashaboard v2计划（v1).zip`
 - `phase 2a:b:c bug fix（v2).zip`
 
-Final verdict:
+最终结论：
 
-- v2 is the better code baseline.
-- v1's unique value is the Dashboard V2 planning HTML.
-- The HTML plan was not added as an app route because it would create a second
-  maintenance surface and included stale wording.
-- Its useful roadmap content was distilled into:
+- v2 是更好的代码基线。
+- v1 的独特价值是 Dashboard V2 planning HTML。
+- HTML plan 未作为 app route 加入，因为它会产生第二个维护面，并且包含过时表述。
+- 其中有用的路线图内容已提炼到：
 
 ```text
 docs/design/004-dashboard-v2-plan.md
 ```
 
-## Bugfixes merged
+## 已合并 bugfix
 
-Dashboard feed and analysis UI:
+Dashboard 快讯流和分析 UI：
 
-- removed `style_flags` from feed rendering
-- hid empty messages where both `title` and `content` are blank
-- fixed duplicate body rendering when `has_title=0`
-- truncated feed timestamps to minute precision
-- added a visible `补拉` label for `catchup_auto` / `catchup_manual`
-- localized Telegram status labels in the feed
-- localized LLM direction labels as catalyst semantics:
+- 从 feed rendering 中移除 `style_flags`
+- 隐藏 `title` 和 `content` 都为空的消息
+- 修复 `has_title=0` 时正文重复渲染
+- 将 feed timestamps 截断到分钟精度
+- 给 `catchup_auto` / `catchup_manual` 增加可见的 `补拉` 标签
+- 将 feed 中的 Telegram status labels 中文化
+- 将 LLM direction labels 本地化为催化语义：
   - `▲ 偏利多`
   - `▼ 偏利空`
   - `◆ 多空混合`
-- added global `box-sizing: border-box`
-- fixed analysis form grid overflow with `min-width: 0`
+- 增加全局 `box-sizing: border-box`
+- 用 `min-width: 0` 修复分析表单 grid overflow
 
-Ordering and upload safety:
+排序和上传安全：
 
-- changed same-second feed and context tie-breaker from `created_at` to Jin10
-  message `id`
-- added `normalize_news_text()` for stable whitespace-insensitive title/content
-  comparison
-- screenshot upload now checks `Content-Length` before reading the body when
-  possible
-- screenshot MIME is limited to `png/jpeg/webp/gif`
-- screenshot upload 500 errors no longer echo raw exception text
+- 将同秒 feed 和 context 的 tie-breaker 从 `created_at` 改为金十 message `id`
+- 新增 `normalize_news_text()`，用于稳定的、不受空白影响的 title/content 对比
+- screenshot upload 会尽可能在读取 body 前检查 `Content-Length`
+- screenshot MIME 限制为 `png/jpeg/webp/gif`
+- screenshot upload 的 500 错误不再回显 raw exception text
 
-## Files changed in commit 304929a
+## commit 304929a 修改的文件
 
 - `CHANGELOG.md`
 - `dashboard/app.py`
@@ -85,9 +83,9 @@ Ordering and upload safety:
 - `tests/test_dashboard_db.py`
 - `docs/design/004-dashboard-v2-plan.md`
 
-## Validation
+## 验证
 
-Automated validation:
+自动验证：
 
 ```text
 .venv/bin/python -m pytest -q
@@ -97,118 +95,103 @@ git diff --check
 no output
 ```
 
-Browser / local server smoke:
+浏览器 / 本地 server smoke：
 
-- server restarted on `http://127.0.0.1:8765`
-- `/` renders with no visible `style_flags`
-- feed status labels render in Chinese
-- feed timestamp length is 16 characters (`YYYY-MM-DD HH:MM`)
-- `#feed-sentinel` exists for infinite loading
-- `/api/feed/page?offset=50&limit=2` returns rows and `has_more=true`
-- `/analyze` renders with screenshot upload controls
-- analysis grid does not overflow its container
-- SVG screenshot upload is rejected
-- oversized `Content-Length` is rejected before body parsing
+- server 已在 `http://127.0.0.1:8765` 重启
+- `/` 渲染时没有可见 `style_flags`
+- feed status labels 以中文渲染
+- feed timestamp 长度为 16 个字符（`YYYY-MM-DD HH:MM`）
+- `#feed-sentinel` 存在，用于无限加载
+- `/api/feed/page?offset=50&limit=2` 返回行且 `has_more=true`
+- `/analyze` 渲染 screenshot upload 控件
+- analysis grid 不再溢出容器
+- SVG screenshot upload 被拒绝
+- oversized `Content-Length` 会在读取 body 前被拒绝
 
-## Relationship between 003 and 004
+## 003 和 004 的关系
 
-`003-phase2b-phase3-spec.md` is the original Phase 2B / Phase 3 specification.
-It defined what to build next:
+`003-phase2b-phase3-spec.md` 是原始 Phase 2B / Phase 3 规格。
+它定义了下一步要构建的内容：
 
-- Phase 3A Telegram `/item/{id}` links
-- Phase 3B feed infinite loading
-- Phase 3C screenshot upload
+- Phase 3A Telegram `/item/{id}` 链接
+- Phase 3B 快讯流无限加载
+- Phase 3C 截图上传
 - confidence tooltip
-- later Provider Adapter
-- later Vision
-- later market overlay
+- 后续 Provider Adapter
+- 后续 Vision
+- 后续 market overlay
 
-`004-dashboard-v2-plan.md` does not replace `003`; it updates the roadmap after
-Phase 3A/3B/3C were completed and after the v1/v2 bugfix bundles were reviewed.
-The main differences are:
+`004-dashboard-v2-plan.md` 不替代 `003`；它是在 Phase 3A/3B/3C 完成、并审核 v1/v2 bugfix bundles 后，对路线图的更新。
+主要差异：
 
-- `004` records which v1/v2 bundle ideas were accepted or rejected.
-- `004` treats Phase 3 as complete and moves the project into V2 planning.
-- `004` sharpens bugfix decisions that `003` did not cover:
-  - hide empty messages only in dashboard rendering, not monitor ingestion
-  - use Jin10 `id` rather than `created_at` as same-second tie-breaker
-  - use catalyst direction wording rather than prediction wording
-  - harden screenshot upload MIME and size handling
-- `004` softens the market overlay plan from a concrete Binance-first feature
-  into an optional market adapter boundary, because dashboard startup should not
-  depend on any external market-data API.
-- `004` makes the next sequence clearer:
-  - stabilization and summary
+- `004` 记录哪些 v1/v2 bundle 思路被接受或拒绝。
+- `004` 将 Phase 3 视为已完成，并把项目推进到 V2 规划。
+- `004` 明确了 `003` 未覆盖的 bugfix 决策：
+  - 只在 dashboard rendering 中隐藏空消息，不改 monitor ingestion
+  - 使用金十 `id`，而不是 `created_at`，作为同秒 tie-breaker
+  - 使用 catalyst direction wording，而不是 prediction wording
+  - 加固 screenshot upload 的 MIME 和大小处理
+- `004` 将 market overlay 计划从具体 Binance-first feature 放宽为可选 market adapter boundary，因为 dashboard 启动不应依赖任何外部 market-data API。
+- `004` 让下一步顺序更清晰：
+  - 稳定化和 summary
   - analysis comparison
-  - optional market overlay
+  - 可选 market overlay
   - Phase 2B Provider Adapter
-  - Vision only after provider/API setup is stable
+  - 只在 provider / API 设置稳定后再做 Vision
 
-## Recommended next progress sequence
+## 建议的下一步顺序
 
-Recommended order:
+推荐顺序：
 
-1. Stabilization closeout
-   - keep current `304929a` as the Phase 3 + V2 bugfix baseline
-   - keep the local dashboard server running only for manual inspection
-   - avoid adding new feature code before the next scope is chosen
+1. 稳定化收口
+   - 保留当前 `304929a` 作为 Phase 3 + V2 bugfix baseline
+   - 本地 dashboard server 只用于手工检查
+   - 在选择下一范围前避免新增 feature code
 
-2. Analysis comparison, no external API
-   - add `/analyze/compare` or a history-page compare mode
-   - select two existing analysis runs
-   - compare judgement, confidence, selected catalysts, missing evidence, and
-     referenced news
-   - this uses only `dashboard_analysis.sqlite3`
+2. 分析对比，无外部 API
+   - 新增 `/analyze/compare` 或 history page 对比模式
+   - 选择两条现有 analysis runs
+   - 对比 judgement、confidence、selected catalysts、missing evidence 和 referenced news
+   - 仅使用 `dashboard_analysis.sqlite3`
 
-3. Market overlay adapter, optional and bounded
-   - define a small `dashboard/market/` interface before choosing a data source
-   - only fetch when the user opens a relevant item or explicitly requests it
-   - do not call Jin10 REST
-   - do not make dashboard startup depend on network access
+3. Market overlay adapter，可选且有界
+   - 选择数据源前先定义小型 `dashboard/market/` interface
+   - 仅在用户打开相关 item 或明确请求时 fetch
+   - 不调用金十 REST
+   - 不让 dashboard 启动依赖网络访问
 
 4. Phase 2B Provider Adapter
-   - define `dashboard/providers/`
-   - keep manual copy/paste flow as the default fallback
-   - no provider key should be required for opening dashboard pages
-   - write provider results only to the isolated analysis DB
+   - 定义 `dashboard/providers/`
+   - 保持手工复制粘贴流程作为默认 fallback
+   - 打开 dashboard 页面不应要求 provider key
+   - provider 结果只写独立 analysis DB
 
 5. Vision recognition
-   - only after Provider Adapter is stable and API key choice is clear
-   - use Vision to suggest structured `user_context`
-   - never overwrite the user's manual screenshot description automatically
+   - 只在 Provider Adapter 稳定且 API key 选择明确后进行
+   - 用 Vision 建议结构化 `user_context`
+   - 永远不自动覆盖用户的手工截图描述
 
-## Adapter vs market overlay recommendation
+## Adapter 与 market overlay 建议
 
-Recommended next feature: analysis comparison first, then market overlay, then
-Provider Adapter.
+推荐下一功能：先做分析对比，再做 market overlay，最后做 Provider Adapter。
 
-If choosing strictly between Provider Adapter and market overlay, prefer market
-overlay first.
+如果必须在 Provider Adapter 和 market overlay 之间二选一，优先做 market overlay。
 
-Reasoning:
+理由：
 
-- Provider Adapter introduces external model credentials, provider-specific
-  errors, cost/rate-limit behavior, and streaming or timeout design. It is a
-  larger architectural boundary.
-- The current manual ChatGPT/Claude flow already works and remains acceptable
-  for the user's workflow, so Provider Adapter is not blocking value.
-- Market overlay can be built as a read-only, optional, user-triggered adapter
-  that improves evidence interpretation without changing the AI flow.
-- A well-designed market adapter also benefits later Provider Adapter and Vision
-  work, because price context can become another evidence input.
+- Provider Adapter 会引入外部模型凭证、provider-specific errors、成本 / 限流行为，以及 streaming 或 timeout 设计。这是更大的架构边界。
+- 当前手工 ChatGPT / Claude 流程已经可用，并且对用户工作流仍可接受，所以 Provider Adapter 不阻塞价值。
+- Market overlay 可以做成只读、可选、用户触发的 adapter，在不改变 AI 流程的情况下改善 evidence interpretation。
+- 设计良好的 market adapter 也会让后续 Provider Adapter 和 Vision 受益，因为价格上下文可以成为另一类 evidence input。
 
-Do not start with market overlay as a hardcoded Binance feature. Start by
-freezing the local interface and fallback behavior, then choose the first data
-source deliberately.
+不要从硬编码 Binance 的 market overlay 开始。先冻结本地 interface 和 fallback behavior，再谨慎选择第一个数据源。
 
-## Suggested model choice
+## 建议模型
 
-- GPT-5.5 中: summary docs, diff review, analysis comparison, small dashboard UI
-  improvements.
-- GPT-5.5 高: Provider Adapter, streaming model calls, credential/error boundary,
-  or a market adapter if it expands into multi-source caching and normalization.
+- `GPT-5.5 中`：summary docs、diff review、analysis comparison、小型 dashboard UI 改进。
+- `GPT-5.5 高`：Provider Adapter、streaming model calls、credential/error boundary，或扩展成 multi-source caching 和 normalization 的 market adapter。
 
-## Ready-to-paste next-session prompt
+## 可直接复制的 next-session prompt
 
 ```text
 请继续 /Users/rich/jin10-monitor 项目。

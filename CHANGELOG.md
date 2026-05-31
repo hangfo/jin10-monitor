@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 中文化中期 Dashboard 设计与交接文档：将 `docs/design/003-phase2b-phase3-spec.md` 和 `docs/status/034` 至 `039` 中的大段英文正文统一改为中文，并补充本次文档更新时间；保留文件名、命令、路由、环境变量、commit hash、代码块和技术标识不变。
 - 新增项目状态摘要 040：记录 `/system` 诊断面板和 REST 状态持久化收口、launchd reload 后的真实运行证据、当前 REST 仍反复 403 但 WebSocket 与 Telegram realtime 正常，以及下一步文档中文化建议。
 - 持久化 REST 运行状态：REST 轮询成功、连续 403 退避或其它异常时写入 `runtime_state`，`/system` 可直接显示 `ok`、`forbidden_backoff`、`error`、连续 403 轮数、退避截止时间、最近错误和最近恢复时间；仅增强诊断，不改变 REST 请求、补拉或 Telegram 发送语义。
 - 增强 Dashboard `/system` 只读运行诊断面板：展示最近 WebSocket、REST、自动补拉、手动补拉入库时间和 24h 数量，补充 `last_ingested_id`、缺口摘要时间、Telegram 最新 sent/unknown_timeout/failed 与补拉摘要状态；页面明确不触发补拉、REST 请求、Telegram 重试或发送。

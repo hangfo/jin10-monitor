@@ -1,22 +1,25 @@
-# 035 - Dashboard Phase 2A handoff
+# 035 - Dashboard Phase 2A 交接
 
-Date: 2026-05-24
+日期：2026-05-24
 
-## Current state
+更新时间：2026-05-31（Asia/Shanghai）
 
-Phase 2A of the standalone FastAPI/Jinja2 dashboard was committed and pushed as
-`bd303ae feat(dashboard): add manual analysis workflow`.
+## 当前状态
 
-This handoff also records the follow-up dashboard polish/bugfix patch prepared
-for `fix(dashboard): polish phase 2a dashboard`.
+独立 FastAPI/Jinja2 dashboard 的 Phase 2A 已提交并推送为
+`bd303ae feat(dashboard): add manual analysis workflow`。
 
-Current branch:
+本交接也记录了后续准备给
+`fix(dashboard): polish phase 2a dashboard`
+的 dashboard polish / bugfix 补丁。
+
+当前分支：
 
 ```text
 main
 ```
 
-Follow-up patch scope:
+后续补丁范围：
 
 - `CHANGELOG.md`
 - `dashboard/app.py`
@@ -31,117 +34,90 @@ Follow-up patch scope:
 - `tests/test_dashboard_analysis.py`
 - `tests/test_dashboard_db.py`
 
-The dashboard dev server is currently running at:
+Dashboard dev server 当前运行在：
 
 ```text
 http://127.0.0.1:8765/
 ```
 
-## What was completed
+## 已完成内容
 
-- Replaced the Phase 1 `/analyze` placeholder with the Phase 2A manual analysis
-  workflow:
-  - input question, asset, time window, optional source item, optional context
-  - preview local evidence packet
-  - select evidence rows
-  - generate copy/paste prompt for ChatGPT Business or Custom GPT
-  - paste answer back into dashboard
-  - save and view analysis history/details
-- Added an isolated analysis database layer:
-  - writes to `data/dashboard_analysis.sqlite3`
-  - creates `analysis_runs`, `analysis_evidence`, and `screenshots`
-  - enables WAL and foreign-key cascade delete
-  - preserves separation from `data/jin10_history.sqlite3`
-- Added a local-only evidence builder:
-  - reads `flash_history` through the existing readonly dashboard connection
-  - scores by asset keywords, high-priority keywords, macro keywords, priority,
-    important, and bold flags
-  - adds `news_id` for downstream prompt/database/template consistency
-  - caps packet size to 25 items
-- Added manual AI helpers:
-  - prompt generation with strict evidence-only JSON instruction
-  - permissive answer parsing from fenced JSON, bare JSON, or best-effort JSON
-    block extraction
-  - rendered answer links from `[#news_id]` back to `/item/{id}`
-- Added analysis templates:
+- 将 Phase 1 的 `/analyze` 占位页替换为 Phase 2A 手工分析流程：
+  - 输入 question、asset、time window、可选 source item、可选 context
+  - 预览本地 evidence packet
+  - 选择 evidence rows
+  - 为 ChatGPT Business 或 Custom GPT 生成复制粘贴 prompt
+  - 将答案粘贴回 dashboard
+  - 保存并查看分析历史 / 详情
+- 新增独立分析数据库层：
+  - 写入 `data/dashboard_analysis.sqlite3`
+  - 创建 `analysis_runs`、`analysis_evidence` 和 `screenshots`
+  - 启用 WAL 和 foreign-key 级联删除
+  - 保持与 `data/jin10_history.sqlite3` 分离
+- 新增本地-only evidence builder：
+  - 通过现有只读 dashboard connection 读取 `flash_history`
+  - 按资产关键词、高优先级关键词、宏观关键词、priority、important 和 bold flags 计分
+  - 增加 `news_id`，保证后续 prompt / database / template 一致
+  - 将 packet size 限制为 25 条
+- 新增手工 AI helper：
+  - prompt 生成，要求严格基于 evidence-only JSON
+  - 宽松答案解析，支持 fenced JSON、bare JSON 或 best-effort JSON block extraction
+  - 将 `[#news_id]` 渲染为指向 `/item/{id}` 的答案链接
+- 新增分析模板：
   - `analyze.html`
   - `analyze_run.html`
   - `analyze_history.html`
-- Improved the feed page:
-  - keyword heatmap now uses the real configured `KEYWORDS` and
-    `HIGH_PRIORITY` lists from `jin10_monitor.py`
-  - high-priority heatmap keywords are marked for highlighting
-  - the feed page polls `/api/feed/latest-ts` every 20 seconds and refreshes
-    only when a newer `published_at` is detected; polling stops while the page
-    is hidden and refresh skips while the user edits filter inputs
-  - the polling endpoint keeps the current feed filters, so keyword/priority
-    pages are not refreshed by unrelated newer items
-- Added Phase 2A polish/fix items:
-  - disabled default FastAPI `/docs`, `/redoc`, and `/openapi.json`
-  - added navigation links for analysis history and aggregation report
-  - changed evidence boundary from a plain string to a structured object with
-    `source`, `jin10_rest_called`, and `market_data_called`
-  - added a readonly `/aggregation` foundation page backed by skipped
-    `telegram_delivery_status` diagnostics
-  - improved `/system` monitor status with colored Chinese status labels
-- Added focused tests for:
+- 改进快讯流页面：
+  - keyword heatmap 现在使用 `jin10_monitor.py` 中真实配置的 `KEYWORDS` 和 `HIGH_PRIORITY` 列表
+  - 高优先级 heatmap 关键词会高亮
+  - 快讯流每 20 秒轮询 `/api/feed/latest-ts`，仅在检测到更新的 `published_at` 时刷新；页面隐藏时停止轮询，用户编辑筛选输入时跳过刷新
+  - 轮询端点保留当前 feed filters，所以 keyword / priority 页面不会被无关新消息刷新
+- 新增 Phase 2A polish / fix 项：
+  - 禁用默认 FastAPI `/docs`、`/redoc` 和 `/openapi.json`
+  - 新增分析历史和聚合报告导航链接
+  - 将 evidence boundary 从普通字符串改为结构化对象，包含 `source`、`jin10_rest_called` 和 `market_data_called`
+  - 新增只读 `/aggregation` 基础页，基于 skipped `telegram_delivery_status` 诊断
+  - 改进 `/system` 监控状态，使用彩色中文状态标签
+- 新增聚焦测试：
   - analysis DB roundtrip
   - cascade delete
-  - analysis DB separation from business history DB
-  - evidence scoring and `news_id` labeling
-  - answer parsing and link rendering
-  - `/analyze/history` route ordering before `/analyze/{run_id}`
-  - configured keyword heatmap behavior
+  - analysis DB 与业务历史 DB 隔离
+  - evidence scoring 和 `news_id` 标注
+  - 答案解析和链接渲染
+  - `/analyze/history` route 排序在 `/analyze/{run_id}` 之前
+  - configured keyword heatmap 行为
   - disabled docs routes
-  - aggregation report readonly helper
-- Updated `CHANGELOG.md`.
+  - 聚合报告只读 helper
+- 更新 `CHANGELOG.md`。
 
-## Code intake notes
+## 代码导入说明
 
-The uploaded `phase 2a.zip` was useful but not safe to apply as a direct
-overwrite.
+上传的 `phase 2a.zip` 有参考价值，但不能直接覆盖应用。
 
-Issues fixed during merge:
+合并期间修复的问题：
 
-- The uploaded `app.py` registered `GET /analyze` twice, so the old placeholder
-  route would keep winning.
-- The uploaded route order placed `/analyze/{run_id}` before
-  `/analyze/history`, which would route `history` as a run id.
-- The uploaded evidence path queried `id` but downstream code expected
-  `news_id`.
-- The uploaded `save_answer()` update path had a selected-count parameter order
-  risk.
-- The uploaded `db.py` and `base.html` conflicted with already validated Phase 1
-  behavior, so they were not applied wholesale.
-- No `python-multipart` dependency was added; form parsing uses lightweight
-  URL-encoded body parsing to avoid making Phase 2A startup depend on a new
-  package.
-- The uploaded `phase 2a update.zip` added useful ideas, but was also not safe
-  to apply wholesale. The merged parts were the configured keyword heatmap,
-  additional Phase 2A tests, compatible analyze templates where useful, and the
-  feed auto-refresh behavior. Its `app.py` was not adopted because it reintroduced
-  `Form(...)` / `python-multipart` as a hard startup dependency.
-- The uploaded `phase 2a bug fix.zip` was reviewed and merged selectively:
-  - adopted: docs/openapi disablement, analysis history and aggregation nav,
-    colored `/system` monitor status, structured evidence boundary, readonly
-    `/aggregation`, and timestamp polling for feed refresh
-  - adapted: `/api/feed/latest-ts` now preserves current feed filters; aggregation
-    env parsing is clamped and tolerant of invalid values; tests use dynamic
-    timestamps instead of a fixed current-date fixture
-  - not adopted as-is: wholesale `app.py`, `db.py`, and templates because they
-    would overwrite already validated Phase 2A behavior or reduce compatibility
-    with the existing design system
+- 上传版 `app.py` 注册了两次 `GET /analyze`，旧占位 route 会继续生效。
+- 上传版 route 顺序把 `/analyze/{run_id}` 放在 `/analyze/history` 前面，会把 `history` 当成 run id。
+- 上传版 evidence 路径查询 `id`，但下游代码期待 `news_id`。
+- 上传版 `save_answer()` 更新路径存在 selected-count 参数顺序风险。
+- 上传版 `db.py` 和 `base.html` 与已验证的 Phase 1 行为冲突，所以没有整体采用。
+- 未新增 `python-multipart` 依赖；表单解析使用轻量 URL-encoded body parsing，避免让 Phase 2A 启动依赖新 package。
+- 上传的 `phase 2a update.zip` 增加了一些有用想法，但同样不适合整体采用。已合并的部分包括 configured keyword heatmap、更多 Phase 2A 测试、可兼容的 analyze templates，以及 feed auto-refresh 行为。它的 `app.py` 没有采用，因为会重新引入 `Form(...)` / `python-multipart` 作为硬启动依赖。
+- 上传的 `phase 2a bug fix.zip` 已审核并选择性合并：
+  - 采用：禁用 docs/openapi、analysis history 和 aggregation nav、彩色 `/system` monitor status、结构化 evidence boundary、只读 `/aggregation`、用于 feed refresh 的 timestamp polling
+  - 适配：`/api/feed/latest-ts` 现在保留当前 feed filters；aggregation env parsing 做了 clamp 且能容忍无效值；测试使用动态 timestamp，而不是固定 current-date fixture
+  - 未原样采用：整体 `app.py`、`db.py` 和 templates，因为它们会覆盖已验证的 Phase 2A 行为，或降低与现有设计系统的兼容性
 
-## Validation
+## 验证
 
-Latest local test run:
+最近一次本地测试：
 
 ```text
 .venv/bin/python -m pytest -q
 125 passed in 0.75s
 ```
 
-Route count check:
+Route count 检查：
 
 ```text
 14 dashboard routes:
@@ -161,7 +137,7 @@ Route count check:
 /healthz
 ```
 
-Browser smoke checks passed for:
+以下浏览器 smoke checks 通过：
 
 - `http://127.0.0.1:8765/`
 - `http://127.0.0.1:8765/?keyword=美元&hours=24`
@@ -171,61 +147,53 @@ Browser smoke checks passed for:
 - `/analyze/preview`
 - `/analyze/generate-prompt`
 - `/analyze/history`
-- feed auto-refresh script presence and current filtered feed load
-- `/api/feed/latest-ts`, including a keyword-filtered request
-- `/docs` and `/openapi.json` returning 404
+- feed auto-refresh script 存在，且当前 filtered feed 可加载
+- `/api/feed/latest-ts`，包括带关键词筛选的请求
+- `/docs` 和 `/openapi.json` 返回 404
 
-The smoke-test analysis run was deleted after verification, and
-`analysis_runs` was empty afterward.
+Smoke-test analysis run 在验证后已删除，之后 `analysis_runs` 为空。
 
-## Boundaries preserved
+## 已保留的边界
 
-- Did not modify `jin10_monitor.py`.
-- Did not extend the old `6330022` in-file dashboard fallback.
-- Did not connect OpenAI, Anthropic, Claude, or any model API.
-- Did not add an automatic model API dependency.
-- Evidence builder reads local SQLite only.
-- Evidence builder does not call Jin10 REST.
-- Dashboard does not open WebSocket.
-- Dashboard does not send Telegram.
-- Dashboard does not implement retry, resend, or backfill actions.
-- Business history DB remains readonly through `mode=ro` and `query_only`.
-- Analysis results write only to `data/dashboard_analysis.sqlite3`.
-- `delivery_log` remains the success-only Telegram dedupe authority.
-- `telegram_delivery_status` remains diagnostic only.
+- 未修改 `jin10_monitor.py`。
+- 未继续扩展旧 `6330022` in-file dashboard fallback。
+- 未连接 OpenAI、Anthropic、Claude 或任何模型 API。
+- 未新增自动模型 API 依赖。
+- Evidence builder 只读本地 SQLite。
+- Evidence builder 不调用金十 REST。
+- Dashboard 不打开 WebSocket。
+- Dashboard 不发送 Telegram。
+- Dashboard 不实现 retry、resend 或 backfill 操作。
+- 业务历史 DB 继续通过 `mode=ro` 和 `query_only` 保持只读。
+- 分析结果只写 `data/dashboard_analysis.sqlite3`。
+- `delivery_log` 仍是成功 Telegram 去重的唯一权威。
+- `telegram_delivery_status` 仍仅用于诊断。
 
-## Known tradeoffs
+## 已知取舍
 
-- The analysis workflow currently accepts URL-encoded forms only. That is enough
-  for Phase 2A and avoids a new `python-multipart` dependency.
-- There is no screenshot upload route wired yet, although the analysis DB schema
-  includes the `screenshots` table and helper.
-- Prompt generation is manual copy/paste only; no streaming UI and no provider
-  adapter is included.
-- Evidence scoring is heuristic and local-only. It can miss market-moving
-  context that is absent from the local history DB.
-- `/analyze/preview` does not create the analysis DB; the DB is created on
-  prompt generation, answer save, history, detail, or delete.
-- Feed auto-refresh uses lightweight timestamp polling rather than HTMX/SSE. It
-  preserves the current query string and reloads only when a newer matching
-  local SQLite item appears.
+- 分析流程当前只接受 URL-encoded forms。Phase 2A 足够使用，并且避免新增 `python-multipart` 依赖。
+- 虽然分析 DB schema 已包含 `screenshots` 表和 helper，但截图上传 route 还没有接入。
+- Prompt 生成仅支持手工复制粘贴；没有 streaming UI，也没有 provider adapter。
+- Evidence scoring 是启发式且仅本地化的。它可能错过本地历史 DB 中不存在的 market-moving context。
+- `/analyze/preview` 不创建分析 DB；DB 会在 prompt generation、answer save、history、detail 或 delete 时创建。
+- Feed auto-refresh 使用轻量 timestamp polling，而不是 HTMX/SSE。它保留当前 query string，并且只有在本地 SQLite 出现更新的匹配项时才 reload。
 
-## Next recommended step
+## 下一步建议
 
-Suggested next feature choices:
+建议的下一步功能选择：
 
-- Small polish with `GPT-5.5 中`:
-  - improve `/analyze` empty/error states
-  - add clearer prompt-copy affordance
-  - add screenshots to README
-  - add a readonly analysis DB health row on `/system`
-- Heavier next phase with `GPT-5.5 高`:
-  - Phase 2B provider adapter design
-  - screenshot upload and attachment workflow
-  - richer evidence packet with price/market overlays
-  - analysis result editing/versioning
+- 小型 polish，用 `GPT-5.5 中`：
+  - 改进 `/analyze` 空状态 / 错误状态
+  - 增加更清晰的 prompt-copy affordance
+  - 给 README 增加截图
+  - 在 `/system` 增加只读 analysis DB health row
+- 更重的下一阶段，用 `GPT-5.5 高`：
+  - Phase 2B provider adapter 设计
+  - 截图上传和 attachment workflow
+  - 更丰富的 evidence packet，加入 price / market overlays
+  - 分析结果编辑 / versioning
 
-## Ready-to-paste next-session prompt
+## 可直接复制的 next-session prompt
 
 ```text
 请继续 /Users/rich/jin10-monitor 项目。

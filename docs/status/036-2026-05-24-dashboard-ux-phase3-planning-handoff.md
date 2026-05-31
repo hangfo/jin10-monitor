@@ -1,64 +1,62 @@
-# 036 - Dashboard UX polish and Phase 3 planning handoff
+# 036 - Dashboard UX polish 和 Phase 3 规划交接
 
-Date: 2026-05-24
+日期：2026-05-24
 
-## Current state
+更新时间：2026-05-31（Asia/Shanghai）
 
-The latest pushed commit before this handoff is:
+## 当前状态
+
+本交接前最新已推送提交是：
 
 ```text
 7c39fc8 fix(dashboard): polish analyze and item templates
 ```
 
-This handoff records the next dashboard UX batch prepared for:
+本交接记录了为以下提交准备的下一批 dashboard UX：
 
 ```text
 feat(dashboard): improve analysis timing and news rendering
 ```
 
-The batch keeps the standalone dashboard architecture from Phase 1/2A:
+这批改动继续沿用 Phase 1 / 2A 的独立 dashboard 架构：
 
-- `run_dashboard.py` remains the dashboard entrypoint.
-- `jin10_monitor.py` is not modified.
-- The business history DB remains readonly.
-- No model API, Jin10 REST, WebSocket, Telegram send, retry, resend, or backfill
-  action is introduced.
+- `run_dashboard.py` 仍是 dashboard 入口。
+- 不修改 `jin10_monitor.py`。
+- 业务历史 DB 保持只读。
+- 不引入模型 API、金十 REST、WebSocket、Telegram send、retry、resend 或 backfill 操作。
 
-## What was implemented
+## 已实现内容
 
-### 1. Analyze time-window UX
+### 1. 分析时间窗口 UX
 
-The `/analyze` input form now uses native browser `datetime-local` controls for
-`window_start` and `window_end`.
+`/analyze` 输入表单现在使用浏览器原生 `datetime-local` 控件填写
+`window_start` 和 `window_end`。
 
-Quick window buttons were added:
+新增快速时间窗口按钮：
 
-- past 5 minutes
-- past 15 minutes
-- past 30 minutes
-- past 1 hour
-- past 4 hours
+- 过去 5 分钟
+- 过去 15 分钟
+- 过去 30 分钟
+- 过去 1 小时
+- 过去 4 小时
 
-When `/analyze` is opened without a prefilled item window, the form defaults to
-the past 30 minutes. When opened from `/item/{id}`, the existing prefilled
-window is preserved.
+当 `/analyze` 在没有预填 item window 的情况下打开时，表单默认使用过去 30 分钟。从 `/item/{id}` 打开时，保留已有预填窗口。
 
-Backend normalization converts browser values such as:
+后端归一化会把浏览器值，例如：
 
 ```text
 2026-05-24T21:30
 ```
 
-to the existing dashboard format:
+转换为现有 dashboard 格式：
 
 ```text
 2026-05-24 21:30:00
 ```
 
-### 2. Jin10-like news rendering
+### 2. 类金十快讯渲染
 
-The feed and item detail pages now render local news rows using the style
-signals already stored in `flash_history`:
+快讯流和详情页现在使用 `flash_history` 中已经存储的样式信号渲染本地新闻行：
 
 - `important`
 - `has_title`
@@ -68,79 +66,65 @@ signals already stored in `flash_history`:
 - `source_url`
 - `style_flags`
 
-Important news is rendered in red, titled news gets a stronger headline,
-`has_bold` controls bold body text, images render as lazy-loaded thumbnails, and
-source links stay clickable.
+重要新闻渲染为红色，有标题的新闻使用更强的标题样式，`has_bold` 控制正文字重，图片以 lazy-loaded thumbnails 渲染，source links 保持可点击。
 
-Compatibility with older history DB schemas is preserved: `has_title` and
-`style_flags` are selected through the existing optional-column helper and fall
-back to empty values if absent.
+保留对旧历史 DB schema 的兼容：`has_title` 和 `style_flags` 通过现有 optional-column helper 选择，缺失时回退为空值。
 
-### 3. Analysis result readability
+### 3. 分析结果可读性
 
-Analysis detail rendering now reduces raw `news_id` noise:
+分析详情渲染现在减少 raw `news_id` 噪音：
 
-- catalyst entries show a timestamp label such as `05-23 09:30`
-- `[#news_id]` links render as friendlier `[↗ 05-23 09:30]` labels
-- full `news_id` is preserved in the link target and hover title
-- the evidence sidebar shows time + headline/content summary first, with the
-  raw ID de-emphasized underneath
+- catalyst 条目显示类似 `05-23 09:30` 的时间标签
+- `[#news_id]` 链接渲染为更友好的 `[↗ 05-23 09:30]` 标签
+- 完整 `news_id` 保留在链接目标和 hover title 中
+- evidence sidebar 优先显示时间 + headline/content summary，并在下方弱化展示 raw ID
 
-`analysis_db.get_run()` enriches evidence rows from the stored evidence packet
-so the template can show `published_at`, title/content, priority, and source
-without querying or writing the business DB.
+`analysis_db.get_run()` 会从已保存的 evidence packet 丰富 evidence rows，让模板可以显示 `published_at`、title/content、priority 和 source，而不查询或写入业务 DB。
 
-### 4. Draft status style
+### 4. Draft 状态样式
 
-`.pill.none` was added to the shared CSS so draft analysis records are styled
-instead of appearing as plain white pills.
+共享 CSS 新增 `.pill.none`，让 draft analysis records 有样式，而不是显示成普通白色 pill。
 
-## Feature assessment
+## 功能评估
 
-### Feed infinite loading
+### 快讯流无限加载
 
-Feasible and low pressure. The right interpretation is not masonry layout, but
-single-column infinite loading. A safe implementation would add a readonly JSON
-or HTML-fragment endpoint using `LIMIT/OFFSET`.
+可行且压力较低。正确理解不是 masonry layout，而是单列无限加载。安全实现方式是新增只读 JSON 或 HTML-fragment 端点，使用 `LIMIT/OFFSET`。
 
-Recommended limits:
+推荐限制：
 
-- initial page: 50
-- each load: 30
-- automatic cap: 500
-- after 500: show a manual "load more" action instead of automatic triggering
+- 首屏：50
+- 每次加载：30
+- 自动上限：500
+- 超过 500 后：显示手动“load more”操作，而不是继续自动触发
 
-This should be Phase 3B, after the current UX batch is committed.
+这应作为 Phase 3B，放在当前 UX 批次提交之后。
 
-### Screenshot recognition
+### 截图识别
 
-Two-step path:
+两步路径：
 
-- no API: upload screenshot and let the user provide manual context; store the
-  screenshot locally and include the text description in the prompt
-- with API: add Vision recognition through a provider adapter
+- 无 API：上传截图，让用户提供手工上下文；本地保存截图，并把文字描述加入 prompt
+- 有 API：通过 provider adapter 增加 Vision 识别
 
-Reliable automatic recognition of chart symbols, time axes, price axes, and K
-line structure needs a vision-capable model. Local OCR alone is not reliable
-enough for this use case.
+可靠自动识别图表 symbol、时间轴、价格轴和 K 线结构，需要具备 vision-capable 的模型。仅靠本地 OCR 对这个用例不够可靠。
 
-Recommended placement: screenshot upload can be Phase 3C; automatic recognition
-belongs after Phase 2B provider adapter work.
+推荐位置：截图上传可以作为 Phase 3C；自动识别应放在 Phase 2B provider adapter 之后。
 
-### Confidence explanation
+### 置信度说明
 
-The confidence value is a model self-assessment, not a statistical probability.
+置信度是模型自我评估，不是统计概率。
 
-Suggested UI copy for a later small patch:
+后续小补丁建议 UI 文案：
 
 ```text
 置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。
 ≥75% 较可信；50-75% 仅供参考；<50% 证据不足。
 ```
 
-## Validation
+## 验证
 
-Latest validation before handoff:
+交接前最新验证：
 
 ```text
 .venv/bin/python -m pytest tests/test_dashboard_db.py tests/test_dashboard_analysis.py -q
@@ -153,52 +137,50 @@ git diff --check
 no output
 ```
 
-Browser smoke checks passed for:
+以下浏览器 smoke checks 通过：
 
 - `/analyze`
 - `/`
 - `/item/{id}`
 - `/analyze/history`
 
-## Boundaries preserved
+## 已保留的边界
 
-- Did not modify `jin10_monitor.py`.
-- Did not modify launchd config.
-- Did not add dependencies.
-- Did not add `python-multipart`.
-- Did not connect any model API.
-- Did not call Jin10 REST or market-data APIs.
-- Did not send Telegram.
-- Did not write the business history DB.
-- Analysis writes remain isolated to `data/dashboard_analysis.sqlite3`.
+- 未修改 `jin10_monitor.py`。
+- 未修改 launchd config。
+- 未新增依赖。
+- 未新增 `python-multipart`。
+- 未连接任何模型 API。
+- 未调用金十 REST 或 market-data APIs。
+- 未发送 Telegram。
+- 未写业务历史 DB。
+- 分析写入仍隔离在 `data/dashboard_analysis.sqlite3`。
 
-## Remaining work
+## 剩余工作
 
-Recommended sequence:
+建议顺序：
 
-1. Commit and push this UX batch:
+1. 提交并推送这批 UX 改动：
 
 ```text
 feat(dashboard): improve analysis timing and news rendering
 ```
 
-2. Write `docs/design/003-phase2b-phase3-spec.md` to freeze:
+2. 编写 `docs/design/003-phase2b-phase3-spec.md`，冻结：
    - Telegram `/item/{id}` deep links
    - screenshot upload boundaries
-   - market data overlay boundaries
-   - LLM provider adapter interface
+   - market data overlay 边界
+   - LLM provider adapter 接口
 
-3. Phase 3A: Telegram message deep link with `DASHBOARD_URL`; when unset,
-   Telegram message text must remain byte-for-byte equivalent to current output.
+3. Phase 3A：Telegram 消息 deep link，使用 `DASHBOARD_URL`；未设置时，Telegram 消息文本必须与当前输出逐字节等价。
 
-4. Phase 3B: feed infinite loading with safe caps.
+4. Phase 3B：带安全上限的快讯流无限加载。
 
-5. Phase 3C: screenshot upload + manual chart description.
+5. Phase 3C：截图上传 + 手工图表描述。
 
-6. Phase 2B: provider adapter and optional Vision recognition after API keys are
-   available.
+6. Phase 2B：在 API key 可用后再做 provider adapter 和可选 Vision recognition。
 
-## Ready-to-paste next-session prompt
+## 可直接复制的 next-session prompt
 
 ```text
 请继续 /Users/rich/jin10-monitor 项目。
