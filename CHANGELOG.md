@@ -1,9 +1,10 @@
-更新时间：2026-06-01 21:51（Asia/Shanghai）
+更新时间：2026-06-01 22:05（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
+- 修复启动链路在 REST/DNS 慢或 403 时拖慢实时主路的问题：WebSocket 现在启动后立即作为实时主路连接，REST 冷启动预加载与离线补拉改为后台执行；后台补拉使用启动瞬间的 `last_ingested_at` 快照，避免被新 WebSocket 消息推进游标后误判“没有离线窗口”。
 - 降低 Dashboard 快讯流感知延迟：首页自动检查新消息间隔从 20 秒降到 3 秒，并在打开页面后立即检查一次；快讯流和详情页时间显示到秒，首页 Telegram 状态补充本地投递时间，便于与金十官网逐秒对比。
 - 增强 Dashboard `/system` 只读告警：当 REST 退避但 WebSocket 主路仍新鲜时明确提示“不是整体采集中断”，当 WebSocket 初始历史新入库或最新时间晚于游标时提示人工核对短缺口；不推进游标、不补发 Telegram、不请求外部源。
 - 新增项目状态摘要 041：记录 WebSocket initial history 诊断增强、REST 补拉替代设计评估、launchd reload 后 `last_ws_initial_*` 真实写入、REST 间歇恢复后再次进入 `forbidden_backoff`，以及下一步观察 / 只读告警 / 短缺口恢复策略建议。

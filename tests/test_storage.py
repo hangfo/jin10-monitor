@@ -1261,6 +1261,47 @@ def test_run_auto_catch_up_remembers_seen_item_ids(temp_history_db, monkeypatch)
     assert jm.is_new({"id": "realtime-new"}) is True
 
 
+def test_run_auto_catch_up_can_use_startup_cursor_snapshot(temp_history_db, monkeypatch):
+    conn = jm.get_db()
+    jm.set_state(conn, "last_ingested_at", "2026-05-17 10:09:30")
+    conn.commit()
+    calls = []
+
+    def fake_catch_up_window(start_dt, end_dt, **kwargs):
+        calls.append((start_dt, end_dt, kwargs))
+        return {
+            "ok": True,
+            "stored": 0,
+            "truncated": False,
+            "seen_item_ids": [],
+            "window": {
+                "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            "push_candidates": 0,
+            "priority_counts": {},
+            "summary_items": [],
+        }
+
+    monkeypatch.setattr(jm, "CATCHUP_TELEGRAM", False)
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+
+    result = asyncio.run(
+        jm.run_auto_catch_up(
+            object(),
+            datetime(2026, 5, 17, 10, 10, 0),
+            trigger="startup",
+            start_cursor="2026-05-17 10:00:00",
+        )
+    )
+
+    assert result["ok"] is True
+    assert len(calls) == 1
+    assert calls[0][0] == datetime(2026, 5, 17, 9, 58, 0)
+    assert calls[0][1] == datetime(2026, 5, 17, 10, 10, 0)
+    assert calls[0][2]["source"] == "catchup_auto"
+
+
 def test_run_auto_catch_up_gap_summary_respects_cooldown(temp_history_db, monkeypatch):
     conn = jm.get_db()
     jm.set_state(conn, "last_ingested_at", "2026-05-17 10:00:00")
@@ -1463,6 +1504,73 @@ def test_poll_loop_handles_new_rest_items(monkeypatch):
 
     assert handle_calls == [(session, item, "rest")]
     assert jm.is_new({"id": "poll-new"}) is False
+
+
+def test_preload_existing_items_keeps_restart_dedupe_and_handles_new_items(temp_history_db, monkeypatch):
+    session = object()
+    startup_at = datetime(2026, 5, 17, 10, 0, 0)
+    old_item = news_item("preload-old", when=datetime(2026, 5, 17, 9, 59, 0), content="old")
+    new_item = news_item("preload-new", when=datetime(2026, 5, 17, 10, 0, 5), content="hit")
+    handle_calls = []
+
+    async def fake_poll_once(run_session):
+        assert run_session is session
+        return [old_item, new_item]
+
+    async def fake_handle_item(run_session, item, source):
+        handle_calls.append((run_session, item, source))
+        jm.remember_seen_id(str(item["id"]))
+
+    monkeypatch.setattr(jm, "poll_once", fake_poll_once)
+    monkeypatch.setattr(jm, "handle_item", fake_handle_item)
+    jm.seen_ids.clear()
+
+    asyncio.run(jm.preload_existing_items(session, startup_at))
+
+    conn = jm.get_db()
+    assert row_by_id(conn, "preload-old")["source"] == "cold_start"
+    assert "preload-old" in jm.seen_ids
+    assert handle_calls == [(session, new_item, "rest")]
+    assert jm.is_new({"id": "preload-new"}) is False
+
+
+def test_main_schedules_websocket_before_rest_startup_tasks(temp_history_db, monkeypatch):
+    created_tasks = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_ws_loop(session):
+        raise StopPollLoop
+
+    async def fake_startup_catch_up(*args, **kwargs):
+        await asyncio.Future()
+
+    async def fake_rest_preload_then_poll(*args, **kwargs):
+        await asyncio.Future()
+
+    real_create_task = asyncio.create_task
+
+    def recording_create_task(coro, *args, **kwargs):
+        created_tasks.append(kwargs.get("name", ""))
+        return real_create_task(coro, *args, **kwargs)
+
+    monkeypatch.setattr(jm, "AUTO_CATCHUP", True)
+    monkeypatch.setattr(jm.aiohttp, "TCPConnector", lambda **kwargs: object())
+    monkeypatch.setattr(jm.aiohttp, "ClientSession", lambda connector: FakeSession())
+    monkeypatch.setattr(jm, "ws_loop", fake_ws_loop)
+    monkeypatch.setattr(jm, "run_startup_catch_up_background", fake_startup_catch_up)
+    monkeypatch.setattr(jm, "run_rest_preload_then_poll", fake_rest_preload_then_poll)
+    monkeypatch.setattr(jm.asyncio, "create_task", recording_create_task)
+
+    with pytest.raises(StopPollLoop):
+        asyncio.run(jm.main())
+
+    assert created_tasks[:3] == ["ws_loop", "rest_preload_poll", "startup_catchup"]
 
 
 @pytest.mark.parametrize(

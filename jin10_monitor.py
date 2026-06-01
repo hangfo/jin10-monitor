@@ -2671,10 +2671,11 @@ async def run_auto_catch_up(
     end_at: datetime,
     *,
     trigger: str = "startup",
+    start_cursor: Optional[str] = None,
 ) -> dict:
     """Store a missed window; auto mode sends one compact Telegram summary, not every item."""
     conn = get_db()
-    last_at = get_state(conn, "last_ingested_at")
+    last_at = start_cursor if start_cursor is not None else get_state(conn, "last_ingested_at")
     if not last_at:
         return {"ok": True, "skipped": True, "reason": "暂无 last_ingested_at", "trigger": trigger}
 
@@ -2783,6 +2784,73 @@ async def run_auto_catch_up(
             )
             conn.commit()
     return result
+
+
+async def run_startup_catch_up_background(
+    session: aiohttp.ClientSession,
+    startup_at: datetime,
+    *,
+    start_cursor: str,
+) -> None:
+    log.info("离线补拉：后台检查上次入库到本次启动之间的窗口 …")
+    try:
+        catchup_result = await run_auto_catch_up(
+            session,
+            startup_at,
+            trigger="startup",
+            start_cursor=start_cursor,
+        )
+        if catchup_result.get("skipped"):
+            log.info("离线补拉：跳过（%s）", catchup_result.get("reason", "无需补拉"))
+        elif catchup_result.get("ok"):
+            window = catchup_result.get("window", {})
+            log.info(
+                "离线补拉完成：%s -> %s，入库 %s 条，命中 %s 条，摘要 %s",
+                window.get("start"),
+                window.get("end"),
+                catchup_result.get("stored", 0),
+                catchup_result.get("push_candidates", 0),
+                "已发送" if catchup_result.get("telegram_summary_sent") else "未发送",
+            )
+            if catchup_result.get("truncated"):
+                log.warning("离线补拉达到入库上限，窗口可能被截断")
+        else:
+            log.warning("离线补拉失败，实时监控已继续运行：%s", catchup_result.get("error"))
+    except Exception as exc:
+        log.warning("离线补拉异常，实时监控已继续运行：%s", exc)
+
+
+async def preload_existing_items(session: aiohttp.ClientSession, startup_at: datetime) -> None:
+    """Warm restart dedupe from REST without blocking the WebSocket realtime path."""
+    log.info("冷启动：后台预加载已有快讯 ID …")
+    items = await poll_once(session)
+    pending_realtime = []
+    for item in items:
+        item_dt = parse_item_time(item)
+        if item_dt and item_dt > startup_at:
+            pending_realtime.append(item)
+            continue
+
+        fid = str(item.get("id", ""))
+        if fid:
+            remember_seen_id(fid)
+        title, content = item_text(item)
+        hit, high = match_keywords(f"{title} {content}")
+        save_history_item(item, hit=hit, high=high, source="cold_start")
+    log.info("预加载完成，已忽略 %d 条旧快讯", len(seen_ids))
+    for item in reversed(pending_realtime):
+        if is_new(item):
+            await handle_item(session, item, source="rest")
+    if pending_realtime:
+        log.info("冷启动期间新增 %d 条快讯，已按实时消息处理", len(pending_realtime))
+
+
+async def run_rest_preload_then_poll(session: aiohttp.ClientSession, startup_at: datetime) -> None:
+    try:
+        await preload_existing_items(session, startup_at)
+    except Exception as exc:
+        log.warning("冷启动预加载异常，继续启动 REST 轮询：%s", exc)
+    await poll_loop(session)
 
 
 async def poll_loop(session: aiohttp.ClientSession) -> None:
@@ -2980,60 +3048,29 @@ async def main() -> None:
     log.info("关键词: %s 条  Telegram: %s", len(KEYWORDS), "已配置" if TG_TOKEN else "未配置（仅打印）")
     init_history_db()
     startup_at = datetime.now().replace(microsecond=0)
+    startup_cursor = get_state(get_db(), "last_ingested_at")
     record_startup(startup_at)
 
     connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=connector) as session:
+        log.info("启动策略：WebSocket 实时主路立即启动；REST 预加载和离线补拉后台执行")
+        tasks = [
+            asyncio.create_task(ws_loop(session), name="ws_loop"),
+            asyncio.create_task(run_rest_preload_then_poll(session, startup_at), name="rest_preload_poll"),
+        ]
         if AUTO_CATCHUP:
-            log.info("离线补拉：检查上次入库到本次启动之间的窗口 …")
-            try:
-                catchup_result = await run_auto_catch_up(session, startup_at)
-                if catchup_result.get("skipped"):
-                    log.info("离线补拉：跳过（%s）", catchup_result.get("reason", "无需补拉"))
-                elif catchup_result.get("ok"):
-                    window = catchup_result.get("window", {})
-                    log.info(
-                        "离线补拉完成：%s -> %s，入库 %s 条，命中 %s 条，摘要 %s",
-                        window.get("start"),
-                        window.get("end"),
-                        catchup_result.get("stored", 0),
-                        catchup_result.get("push_candidates", 0),
-                        "已发送" if catchup_result.get("telegram_summary_sent") else "未发送",
-                    )
-                    if catchup_result.get("truncated"):
-                        log.warning("离线补拉达到入库上限，窗口可能被截断")
-                else:
-                    log.warning("离线补拉失败，继续启动实时监控：%s", catchup_result.get("error"))
-            except Exception as exc:
-                log.warning("离线补拉异常，继续启动实时监控：%s", exc)
-
-        # 冷启动：先拉一批历史条目填充 seen_ids（不推送），避免重启后刷屏
-        log.info("冷启动：预加载已有快讯 ID …")
-        items = await poll_once(session)
-        pending_realtime = []
-        for item in items:
-            item_dt = parse_item_time(item)
-            if item_dt and item_dt > startup_at:
-                pending_realtime.append(item)
-                continue
-
-            fid = str(item.get("id", ""))
-            if fid:
-                remember_seen_id(fid)
-            title, content = item_text(item)
-            hit, high = match_keywords(f"{title} {content}")
-            save_history_item(item, hit=hit, high=high, source="cold_start")
-        log.info("预加载完成，已忽略 %d 条旧快讯", len(seen_ids))
-        for item in reversed(pending_realtime):
-            if is_new(item):
-                await handle_item(session, item, source="rest")
-        if pending_realtime:
-            log.info("冷启动期间新增 %d 条快讯，已按实时消息处理", len(pending_realtime))
-
-        # 并发运行 WS + 轮询（双保险）
+            tasks.append(
+                asyncio.create_task(
+                    run_startup_catch_up_background(
+                        session,
+                        startup_at,
+                        start_cursor=startup_cursor,
+                    ),
+                    name="startup_catchup",
+                )
+            )
         await asyncio.gather(
-            ws_loop(session),
-            poll_loop(session),
+            *tasks,
         )
 
 
