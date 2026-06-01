@@ -115,7 +115,7 @@
 
   <script>
     const CURRENT_NEWEST = {{ ((items[0].published_at or '') if items else '') | tojson }};
-    const POLL_MS = 20000;
+    const POLL_MS = 3000;
     const PAGE_SIZE = 30;
     const MAX_ITEMS = 500;
     let offset = {{ items | length }};
@@ -204,6 +204,7 @@
       }
     });
     startPolling();
+    checkForNewItems();
 
     const sentinel = document.getElementById("feed-sentinel");
     if (sentinel && "IntersectionObserver" in window) {

@@ -546,11 +546,11 @@ def test_provider_stubs_report_configured_keys_without_network(monkeypatch):
     assert get_provider("anthropic").is_available() is True
 
 
-def test_item_template_truncates_published_at_to_minute():
+def test_item_template_shows_published_at_to_second():
     item_template = (TEMPLATE_DIR / "item.html").read_text()
 
-    assert '{{ (center.published_at or "")[:16] }}' in item_template
-    assert '{{ (item.published_at or "")[:16] }}' in item_template
+    assert '{{ (center.published_at or "")[:19] }}' in item_template
+    assert '{{ (item.published_at or "")[:19] }}' in item_template
 
 
 def test_feed_rows_hide_internal_fields_and_empty_messages():
@@ -560,6 +560,8 @@ def test_feed_rows_hide_internal_fields_and_empty_messages():
     assert "is_empty" in feed_rows
     assert "display_content or display_title" in feed_rows
     assert "补拉" in feed_rows
+    assert "{{ (item.published_at or '')[:19] }}" in feed_rows
+    assert "tg_confirmed_sent_at" in feed_rows
 
 
 def test_normalize_news_text_collapses_invisible_spacing():

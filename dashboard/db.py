@@ -150,12 +150,26 @@ def query_recent_items(
                        LIMIT 1
                    ) AS telegram_status,
                    (
+                       SELECT datetime(t.updated_at, 'localtime')
+                       FROM telegram_delivery_status t
+                       WHERE t.message_id = h.id
+                       ORDER BY t.updated_at DESC
+                       LIMIT 1
+                   ) AS telegram_updated_at,
+                   (
                        SELECT t.mode
                        FROM telegram_delivery_status t
                        WHERE t.message_id = h.id
                        ORDER BY t.updated_at DESC
                        LIMIT 1
                    ) AS telegram_mode,
+                   (
+                       SELECT datetime(dl.sent_at, 'localtime')
+                       FROM delivery_log dl
+                       WHERE dl.message_id = h.id
+                       ORDER BY dl.sent_at DESC
+                       LIMIT 1
+                   ) AS tg_confirmed_sent_at,
                    EXISTS (
                        SELECT 1 FROM delivery_log dl WHERE dl.message_id = h.id
                    ) AS tg_confirmed_sent
@@ -214,12 +228,26 @@ def query_feed_page(
                        LIMIT 1
                    ) AS telegram_status,
                    (
+                       SELECT datetime(t.updated_at, 'localtime')
+                       FROM telegram_delivery_status t
+                       WHERE t.message_id = h.id
+                       ORDER BY t.updated_at DESC
+                       LIMIT 1
+                   ) AS telegram_updated_at,
+                   (
                        SELECT t.mode
                        FROM telegram_delivery_status t
                        WHERE t.message_id = h.id
                        ORDER BY t.updated_at DESC
                        LIMIT 1
                    ) AS telegram_mode,
+                   (
+                       SELECT datetime(dl.sent_at, 'localtime')
+                       FROM delivery_log dl
+                       WHERE dl.message_id = h.id
+                       ORDER BY dl.sent_at DESC
+                       LIMIT 1
+                   ) AS tg_confirmed_sent_at,
                    EXISTS (
                        SELECT 1 FROM delivery_log dl WHERE dl.message_id = h.id
                    ) AS tg_confirmed_sent
@@ -382,7 +410,7 @@ def query_tg_status_for_item(message_id: str) -> Optional[dict[str, Any]]:
     with open_readonly_connection() as conn:
         row = conn.execute(
             """
-            SELECT status, detail, mode, updated_at
+            SELECT status, detail, mode, datetime(updated_at, 'localtime') AS updated_at
             FROM telegram_delivery_status
             WHERE message_id = ?
             ORDER BY updated_at DESC
@@ -405,7 +433,8 @@ def query_tg_deliveries(*, status_filter: str = "all", limit: int = 120) -> list
     with open_readonly_connection() as conn:
         rows = conn.execute(
             f"""
-            SELECT t.message_id, t.status, t.mode, t.detail, t.updated_at,
+            SELECT t.message_id, t.status, t.mode, t.detail,
+                   datetime(t.updated_at, 'localtime') AS updated_at,
                    h.title, h.content, h.published_at, h.priority_level
             FROM telegram_delivery_status t
             LEFT JOIN flash_history h ON h.id = t.message_id
@@ -480,7 +509,7 @@ def query_system_health() -> dict[str, Any]:
         ).fetchall()
         delivery_rows = conn.execute(
             """
-            SELECT status, mode, message_id, detail, updated_at
+            SELECT status, mode, message_id, detail, datetime(updated_at, 'localtime') AS updated_at
             FROM (
                 SELECT status, mode, message_id, detail, updated_at,
                        ROW_NUMBER() OVER (PARTITION BY status ORDER BY updated_at DESC) AS rn
@@ -493,7 +522,7 @@ def query_system_health() -> dict[str, Any]:
         ).fetchall()
         catchup_summary_row = conn.execute(
             """
-            SELECT status, mode, message_id, detail, updated_at
+            SELECT status, mode, message_id, detail, datetime(updated_at, 'localtime') AS updated_at
             FROM telegram_delivery_status
             WHERE mode = 'catchup_summary'
             ORDER BY updated_at DESC

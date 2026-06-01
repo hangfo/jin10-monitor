@@ -7,7 +7,7 @@
 {% set is_empty = not title_norm and not content_norm %}
 {% if not is_empty %}
 <tr class="row-{{ row_class }}">
-  <td class="time mono">{{ (item.published_at or '')[:16] }}</td>
+  <td class="time mono">{{ (item.published_at or '')[:19] }}</td>
   <td class="priority">
     <span class="pill {{ row_class }}">{{ item.priority_level or 'T0_NONE' }}</span>
   </td>
@@ -39,10 +39,12 @@
   <td class="status">
     {% if item.tg_confirmed_sent %}
     <span class="pill sent">已推送</span>
+    {% if item.tg_confirmed_sent_at %}<div class="meta mono">{{ item.tg_confirmed_sent_at }}</div>{% endif %}
     {% elif item.telegram_status %}
     <span class="pill {{ item.telegram_status }}">
       {{ {'sent': '已推送', 'failed': '失败', 'unknown_timeout': '超时', 'skipped': '跳过'}.get(item.telegram_status, item.telegram_status) }}
     </span>
+    {% if item.telegram_updated_at %}<div class="meta mono">{{ item.telegram_updated_at }}</div>{% endif %}
     {% else %}
     <span class="meta">-</span>
     {% endif %}
