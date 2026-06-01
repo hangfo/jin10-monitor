@@ -1,9 +1,10 @@
-更新时间：2026-06-01 20:29（Asia/Shanghai）
+更新时间：2026-06-01 20:36（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
+- 新增项目状态摘要 041：记录 WebSocket initial history 诊断增强、REST 补拉替代设计评估、launchd reload 后 `last_ws_initial_*` 真实写入、REST 间歇恢复后再次进入 `forbidden_backoff`，以及下一步观察 / 只读告警 / 短缺口恢复策略建议。
 - 新增 REST 长期 403 下的补拉替代设计评估：明确 Glanceway 金十示例、金十官方 API、WallstreetCN 7x24 与 CoinGlass newsflash 的用途、风险和隔离用法，推荐先强化 WebSocket initial history / reconnect 诊断，再考虑补拉 adapter 边界。
 - 增强 WebSocket initial history 运行诊断：WebSocket 重连收到初始历史列表时写入 `last_ws_initial_*` 状态，记录快照时间、列表条数、新入库条数和覆盖时间范围，并在 Dashboard `/system` 只读展示；不改变 Telegram 去重、补拉或发送语义。
 - 中文化中期 Dashboard 设计与交接文档：将 `docs/design/003-phase2b-phase3-spec.md` 和 `docs/status/034` 至 `039` 中的大段英文正文统一改为中文，并补充本次文档更新时间；保留文件名、命令、路由、环境变量、commit hash、代码块和技术标识不变。
