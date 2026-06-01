@@ -2076,6 +2076,23 @@ def record_rest_runtime_status(
         log.debug("REST 状态写入 runtime_state 失败：%s", exc)
 
 
+def record_ws_initial_runtime_status(items: list[dict], *, saved_count: int) -> None:
+    try:
+        conn = get_db()
+        now_text = datetime.now().replace(microsecond=0).isoformat(sep=" ")
+        item_times = [item_dt for item in items if (item_dt := parse_item_time(item)) is not None]
+        newest = format_cursor_datetime(max(item_times)) if item_times else ""
+        oldest = format_cursor_datetime(min(item_times)) if item_times else ""
+        set_state(conn, "last_ws_initial_at", now_text)
+        set_state(conn, "last_ws_initial_count", len(items))
+        set_state(conn, "last_ws_initial_saved_count", saved_count)
+        set_state(conn, "last_ws_initial_newest_published_at", newest)
+        set_state(conn, "last_ws_initial_oldest_published_at", oldest)
+        conn.commit()
+    except sqlite3.Error as exc:
+        log.debug("WebSocket 初始历史状态写入 runtime_state 失败：%s", exc)
+
+
 async def poll_once(session: aiohttp.ClientSession) -> list[dict]:
     global rest_forbidden_backoff_until, rest_forbidden_streak
     now = time.time()
@@ -2862,16 +2879,25 @@ async def ws_loop(session: aiohttp.ClientSession) -> None:
                             await handle_item(session, data, source="ws")
                     elif code == 1200 and isinstance(data, list):
                         if not skipped_initial_list:
-                            for item in data:
-                                if isinstance(item, dict):
-                                    fid = str(item.get("id", ""))
-                                    if fid:
-                                        remember_seen_id(fid)
-                                    title, content = item_text(item)
-                                    hit, high = match_keywords(f"{title} {content}")
-                                    save_history_item(item, hit=hit, high=high, source="ws_initial")
+                            initial_items = [item for item in data if isinstance(item, dict)]
+                            saved_count = 0
+                            conn = get_db()
+                            for item in initial_items:
+                                fid = str(item.get("id", ""))
+                                if fid:
+                                    if not history_item_exists(conn, fid):
+                                        saved_count += 1
+                                    remember_seen_id(fid)
+                                title, content = item_text(item)
+                                hit, high = match_keywords(f"{title} {content}")
+                                save_history_item(item, hit=hit, high=high, source="ws_initial")
+                            record_ws_initial_runtime_status(initial_items, saved_count=saved_count)
                             skipped_initial_list = True
-                            log.info("WebSocket 初始历史列表已预热去重：%d 条", len(data))
+                            log.info(
+                                "WebSocket 初始历史列表已预热去重：%d 条，新入库 %d 条",
+                                len(initial_items),
+                                saved_count,
+                            )
                             continue
                         for item in data:
                             if isinstance(item, dict) and item.get("action") in {1, 2} and is_new(item):

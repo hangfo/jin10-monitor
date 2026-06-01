@@ -1576,3 +1576,27 @@ def test_poll_once_records_rest_recovery_after_success(temp_history_db, monkeypa
     assert state_value(conn, "rest_forbidden_streak") == "0"
     assert state_value(conn, "rest_last_error") == ""
     assert state_value(conn, "rest_last_ok_at")
+
+
+def test_record_ws_initial_runtime_status_tracks_snapshot_without_delivery(temp_history_db, monkeypatch):
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 5, 17, 10, 20, 0)
+
+    monkeypatch.setattr(jm, "datetime", FrozenDatetime)
+    items = [
+        news_item("ws-initial-old", when=datetime(2026, 5, 17, 10, 1, 0)),
+        news_item("ws-initial-new", when=datetime(2026, 5, 17, 10, 3, 0)),
+    ]
+
+    jm.record_ws_initial_runtime_status(items, saved_count=1)
+
+    conn = sqlite3.connect(temp_history_db)
+    assert state_value(conn, "last_ws_initial_at") == "2026-05-17 10:20:00"
+    assert state_value(conn, "last_ws_initial_count") == "2"
+    assert state_value(conn, "last_ws_initial_saved_count") == "1"
+    assert state_value(conn, "last_ws_initial_oldest_published_at") == "2026-05-17 10:01:00"
+    assert state_value(conn, "last_ws_initial_newest_published_at") == "2026-05-17 10:03:00"
+    assert conn.execute("SELECT COUNT(*) FROM delivery_log").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM telegram_delivery_status").fetchone()[0] == 0

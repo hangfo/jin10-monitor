@@ -111,6 +111,18 @@
       {% if system_health.rest_state.last_error %} · {{ system_health.rest_state.last_error }}{% endif %}
     </div>
     {% endif %}
+    {% if system_health.ws_initial_state.last_at %}
+    <div class="meta" style="margin-top:8px">
+      WebSocket 初始历史：
+      最近快照 <span class="mono">{{ system_health.ws_initial_state.last_at }}</span>
+      · 列表 {{ system_health.ws_initial_state.count or 0 }} 条
+      · 新入库 {{ system_health.ws_initial_state.saved_count or 0 }} 条
+      {% if system_health.ws_initial_state.oldest_published_at or system_health.ws_initial_state.newest_published_at %}
+      · 覆盖 <span class="mono">{{ system_health.ws_initial_state.oldest_published_at or '-' }}</span>
+      至 <span class="mono">{{ system_health.ws_initial_state.newest_published_at or '-' }}</span>
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
 
   <div class="panel" style="margin-top:14px">

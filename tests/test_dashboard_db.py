@@ -178,6 +178,11 @@ def test_query_system_health_includes_realtime_pipeline_diagnostics(dashboard_hi
             ("last_startup_at", history_ts(-60)),
             ("last_catchup_at", history_ts(-30)),
             ("last_gap_summary_telegram_at", history_ts(-20)),
+            ("last_ws_initial_at", history_ts(-1)),
+            ("last_ws_initial_count", "40"),
+            ("last_ws_initial_saved_count", "3"),
+            ("last_ws_initial_newest_published_at", history_ts(-2)),
+            ("last_ws_initial_oldest_published_at", history_ts(-12)),
         ],
     )
     conn.executemany(
@@ -219,6 +224,11 @@ def test_query_system_health_includes_realtime_pipeline_diagnostics(dashboard_hi
     assert health["delivery_latest"]["unknown_timeout"]["message_id"] == "timeout-1"
     assert health["delivery_latest"]["failed"]["message_id"] == "failed-1"
     assert health["catchup_summary_latest"]["message_id"] == "catchup_summary:gap:start:end"
+    assert health["ws_initial_state"]["last_at"]
+    assert health["ws_initial_state"]["count"] == "40"
+    assert health["ws_initial_state"]["saved_count"] == "3"
+    assert health["ws_initial_state"]["newest_published_at"]
+    assert health["ws_initial_state"]["oldest_published_at"]
 
 
 def test_query_system_health_reads_persisted_rest_backoff_state(dashboard_history_db):

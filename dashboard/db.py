@@ -535,6 +535,13 @@ def query_system_health() -> dict[str, Any]:
         "last_error_at": state.get("rest_last_error_at", ""),
         "last_ok_at": state.get("rest_last_ok_at", ""),
     }
+    ws_initial_state = {
+        "last_at": state.get("last_ws_initial_at", ""),
+        "count": state.get("last_ws_initial_count", ""),
+        "saved_count": state.get("last_ws_initial_saved_count", ""),
+        "newest_published_at": state.get("last_ws_initial_newest_published_at", ""),
+        "oldest_published_at": state.get("last_ws_initial_oldest_published_at", ""),
+    }
     backoff_dt = parse_history_datetime(rest_state["backoff_until"])
     rest_state["backoff_remaining_seconds"] = (
         max(0, int((backoff_dt - datetime.now()).total_seconds())) if backoff_dt else 0
@@ -565,6 +572,7 @@ def query_system_health() -> dict[str, Any]:
         "realtime_sources": realtime_sources,
         "rest_status": rest_status,
         "rest_state": rest_state,
+        "ws_initial_state": ws_initial_state,
         "delivery_latest": delivery_latest,
         "catchup_summary_latest": row_to_dict(catchup_summary_row) if catchup_summary_row else {},
     }
