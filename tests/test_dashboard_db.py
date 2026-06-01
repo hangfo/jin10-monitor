@@ -229,6 +229,9 @@ def test_query_system_health_includes_realtime_pipeline_diagnostics(dashboard_hi
     assert health["ws_initial_state"]["saved_count"] == "3"
     assert health["ws_initial_state"]["newest_published_at"]
     assert health["ws_initial_state"]["oldest_published_at"]
+    notice_text = "\n".join(notice["text"] for notice in health["system_notices"])
+    assert "WebSocket 初始历史最近快照新入库 3 条" in notice_text
+    assert "可能覆盖了实时短缺口" in notice_text
 
 
 def test_query_system_health_reads_persisted_rest_backoff_state(dashboard_history_db):
@@ -236,6 +239,7 @@ def test_query_system_health_reads_persisted_rest_backoff_state(dashboard_histor
     conn.executemany(
         "INSERT INTO runtime_state (key, value) VALUES (?, ?)",
         [
+            ("last_ingested_at", history_ts(-1)),
             ("rest_status", "forbidden_backoff"),
             ("rest_forbidden_streak", "3"),
             ("rest_backoff_until", history_ts(5)),
@@ -254,6 +258,7 @@ def test_query_system_health_reads_persisted_rest_backoff_state(dashboard_histor
     assert health["rest_state"]["backoff_until"]
     assert health["rest_state"]["backoff_remaining_seconds"] > 0
     assert "HTTP 403" in health["rest_state"]["last_error"]
+    assert any("REST 当前退避中" in notice["text"] for notice in health["system_notices"])
 
 
 def test_query_feed_page_applies_offset_limit_and_filters(dashboard_history_db):

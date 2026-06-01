@@ -554,6 +554,28 @@ def query_system_health() -> dict[str, Any]:
         rest_status = "error"
     else:
         rest_status = "recent" if rest_recent.get("latest_published_at") else "no_recent_success"
+
+    system_notices = []
+    if rest_status == "forbidden_backoff" and monitor_status == "ok":
+        system_notices.append({
+            "level": "warn",
+            "text": "REST 当前退避中，但 WebSocket 主路仍在入库；不要把 REST 状态误判为整体采集中断。",
+        })
+    try:
+        ws_initial_saved_count = int(ws_initial_state["saved_count"] or 0)
+    except ValueError:
+        ws_initial_saved_count = 0
+    if ws_initial_saved_count > 0:
+        system_notices.append({
+            "level": "info",
+            "text": f"WebSocket 初始历史最近快照新入库 {ws_initial_saved_count} 条，可人工核对是否覆盖短缺口。",
+        })
+    ws_initial_newest_dt = parse_history_datetime(ws_initial_state["newest_published_at"])
+    if ws_initial_newest_dt and last_dt and ws_initial_newest_dt > last_dt:
+        system_notices.append({
+            "level": "info",
+            "text": "WebSocket 初始历史最新时间晚于最后入库游标，可能覆盖了实时短缺口；当前仅提示，不推进游标、不补发 Telegram。",
+        })
     return {
         "monitor_status": monitor_status,
         "minutes_stale": minutes_stale,
@@ -573,6 +595,7 @@ def query_system_health() -> dict[str, Any]:
         "rest_status": rest_status,
         "rest_state": rest_state,
         "ws_initial_state": ws_initial_state,
+        "system_notices": system_notices,
         "delivery_latest": delivery_latest,
         "catchup_summary_latest": row_to_dict(catchup_summary_row) if catchup_summary_row else {},
     }

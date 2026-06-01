@@ -65,6 +65,15 @@
 
   <div class="panel" style="margin-top:14px">
     <h2 style="margin-top:0">实时链路诊断</h2>
+    {% if system_health.system_notices %}
+    <div style="display:grid;gap:8px;margin:0 0 12px">
+      {% for notice in system_health.system_notices %}
+      <div class="meta" style="padding:8px 10px;border:1px solid var(--border);background:var(--warn-bg);color:var(--warn-fg)">
+        {{ notice.text }}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
     <table style="min-width:0">
       <thead>
         <tr>
