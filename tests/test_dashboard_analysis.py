@@ -553,6 +553,16 @@ def test_item_template_shows_published_at_to_second():
     assert '{{ (item.published_at or "")[:19] }}' in item_template
 
 
+def test_item_template_has_user_triggered_market_overlay():
+    item_template = (TEMPLATE_DIR / "item.html").read_text()
+
+    assert "行情上下文" in item_template
+    assert "id=\"market-load\"" in item_template
+    assert "/api/market/klines?" in item_template
+    assert "未加载。仅点击后请求 market adapter。" in item_template
+    assert "addEventListener(\"click\"" in item_template
+
+
 def test_feed_rows_hide_internal_fields_and_empty_messages():
     feed_rows = (TEMPLATE_DIR / "_feed_rows.html").read_text()
 

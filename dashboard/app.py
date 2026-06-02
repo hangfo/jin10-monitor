@@ -266,11 +266,15 @@ def create_app() -> FastAPI:
         detail = query_item(message_id) or center
         tg_status = query_tg_status_for_item(message_id)
         analyze_url = ""
+        market_start = ""
+        market_end = ""
         published_at = str(center.get("published_at") or "")
         center_dt = parse_history_datetime(published_at)
         if center_dt:
             window_start = (center_dt - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
             window_end = (center_dt + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+            market_start = window_start
+            market_end = window_end
             analyze_url = "/analyze?" + urlencode(
                 {
                     "from_item_id": message_id,
@@ -289,6 +293,8 @@ def create_app() -> FastAPI:
                 "minutes": minutes,
                 "tg_status": tg_status,
                 "analyze_url": analyze_url,
+                "market_start": market_start,
+                "market_end": market_end,
                 "nav": query_nav_summary(),
             },
         )

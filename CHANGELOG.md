@@ -1,9 +1,10 @@
-更新时间：2026-06-02 19:46（Asia/Shanghai）
+更新时间：2026-06-02 19:52（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
+- 在 `/item/{id}` 增加用户触发的行情上下文面板：支持选择 Binance 白名单交易对、`1m/5m` 周期和快讯邻近窗口，点击后调用 `/api/market/klines` 展示价格摘要与 K 线表格；默认不自动请求，不影响首页刷新和实时采集链路。
 - 实现 Dashboard Binance market adapter 的第一步：`MARKET_ADAPTER=binance` 时 `/api/market/klines` 可通过 Binance public REST 读取白名单加密交易对 K 线，并带有 symbol/interval 校验、请求超时、进程内 TTL 缓存和失败降级；默认未配置时仍不请求外部行情 API。
 - 新增 Binance 行情叠加最小实施计划 006：确认第一版只做可关闭、只读、用户触发的加密交易对 market overlay，优先放在 `/item/{id}`，后续再进入 `/analyze`，不首页批量请求、不写业务历史库、不影响 WebSocket / REST / Telegram。
 - 修复启动链路在 REST/DNS 慢或 403 时拖慢实时主路的问题：WebSocket 现在启动后立即作为实时主路连接，REST 冷启动预加载与离线补拉改为后台执行；后台补拉使用启动瞬间的 `last_ingested_at` 快照，避免被新 WebSocket 消息推进游标后误判“没有离线窗口”。

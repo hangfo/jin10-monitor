@@ -1,6 +1,51 @@
 {% extends "base.html" %}
 {% block title %}Jin10 Item {{ center.id }}{% endblock %}
 
+{% block head %}
+<style>
+  .market-controls {
+    align-items: end;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .market-controls input[type="text"] {
+    width: 170px;
+  }
+  .market-summary {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-top: 12px;
+  }
+  .market-stat {
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .market-stat .value {
+    font-size: 16px;
+    font-weight: 650;
+    margin-top: 3px;
+  }
+  .market-table {
+    margin-top: 12px;
+    overflow-x: auto;
+  }
+  .market-table table {
+    min-width: 720px;
+  }
+  .market-status {
+    margin-top: 10px;
+  }
+  @media (max-width: 760px) {
+    .market-summary {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+</style>
+{% endblock %}
+
 {% block content %}
   <div class="page-head">
     <div>
@@ -52,6 +97,55 @@
     {% endif %}
   </section>
 
+  <h2>行情上下文</h2>
+  <section class="panel" id="market-panel" data-default-start="{{ market_start }}" data-default-end="{{ market_end }}">
+    <div class="market-controls">
+      <div class="filter-group">
+        <label for="market-symbol">交易对</label>
+        <select id="market-symbol">
+          {% for symbol in ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"] %}
+          <option value="{{ symbol }}" {{ "selected" if symbol == "BTCUSDT" else "" }}>{{ symbol }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="market-interval">周期</label>
+        <select id="market-interval">
+          <option value="1m" selected>1m</option>
+          <option value="5m">5m</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="market-start">开始</label>
+        <input id="market-start" type="text" class="mono" value="{{ market_start }}" placeholder="YYYY-MM-DD HH:MM:SS">
+      </div>
+      <div class="filter-group">
+        <label for="market-end">结束</label>
+        <input id="market-end" type="text" class="mono" value="{{ market_end }}" placeholder="YYYY-MM-DD HH:MM:SS">
+      </div>
+      <button type="button" id="market-load">加载行情</button>
+    </div>
+    <div class="market-status meta" id="market-status">未加载。仅点击后请求 market adapter。</div>
+    <div id="market-result" hidden>
+      <div class="market-summary" id="market-summary"></div>
+      <div class="market-table">
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>Open</th>
+              <th>High</th>
+              <th>Low</th>
+              <th>Close</th>
+              <th>Volume</th>
+            </tr>
+          </thead>
+          <tbody id="market-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <h2>前后 {{ minutes }} 分钟上下文</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
     {% for option in [5, 15, 30, 60] %}
@@ -73,4 +167,95 @@
     </div>
     {% endfor %}
   </div>
+
+  <script>
+    const marketStatus = document.getElementById("market-status");
+    const marketResult = document.getElementById("market-result");
+    const marketSummary = document.getElementById("market-summary");
+    const marketRows = document.getElementById("market-rows");
+
+    function formatNumber(value) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return "-";
+      return parsed.toLocaleString(undefined, {maximumFractionDigits: 8});
+    }
+
+    function renderMarketSummary(symbol, klines) {
+      const first = klines[0];
+      const last = klines[klines.length - 1];
+      const high = Math.max(...klines.map((item) => Number(item.high)));
+      const low = Math.min(...klines.map((item) => Number(item.low)));
+      const startClose = Number(first.close);
+      const endClose = Number(last.close);
+      const move = endClose - startClose;
+      const pct = startClose ? (move / startClose) * 100 : 0;
+      const stats = [
+        ["交易对", symbol],
+        ["首根收盘", formatNumber(startClose)],
+        ["末根收盘", formatNumber(endClose)],
+        ["涨跌", `${formatNumber(move)} (${pct.toFixed(2)}%)`],
+        ["窗口高点", formatNumber(high)],
+        ["窗口低点", formatNumber(low)],
+        ["K 线数量", String(klines.length)],
+        ["数据来源", "Binance Spot"],
+      ];
+      marketSummary.replaceChildren(...stats.map(([label, value]) => {
+        const stat = document.createElement("div");
+        stat.className = "market-stat";
+        const labelEl = document.createElement("div");
+        labelEl.className = "meta";
+        labelEl.textContent = label;
+        const valueEl = document.createElement("div");
+        valueEl.className = "value mono";
+        valueEl.textContent = value;
+        stat.append(labelEl, valueEl);
+        return stat;
+      }));
+    }
+
+    function renderMarketRows(klines) {
+      const rows = klines.map((item) => {
+        const row = document.createElement("tr");
+        [
+          item.open_time || "",
+          formatNumber(item.open),
+          formatNumber(item.high),
+          formatNumber(item.low),
+          formatNumber(item.close),
+          formatNumber(item.volume),
+        ].forEach((value) => {
+          const cell = document.createElement("td");
+          cell.className = "mono";
+          cell.textContent = value;
+          row.appendChild(cell);
+        });
+        return row;
+      });
+      marketRows.replaceChildren(...rows);
+    }
+
+    document.getElementById("market-load").addEventListener("click", async () => {
+      const symbol = document.getElementById("market-symbol").value;
+      const interval = document.getElementById("market-interval").value;
+      const start = document.getElementById("market-start").value.trim();
+      const end = document.getElementById("market-end").value.trim();
+      const params = new URLSearchParams({symbol, interval, start, end});
+      marketStatus.textContent = "加载中...";
+      marketResult.hidden = true;
+      try {
+        const response = await fetch(`/api/market/klines?${params.toString()}`, {cache: "no-store"});
+        const data = await response.json();
+        if (!data.ok || !data.klines || data.klines.length === 0) {
+          marketStatus.textContent = `${data.error || "market data unavailable"}${data.detail ? `: ${data.detail}` : ""}`;
+          return;
+        }
+        marketStatus.textContent = `${data.adapter || "market"} · ${data.symbol || symbol} · ${data.interval || interval}`;
+        renderMarketSummary(data.symbol || symbol, data.klines);
+        renderMarketRows(data.klines);
+        marketResult.hidden = false;
+      } catch (error) {
+        marketStatus.textContent = `market data unavailable: ${error}`;
+      }
+    });
+  </script>
 {% endblock %}

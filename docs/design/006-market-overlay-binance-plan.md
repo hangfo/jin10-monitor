@@ -1,4 +1,4 @@
-更新时间：2026-06-01 22:44（Asia/Shanghai）
+更新时间：2026-06-02 19:52（Asia/Shanghai）
 
 # 006 - Binance 行情叠加最小实施计划
 
@@ -31,9 +31,15 @@
 
 第一版数据源：
 
-- Binance public REST。
-- 优先使用 `GET /api/v3/klines`。
-- 可选使用 `GET /api/v3/ticker/price` 做当前价格轻量查询。
+- Binance Spot public REST。
+- 优先使用 Spot `GET /api/v3/klines`。
+- 可选使用 Spot `GET /api/v3/ticker/price` 做当前价格轻量查询。
+
+API 版本选择：
+
+- 第一版使用 Binance Spot REST v3。
+- 不使用所谓 v4：当前官方 Spot market data 文档公开的 K 线和 ticker endpoint 是 `/api/v3/...`，没有 Spot public market `GET /api/v4/klines`。
+- 如果后续讨论 v4，应先确认它是 Binance 的其他产品线、第三方 API，还是 CoinGlass 等外部源版本；不能直接替换当前 Spot adapter。
 
 第一版交易对：
 
@@ -220,4 +226,3 @@ adapter:symbol:interval:start:end
 
 - 写文档、评审边界、拆任务：`GPT-5.5 中`。
 - 实现 Binance adapter、缓存、UI、测试和浏览器验证：`GPT-5.5 高`。
-
