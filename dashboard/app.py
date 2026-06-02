@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import timedelta
@@ -44,7 +45,7 @@ from .db import (
     query_aggregation_report,
 )
 from .evidence import build_evidence_for_preview, known_assets
-from .market.base import configured_market_adapter_name, get_market_adapter
+from .market.base import MarketAdapterError, configured_market_adapter_name, get_market_adapter
 from .manual_ai import PROMPT_VERSION, generate_prompt, parse_answer, render_answer_with_links
 from .providers.base import provider_statuses
 
@@ -650,11 +651,53 @@ def create_app() -> FastAPI:
                 }
             )
         try:
-            klines = adapter.fetch_klines(symbol=symbol, interval=interval, start=start, end=end)
-            return JSONResponse({"ok": True, "adapter": adapter.name, "klines": [kline.__dict__ for kline in klines]})
+            klines = await asyncio.to_thread(
+                adapter.fetch_klines,
+                symbol=symbol,
+                interval=interval,
+                start=start,
+                end=end,
+            )
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "adapter": adapter.name,
+                    "symbol": symbol,
+                    "interval": interval,
+                    "start": start,
+                    "end": end,
+                    "klines": [kline.__dict__ for kline in klines],
+                }
+            )
+        except MarketAdapterError as exc:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "market data unavailable",
+                    "detail": str(exc),
+                    "adapter": adapter.name,
+                    "symbol": symbol,
+                    "interval": interval,
+                    "start": start,
+                    "end": end,
+                    "klines": [],
+                }
+            )
         except Exception:
             log.exception("market klines fetch failed")
-            return JSONResponse({"ok": False, "error": "market data unavailable", "adapter": adapter.name, "klines": []})
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "market data unavailable",
+                    "detail": "unexpected adapter error",
+                    "adapter": adapter.name,
+                    "symbol": symbol,
+                    "interval": interval,
+                    "start": start,
+                    "end": end,
+                    "klines": [],
+                }
+            )
 
     @app.get("/aggregation")
     async def aggregation(request: Request):
