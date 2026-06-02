@@ -466,6 +466,13 @@ def test_dashboard_docs_routes_are_disabled():
     assert "/openapi.json" not in paths
 
 
+def test_run_dashboard_loads_dotenv_before_uvicorn():
+    run_dashboard = (TEMPLATE_DIR.parent.parent / "run_dashboard.py").read_text()
+
+    assert "from dotenv import load_dotenv" in run_dashboard
+    assert "load_dotenv()" in run_dashboard
+
+
 def test_dashboard_bugfix_routes_are_registered():
     paths = [route.path for route in app.routes if hasattr(route, "path")]
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 import uvicorn
+from dotenv import load_dotenv
 
 
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
@@ -18,6 +19,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    load_dotenv()
     args = parse_args()
     if args.host not in ALLOWED_HOSTS:
         raise SystemExit("Dashboard only allows 127.0.0.1 / localhost.")
