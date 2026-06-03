@@ -442,7 +442,15 @@ def query_tg_deliveries(*, status_filter: str = "all", limit: int = 120) -> list
             f"""
             SELECT t.message_id, t.status, t.mode, t.detail,
                    datetime(t.updated_at, 'localtime') AS updated_at,
-                   h.title, h.content, h.published_at, h.priority_level
+                   h.title, h.content, h.published_at, h.priority_level,
+                   (
+                       SELECT datetime(MAX(dl.sent_at), 'localtime')
+                       FROM delivery_log dl
+                       WHERE dl.message_id = t.message_id
+                   ) AS confirmed_sent_at,
+                   EXISTS (
+                       SELECT 1 FROM delivery_log dl WHERE dl.message_id = t.message_id
+                   ) AS confirmed_sent
             FROM telegram_delivery_status t
             LEFT JOIN flash_history h ON h.id = t.message_id
             {where}
@@ -471,12 +479,26 @@ def query_tg_summary(*, hours: int = DEFAULT_HOURS) -> dict[str, Any]:
             "SELECT COUNT(*) FROM delivery_log WHERE sent_at >= ?",
             (since,),
         ).fetchone()[0]
+        unknown_confirmed = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM telegram_delivery_status t
+            WHERE t.status = 'unknown_timeout'
+              AND t.updated_at >= ?
+              AND EXISTS (SELECT 1 FROM delivery_log dl WHERE dl.message_id = t.message_id)
+            """,
+            (since,),
+        ).fetchone()[0]
     sent = counts.get("sent", 0)
     failed = counts.get("failed", 0)
+    unknown_timeout = counts.get("unknown_timeout", 0)
+    unknown_unconfirmed = max(0, unknown_timeout - int(unknown_confirmed))
     return {
         "sent": sent,
         "failed": failed,
-        "unknown_timeout": counts.get("unknown_timeout", 0),
+        "unknown_timeout": unknown_timeout,
+        "unknown_timeout_confirmed": int(unknown_confirmed),
+        "unknown_timeout_unconfirmed": unknown_unconfirmed,
         "skipped": counts.get("skipped", 0),
         "confirmed_sent": confirmed_sent,
         "success_rate": round(sent / max(sent + failed, 1) * 100),

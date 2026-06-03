@@ -1,5 +1,50 @@
 {% extends "base.html" %}
 {% block title %}Telegram 投递状态{% endblock %}
+{% block head %}
+<style>
+  .delivery-note {
+    display: grid;
+    gap: 8px;
+    line-height: 1.55;
+  }
+  .review-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .review-card {
+    border: 1px solid var(--border-soft);
+    border-radius: 8px;
+    background: #f8faf9;
+    padding: 12px 14px;
+  }
+  .review-card.warn {
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+  }
+  .review-card.ok {
+    background: var(--sent-bg);
+    color: var(--sent-fg);
+  }
+  .review-label {
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .review-value {
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .confirmed-cell {
+    display: grid;
+    gap: 4px;
+  }
+  @media (max-width: 760px) {
+    .review-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+{% endblock %}
 
 {% block content %}
   <div class="page-head">
@@ -31,8 +76,23 @@
     </div>
   </div>
 
-  <div class="panel" style="margin-bottom:12px">
-    <span class="mono">unknown_timeout</span> 只表示请求发出后未拿到确认，不等同成功；成功去重仍以 <span class="mono">delivery_log</span> 为准。
+  <div class="panel delivery-note" style="margin-bottom:12px">
+    <div><span class="mono">unknown_timeout</span> 只表示请求发出后未拿到确认，不等同成功；成功去重仍以 <span class="mono">delivery_log</span> 为准。</div>
+    <div class="review-grid">
+      <div class="review-card">
+        <div class="review-label">24h unknown_timeout</div>
+        <div class="review-value">{{ summary.unknown_timeout }}</div>
+      </div>
+      <div class="review-card ok">
+        <div class="review-label">已在 delivery_log 确认</div>
+        <div class="review-value">{{ summary.unknown_timeout_confirmed }}</div>
+      </div>
+      <div class="review-card warn">
+        <div class="review-label">仍需人工核对</div>
+        <div class="review-value">{{ summary.unknown_timeout_unconfirmed }}</div>
+      </div>
+    </div>
+    <div class="meta">本页只读核对投递记录，不会重试、补发、写入 <span class="mono">delivery_log</span> 或修改 Telegram 去重语义。</div>
   </div>
   {% endif %}
 
@@ -59,6 +119,7 @@
           <th>模式</th>
           <th>优先级</th>
           <th>消息</th>
+          <th>delivery_log</th>
           <th>详情</th>
         </tr>
       </thead>
@@ -72,6 +133,15 @@
           <td class="summary">
             <a href="/item/{{ item.message_id }}">{{ item.summary or item.message_id }}</a>
             <div class="meta mono">{{ item.message_id }}</div>
+          </td>
+          <td class="confirmed-cell">
+            {% if item.confirmed_sent %}
+            <span class="pill sent">已确认</span>
+            {% if item.confirmed_sent_at %}<span class="meta mono">{{ item.confirmed_sent_at }}</span>{% endif %}
+            {% else %}
+            <span class="pill none">未确认</span>
+            <span class="meta">只读核对</span>
+            {% endif %}
           </td>
           <td class="meta mono">{{ item.detail or '-' }}</td>
         </tr>

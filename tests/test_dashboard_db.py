@@ -144,6 +144,41 @@ def test_query_recent_items_filters_confirmed_telegram_delivery(dashboard_histor
     assert rows[0]["tg_confirmed_sent"] == 1
 
 
+def test_query_tg_deliveries_marks_delivery_log_confirmation(dashboard_history_db):
+    conn = sqlite3.connect(dashboard_history_db)
+    insert_flash(conn, "timeout-confirmed", history_ts(-4), "Confirmed timeout title")
+    insert_flash(conn, "timeout-open", history_ts(-3), "Open timeout title")
+    conn.executemany(
+        """
+        INSERT INTO telegram_delivery_status (
+            message_id, channel, mode, status, detail, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("timeout-confirmed", "telegram", "realtime", "unknown_timeout", "timeout", history_ts(-4)),
+            ("timeout-open", "telegram", "realtime", "unknown_timeout", "timeout", history_ts(-3)),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO delivery_log (message_id, sent_at) VALUES (?, ?)",
+        ("timeout-confirmed", history_ts(-2)),
+    )
+    conn.commit()
+    conn.close()
+
+    rows = db.query_tg_deliveries(status_filter="unknown_timeout")
+    by_id = {row["message_id"]: row for row in rows}
+    summary = db.query_tg_summary()
+
+    assert by_id["timeout-confirmed"]["confirmed_sent"] == 1
+    assert by_id["timeout-confirmed"]["confirmed_sent_at"]
+    assert by_id["timeout-open"]["confirmed_sent"] == 0
+    assert summary["unknown_timeout"] == 2
+    assert summary["unknown_timeout_confirmed"] == 1
+    assert summary["unknown_timeout_unconfirmed"] == 1
+
+
 def test_query_recent_items_filters_keyword(dashboard_history_db):
     rows = db.query_recent_items(keyword="Dashboard")
 
