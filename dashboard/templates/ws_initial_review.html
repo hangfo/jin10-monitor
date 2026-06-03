@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}WebSocket Initial History 下钻{% endblock %}
+{% block head %}
+<style>
+  .review-note {
+    display: grid;
+    gap: 8px;
+    line-height: 1.55;
+    margin-bottom: 14px;
+  }
+  .review-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .review-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    padding: 13px 14px;
+  }
+  .review-label {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 5px;
+  }
+  .review-value {
+    font-size: 20px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+  .cursor-cell {
+    display: grid;
+    gap: 4px;
+  }
+  @media (max-width: 900px) {
+    .review-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 620px) {
+    .review-grid {
+      grid-template-columns: 1fr;
+    }
+    .table-wrap table {
+      min-width: 760px;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <h1>Initial History 下钻</h1>
+    <div class="meta">只读审计 · 不推进游标 · 不补发 Telegram</div>
+  </div>
+
+  {% if not review %}
+  <div class="card"><div class="empty">历史库不可用，无法读取 WebSocket initial history</div></div>
+  {% else %}
+  {% set state = review.state %}
+  <div class="panel review-note">
+    <div>这里列出最近由 <span class="mono">source='ws_initial'</span> 新入库的快讯，用于人工判断 WebSocket 重连快照是否覆盖短缺口。</div>
+    <div class="meta">本页不会触发 WebSocket、REST、补拉、Telegram 重试或发送，也不会写入 <span class="mono">delivery_log</span>。</div>
+  </div>
+
+  <div class="review-grid">
+    <div class="review-card">
+      <div class="review-label">最近快照</div>
+      <div class="review-value mono">{{ state.last_ws_initial_at or '-' }}</div>
+    </div>
+    <div class="review-card">
+      <div class="review-label">快照列表 / 新入库</div>
+      <div class="review-value">{{ state.last_ws_initial_count or 0 }} / {{ state.last_ws_initial_saved_count or 0 }}</div>
+    </div>
+    <div class="review-card">
+      <div class="review-label">晚于当前游标</div>
+      <div class="review-value">{{ review.newer_than_cursor }}</div>
+    </div>
+    <div class="review-card">
+      <div class="review-label">本页审计条数</div>
+      <div class="review-value">{{ review.total_reviewed }}</div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:14px">
+    <table style="min-width:0;table-layout:fixed">
+      <tbody>
+        <tr><th>last_ingested_at</th><td class="mono">{{ state.last_ingested_at or '-' }}</td></tr>
+        <tr><th>last_ingested_id</th><td class="mono">{{ state.last_ingested_id or '-' }}</td></tr>
+        <tr><th>initial 覆盖窗口</th><td class="mono">{{ state.last_ws_initial_oldest_published_at or '-' }} 至 {{ state.last_ws_initial_newest_published_at or '-' }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  {% if review["items"] %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>游标关系</th>
+          <th>优先级</th>
+          <th>内容</th>
+          <th>Telegram</th>
+          <th>delivery_log</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in review["items"] %}
+        <tr class="row-{{ priority_class(item.priority_level) }}">
+          <td class="time mono">{{ (item.published_at or '')[:19] }}</td>
+          <td class="cursor-cell">
+            {% if item.newer_than_cursor %}
+            <span class="pill unknown_timeout">晚于游标</span>
+            {% else %}
+            <span class="pill none">不晚于游标</span>
+            {% endif %}
+          </td>
+          <td class="priority"><span class="pill {{ priority_class(item.priority_level) }}">{{ item.priority_level or 'T0_NONE' }}</span></td>
+          <td class="summary">
+            <a href="/item/{{ item.id }}">{{ item.summary or item.id }}</a>
+            <div class="meta mono">{{ item.id }}</div>
+          </td>
+          <td class="status">
+            {% if item.telegram_status %}
+            <span class="pill {{ item.telegram_status }}">{{ item.telegram_status }}</span>
+            {% if item.telegram_updated_at %}<div class="meta mono">{{ item.telegram_updated_at }}</div>{% endif %}
+            {% else %}
+            <span class="pill none">无记录</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if item.tg_confirmed_sent %}
+            <span class="pill sent">已确认</span>
+            {% if item.tg_confirmed_sent_at %}<div class="meta mono">{{ item.tg_confirmed_sent_at }}</div>{% endif %}
+            {% else %}
+            <span class="pill none">未确认</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card"><div class="empty">暂无 ws_initial 入库记录</div></div>
+  {% endif %}
+  {% endif %}
+{% endblock %}

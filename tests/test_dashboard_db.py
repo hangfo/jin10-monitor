@@ -179,6 +179,52 @@ def test_query_tg_deliveries_marks_delivery_log_confirmation(dashboard_history_d
     assert summary["unknown_timeout_unconfirmed"] == 1
 
 
+def test_query_ws_initial_review_marks_cursor_and_delivery_state(dashboard_history_db):
+    conn = sqlite3.connect(dashboard_history_db)
+    insert_flash(conn, "ws-initial-new", history_ts(-2), "Initial newer title", priority="T2_HIGH")
+    insert_flash(conn, "ws-initial-old", history_ts(-12), "Initial older title")
+    conn.execute("UPDATE flash_history SET source = ? WHERE id = ?", ("ws_initial", "ws-initial-new"))
+    conn.execute("UPDATE flash_history SET source = ? WHERE id = ?", ("ws_initial", "ws-initial-old"))
+    conn.executemany(
+        "INSERT INTO runtime_state (key, value) VALUES (?, ?)",
+        [
+            ("last_ingested_at", history_ts(-5)),
+            ("last_ingested_id", "cursor-id"),
+            ("last_ws_initial_at", history_ts(-1)),
+            ("last_ws_initial_count", "40"),
+            ("last_ws_initial_saved_count", "2"),
+            ("last_ws_initial_oldest_published_at", history_ts(-12)),
+            ("last_ws_initial_newest_published_at", history_ts(-2)),
+        ],
+    )
+    conn.execute(
+        """
+        INSERT INTO telegram_delivery_status (
+            message_id, channel, mode, status, detail, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("ws-initial-new", "telegram", "realtime", "sent", "", history_ts(-1)),
+    )
+    conn.execute(
+        "INSERT INTO delivery_log (message_id, sent_at) VALUES (?, ?)",
+        ("ws-initial-new", history_ts(-1)),
+    )
+    conn.commit()
+    conn.close()
+
+    review = db.query_ws_initial_review()
+    by_id = {item["id"]: item for item in review["items"]}
+
+    assert review["state"]["last_ingested_id"] == "cursor-id"
+    assert review["total_reviewed"] == 2
+    assert review["newer_than_cursor"] == 1
+    assert by_id["ws-initial-new"]["newer_than_cursor"] is True
+    assert by_id["ws-initial-new"]["telegram_status"] == "sent"
+    assert by_id["ws-initial-new"]["tg_confirmed_sent"] == 1
+    assert by_id["ws-initial-old"]["newer_than_cursor"] is False
+
+
 def test_query_recent_items_filters_keyword(dashboard_history_db):
     rows = db.query_recent_items(keyword="Dashboard")
 

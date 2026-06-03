@@ -195,6 +195,9 @@
       <div class="ops-mini">
         {% if lane.latest %}最近：<span class="mono">{{ lane.latest }}</span> · {% endif %}24h {{ lane.count_24h }}
       </div>
+      {% if lane.key == 'ws_initial' %}
+      <a class="button-link secondary" href="/system/ws-initial" style="width:max-content">查看下钻</a>
+      {% endif %}
     </div>
     {% endfor %}
   </section>
@@ -350,6 +353,7 @@
       · 覆盖 <span class="mono">{{ system_health.ws_initial_state.oldest_published_at or '-' }}</span>
       至 <span class="mono">{{ system_health.ws_initial_state.newest_published_at or '-' }}</span>
       {% endif %}
+      · <a href="/system/ws-initial">查看新入库下钻</a>
     </div>
     {% endif %}
   </div>

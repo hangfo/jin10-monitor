@@ -428,6 +428,98 @@ def query_tg_status_for_item(message_id: str) -> Optional[dict[str, Any]]:
     return row_to_dict(row) if row else None
 
 
+def query_ws_initial_review(*, limit: int = 80) -> dict[str, Any]:
+    safe_limit = max(1, min(int(limit), 300))
+    with open_readonly_connection() as conn:
+        columns = table_columns(conn, "flash_history")
+        state_rows = conn.execute(
+            """
+            SELECT key, value
+            FROM runtime_state
+            WHERE key IN (
+                'last_ingested_at',
+                'last_ingested_id',
+                'last_ws_initial_at',
+                'last_ws_initial_count',
+                'last_ws_initial_saved_count',
+                'last_ws_initial_oldest_published_at',
+                'last_ws_initial_newest_published_at'
+            )
+            """
+        ).fetchall()
+        rows = conn.execute(
+            f"""
+            SELECT h.id, h.published_at, h.title, h.content, h.hit, h.high, h.important,
+                   h.has_bold, h.priority_level, h.has_pic, h.pic_url, h.news_source,
+                   h.source_url, h.source, h.created_at,
+                   {optional_column(columns, "has_title")},
+                   {optional_column(columns, "style_flags")},
+                   (
+                       SELECT t.status
+                       FROM telegram_delivery_status t
+                       WHERE t.message_id = h.id
+                       ORDER BY t.updated_at DESC
+                       LIMIT 1
+                   ) AS telegram_status,
+                   (
+                       SELECT datetime(t.updated_at, 'localtime')
+                       FROM telegram_delivery_status t
+                       WHERE t.message_id = h.id
+                       ORDER BY t.updated_at DESC
+                       LIMIT 1
+                   ) AS telegram_updated_at,
+                   (
+                       SELECT t.mode
+                       FROM telegram_delivery_status t
+                       WHERE t.message_id = h.id
+                       ORDER BY t.updated_at DESC
+                       LIMIT 1
+                   ) AS telegram_mode,
+                   (
+                       SELECT datetime(dl.sent_at, 'localtime')
+                       FROM delivery_log dl
+                       WHERE dl.message_id = h.id
+                       ORDER BY dl.sent_at DESC
+                       LIMIT 1
+                   ) AS tg_confirmed_sent_at,
+                   EXISTS (
+                       SELECT 1 FROM delivery_log dl WHERE dl.message_id = h.id
+                   ) AS tg_confirmed_sent
+            FROM flash_history h
+            WHERE h.source = 'ws_initial'
+            ORDER BY h.published_at DESC, h.id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        ).fetchall()
+    state = {str(row["key"]): str(row["value"]) for row in state_rows}
+    last_dt = parse_history_datetime(state.get("last_ingested_at", ""))
+    items = []
+    newer_than_cursor = 0
+    for row in rows:
+        item = row_to_dict(row)
+        published_dt = parse_history_datetime(item.get("published_at"))
+        is_newer = bool(published_dt and last_dt and published_dt > last_dt)
+        item["newer_than_cursor"] = is_newer
+        if is_newer:
+            newer_than_cursor += 1
+        items.append(item)
+    return {
+        "state": {
+            "last_ingested_at": state.get("last_ingested_at", ""),
+            "last_ingested_id": state.get("last_ingested_id", ""),
+            "last_ws_initial_at": state.get("last_ws_initial_at", ""),
+            "last_ws_initial_count": state.get("last_ws_initial_count", ""),
+            "last_ws_initial_saved_count": state.get("last_ws_initial_saved_count", ""),
+            "last_ws_initial_oldest_published_at": state.get("last_ws_initial_oldest_published_at", ""),
+            "last_ws_initial_newest_published_at": state.get("last_ws_initial_newest_published_at", ""),
+        },
+        "items": items,
+        "total_reviewed": len(items),
+        "newer_than_cursor": newer_than_cursor,
+    }
+
+
 def query_tg_deliveries(*, status_filter: str = "all", limit: int = 120) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 500))
     clauses = []

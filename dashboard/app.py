@@ -42,6 +42,7 @@ from .db import (
     query_tg_deliveries,
     query_tg_status_for_item,
     query_tg_summary,
+    query_ws_initial_review,
     query_aggregation_report,
 )
 from .evidence import build_evidence_for_preview, known_assets
@@ -409,6 +410,23 @@ def create_app() -> FastAPI:
                 "health": health,
                 "system_health": system_health,
                 "provider_statuses": provider_statuses(),
+                "nav": query_nav_summary(),
+            },
+        )
+
+    @app.get("/system/ws-initial")
+    async def ws_initial_review(request: Request):
+        health = history_health()
+        review = query_ws_initial_review() if health["status"] == "ok" else {}
+        if review:
+            for item in review["items"]:
+                item["summary"] = compact_text(item.get("title"), item.get("content"), limit=140)
+        return templates.TemplateResponse(
+            request,
+            "ws_initial_review.html",
+            {
+                "health": health,
+                "review": review,
                 "nav": query_nav_summary(),
             },
         )
