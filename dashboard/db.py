@@ -520,6 +520,16 @@ def query_system_health() -> dict[str, Any]:
             ORDER BY status
             """
         ).fetchall()
+        delivery_count_rows = conn.execute(
+            """
+            SELECT status, COUNT(*) AS count_24h
+            FROM telegram_delivery_status
+            WHERE status IN ('sent', 'unknown_timeout', 'failed')
+              AND updated_at >= ?
+            GROUP BY status
+            """,
+            (since,),
+        ).fetchall()
         catchup_summary_row = conn.execute(
             """
             SELECT status, mode, message_id, detail, datetime(updated_at, 'localtime') AS updated_at
@@ -533,6 +543,7 @@ def query_system_health() -> dict[str, Any]:
     state = {str(row["key"]): str(row["value"]) for row in state_rows}
     sources = {str(row["source"]): row_to_dict(row) for row in source_rows}
     delivery_latest = {str(row["status"]): row_to_dict(row) for row in delivery_rows}
+    delivery_counts = {str(row["status"]): int(row["count_24h"]) for row in delivery_count_rows}
     last_ingested_at = state.get("last_ingested_at", "")
     last_dt = parse_history_datetime(last_ingested_at)
     minutes_stale = round((datetime.now() - last_dt).total_seconds() / 60, 1) if last_dt else None
@@ -586,9 +597,12 @@ def query_system_health() -> dict[str, Any]:
 
     system_notices = []
     if rest_status == "forbidden_backoff" and monitor_status == "ok":
+        rest_notice = "REST 当前退避中，但 WebSocket 主路仍在入库；不要把 REST 状态误判为整体采集中断。"
+        if rest_state["last_ok_at"]:
+            rest_notice = "REST 曾间歇恢复后当前再次退避，但 WebSocket 主路仍在入库；不要把 REST 状态误判为整体采集中断。"
         system_notices.append({
             "level": "warn",
-            "text": "REST 当前退避中，但 WebSocket 主路仍在入库；不要把 REST 状态误判为整体采集中断。",
+            "text": rest_notice,
         })
     try:
         ws_initial_saved_count = int(ws_initial_state["saved_count"] or 0)
@@ -605,6 +619,12 @@ def query_system_health() -> dict[str, Any]:
             "level": "info",
             "text": "WebSocket 初始历史最新时间晚于最后入库游标，可能覆盖了实时短缺口；当前仅提示，不推进游标、不补发 Telegram。",
         })
+    unknown_timeout_24h = delivery_counts.get("unknown_timeout", 0)
+    if unknown_timeout_24h > 0:
+        system_notices.append({
+            "level": "warn",
+            "text": f"24h 内 Telegram unknown_timeout {unknown_timeout_24h} 条，建议人工核对投递状态；当前不会自动重发，成功去重仍以 delivery_log 为准。",
+        })
     return {
         "monitor_status": monitor_status,
         "minutes_stale": minutes_stale,
@@ -620,6 +640,7 @@ def query_system_health() -> dict[str, Any]:
         "today_t2": today_t2,
         "today_sent": today_sent,
         "today_failed": today_failed,
+        "today_unknown_timeout": unknown_timeout_24h,
         "realtime_sources": realtime_sources,
         "rest_status": rest_status,
         "rest_state": rest_state,
