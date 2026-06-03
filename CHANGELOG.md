@@ -1,12 +1,19 @@
-更新时间：2026-06-02 21:17（Asia/Shanghai）
+更新时间：2026-06-03 19:40（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
+- 在 `/analyze` 手工分析流中加入可选结构化行情上下文：用户勾选后使用分析时间窗口请求 market adapter，预览页展示 Binance 行情摘要，并在生成 Prompt 时独立写入“结构化行情上下文”区块；未勾选或行情失败时手工分析流程继续可用。
+
+## 2026-06-02
+
 - 让 `run_dashboard.py` 启动时加载 `.env`，并在 `.env.example` 增加 `MARKET_ADAPTER=binance` 等行情叠加示例配置；Dashboard 正式 8765 启动后可通过环境变量启用 Binance adapter，而默认仍不请求外部行情 API。
 - 在 `/item/{id}` 增加用户触发的行情上下文面板：支持选择 Binance 白名单交易对、`1m/5m` 周期和快讯邻近窗口，点击后调用 `/api/market/klines` 展示价格摘要与 K 线表格；默认不自动请求，不影响首页刷新和实时采集链路。
 - 实现 Dashboard Binance market adapter 的第一步：`MARKET_ADAPTER=binance` 时 `/api/market/klines` 可通过 Binance public REST 读取白名单加密交易对 K 线，并带有 symbol/interval 校验、请求超时、进程内 TTL 缓存和失败降级；默认未配置时仍不请求外部行情 API。
+
+## 2026-06-01
+
 - 新增 Binance 行情叠加最小实施计划 006：确认第一版只做可关闭、只读、用户触发的加密交易对 market overlay，优先放在 `/item/{id}`，后续再进入 `/analyze`，不首页批量请求、不写业务历史库、不影响 WebSocket / REST / Telegram。
 - 修复启动链路在 REST/DNS 慢或 403 时拖慢实时主路的问题：WebSocket 现在启动后立即作为实时主路连接，REST 冷启动预加载与离线补拉改为后台执行；后台补拉使用启动瞬间的 `last_ingested_at` 快照，避免被新 WebSocket 消息推进游标后误判“没有离线窗口”。
 - 降低 Dashboard 快讯流感知延迟：首页自动检查新消息间隔从 20 秒降到 3 秒，并在打开页面后立即检查一次；快讯流和详情页时间显示到秒，首页 Telegram 状态补充本地投递时间，便于与金十官网逐秒对比。
@@ -14,18 +21,30 @@
 - 新增项目状态摘要 041：记录 WebSocket initial history 诊断增强、REST 补拉替代设计评估、launchd reload 后 `last_ws_initial_*` 真实写入、REST 间歇恢复后再次进入 `forbidden_backoff`，以及下一步观察 / 只读告警 / 短缺口恢复策略建议。
 - 新增 REST 长期 403 下的补拉替代设计评估：明确 Glanceway 金十示例、金十官方 API、WallstreetCN 7x24 与 CoinGlass newsflash 的用途、风险和隔离用法，推荐先强化 WebSocket initial history / reconnect 诊断，再考虑补拉 adapter 边界。
 - 增强 WebSocket initial history 运行诊断：WebSocket 重连收到初始历史列表时写入 `last_ws_initial_*` 状态，记录快照时间、列表条数、新入库条数和覆盖时间范围，并在 Dashboard `/system` 只读展示；不改变 Telegram 去重、补拉或发送语义。
+
+## 2026-05-31
+
 - 中文化中期 Dashboard 设计与交接文档：将 `docs/design/003-phase2b-phase3-spec.md` 和 `docs/status/034` 至 `039` 中的大段英文正文统一改为中文，并补充本次文档更新时间；保留文件名、命令、路由、环境变量、commit hash、代码块和技术标识不变。
 - 新增项目状态摘要 040：记录 `/system` 诊断面板和 REST 状态持久化收口、launchd reload 后的真实运行证据、当前 REST 仍反复 403 但 WebSocket 与 Telegram realtime 正常，以及下一步文档中文化建议。
 - 持久化 REST 运行状态：REST 轮询成功、连续 403 退避或其它异常时写入 `runtime_state`，`/system` 可直接显示 `ok`、`forbidden_backoff`、`error`、连续 403 轮数、退避截止时间、最近错误和最近恢复时间；仅增强诊断，不改变 REST 请求、补拉或 Telegram 发送语义。
 - 增强 Dashboard `/system` 只读运行诊断面板：展示最近 WebSocket、REST、自动补拉、手动补拉入库时间和 24h 数量，补充 `last_ingested_id`、缺口摘要时间、Telegram 最新 sent/unknown_timeout/failed 与补拉摘要状态；页面明确不触发补拉、REST 请求、Telegram 重试或发送。
 - 修复实时采集韧性：WebSocket 主连接增加空闲超时主动重连，避免半开连接长时间不入库；REST 轮询在金十接口连续 403 时改为退避和汇总告警，减少日志刷屏与 dashboard “超时/补拉”噪声，并补充无网络单测保护。
 - 新增 Dashboard V2 第二轮能力：分析历史支持勾选两条记录进入 `/analyze/compare` 双栏对比，分析详情和历史页新增“重新分析”入口；新增 `dashboard/providers/` Provider Adapter 骨架、`dashboard/market/` 行情 adapter 边界和 `/api/market/klines` 占位端点；系统页展示 Provider 配置状态，并补齐 `.pill.normal`、`row-normal`、`row-none` 样式。
+
+## 2026-05-29
+
 - 新增项目状态摘要 038：记录 Dashboard v1/v2 补丁包评估、`304929a` V2 bugfix 基线、003 与 004 计划差异、下一步分析对比 / 行情 adapter / Provider Adapter 的推荐编排。
 - 修复 Dashboard 快讯流与分析页细节：不再展示 `style_flags` 内部调试字段，隐藏空内容快讯，避免正文重复显示，时间列统一到分钟，补拉消息显示“补拉”标签，Telegram 状态和 AI 方向标签中文化为催化语义；同时加固截图上传（读入前 `Content-Length` 预检、限定 png/jpeg/webp/gif、500 错误脱敏），并将同秒消息排序 tie-breaker 改为金十消息 `id`。
 - 新增 Dashboard V2 开发计划定稿 004：对照 v1/v2 两版补丁包和当前 repo，确认 v2 为修复基线、保留 v1 路线图价值但不接入 HTML 页面，冻结后续分析对比、可选行情叠加、Phase 2B Provider Adapter 和 Vision 识别边界。
+
+## 2026-05-25
+
 - 完成 Dashboard Phase 3A/3B/3C 增强：Telegram 消息支持通过可选 `DASHBOARD_URL` 追加本地 `/item/{id}` 详情链接，未配置时 Telegram 文本保持原样；快讯流首屏默认 50 条并支持滚动分页加载；分析页支持本地截图上传、预览、手工截图描述和分析记录截图关联；置信度展示增加“主观估计、非交易信号”的悬停说明。
 - 新增项目状态摘要 037：记录 `phase 2a function 2&4&5.zip` 评估结论、仅采用图片死链兜底的原因、003 Phase 2B / Phase 3 规格落地情况和下一步 Phase 3A Telegram 深链计划。
 - 新增 Dashboard Phase 2B / Phase 3 规格文档：明确 Telegram `/item/{id}` 深链、快讯流无限加载、截图上传、置信度说明、LLM provider adapter、Vision 识别和行情叠加的实现边界与推荐顺序。
+
+## 2026-05-24
+
 - 增强独立 Dashboard 体验：分析页改用原生日期时间选择器并提供 5/15/30 分钟、1 小时、4 小时快捷窗口，快讯流和详情页按金十消息样式渲染重要、标题、加粗、图片和来源链接，分析详情页催化因素与证据列表改为优先显示时间和标题并弱化内部 news_id。
 - 修复独立 Dashboard 模板细节：`/item/{id}` 时间显示统一到分钟，分析相关导航高亮避免 `/analyze/history` 与分析页双高亮，并将分析记录状态展示为中文草稿/已完成。
 - 修复独立 Dashboard Phase 2A 细节：禁用默认 `/docs`、`/redoc` 与 `/openapi.json`，补齐分析历史和聚合报告导航，证据边界改为结构化字段，快讯流自动刷新改为保留当前筛选条件的最新时间戳智能轮询，并新增只读聚合报告基础页。

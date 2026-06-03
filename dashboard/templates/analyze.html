@@ -73,6 +73,38 @@
     max-width: 220px;
     object-fit: contain;
   }
+  .market-context-box {
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 10px;
+  }
+  .market-context-box .check {
+    grid-column: 1 / -1;
+  }
+  .market-preview {
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    margin: 12px 0;
+    padding: 10px;
+  }
+  .market-preview-grid {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-top: 8px;
+  }
+  .market-preview-stat {
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 8px;
+  }
+  .market-preview-stat strong {
+    display: block;
+    margin-top: 3px;
+  }
   .analysis-textarea,
   .prompt-box,
   .answer-box {
@@ -144,6 +176,10 @@
     }
     .step-nav-item {
       white-space: nowrap;
+    }
+    .market-context-box,
+    .market-preview-grid {
+      grid-template-columns: 1fr;
     }
   }
 </style>
@@ -224,6 +260,31 @@
         <div class="filter-group full-row">
           <span class="filter-label">截图描述（可选）</span>
           <textarea class="analysis-textarea" id="screenshot-description" name="screenshot_description" rows="2" placeholder="例如：1 分钟 K 线放量突破，突破前横盘约 20 分钟。"></textarea>
+        </div>
+        <div class="filter-group full-row">
+          <span class="filter-label">结构化行情上下文（可选）</span>
+          <div class="market-context-box">
+            <label class="check">
+              <input type="checkbox" name="market_enabled" value="1">
+              加入 Binance 行情摘要（使用上方时间窗口）
+            </label>
+            <div class="filter-group">
+              <span class="filter-label">交易对</span>
+              <select name="market_symbol">
+                {% for symbol in ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"] %}
+                <option value="{{ symbol }}">{{ symbol }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="filter-group">
+              <span class="filter-label">周期</span>
+              <select name="market_interval">
+                <option value="1m" selected>1m</option>
+                <option value="5m">5m</option>
+              </select>
+            </div>
+            <div class="muted">只在勾选后请求 market adapter；失败时仍可继续生成 Prompt。</div>
+          </div>
         </div>
         <div class="filter-group full-row">
           <span class="filter-label">补充描述</span>
@@ -315,6 +376,23 @@
       </div>
       <span class="pill">{{ boundary.label if boundary is mapping else boundary }}</span>
     </div>
+    {% if market_context and market_context.enabled %}
+    <div class="market-preview">
+      <strong>结构化行情上下文</strong>
+      {% if market_context.ok %}
+      <span class="muted mono">{{ market_context.source }} · {{ market_context.symbol }} · {{ market_context.interval }}</span>
+      {% set summary = market_context.summary %}
+      <div class="market-preview-grid">
+        <div class="market-preview-stat"><span class="meta">首根收盘</span><strong class="mono">{{ summary.first_close }}</strong></div>
+        <div class="market-preview-stat"><span class="meta">末根收盘</span><strong class="mono">{{ summary.last_close }}</strong></div>
+        <div class="market-preview-stat"><span class="meta">涨跌</span><strong class="mono">{{ summary.move }} ({{ summary.move_pct }}%)</strong></div>
+        <div class="market-preview-stat"><span class="meta">高 / 低</span><strong class="mono">{{ summary.high }} / {{ summary.low }}</strong></div>
+      </div>
+      {% else %}
+      <div class="muted">market data unavailable: {{ market_context.error }}</div>
+      {% endif %}
+    </div>
+    {% endif %}
     <form id="preview-form" method="post" action="/analyze/generate-prompt">
       <input type="hidden" name="question" value="{{ question }}">
       <input type="hidden" name="asset" value="{{ asset }}">
@@ -324,6 +402,7 @@
       <input type="hidden" name="screenshot_id" value="{{ screenshot_id }}">
       <input type="hidden" name="screenshot_description" value="{{ screenshot_description }}">
       <input type="hidden" name="user_context" value="{{ user_context }}">
+      <input type="hidden" name="market_context_json" value="{{ (market_context | tojson if market_context else '{}') | forceescape }}">
       <input id="evidence-json-input" type="hidden" name="evidence_json" value="">
 
       {% if evidence %}

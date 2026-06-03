@@ -56,6 +56,7 @@ def generate_prompt(
     window_end: str,
     evidence: list[dict[str, Any]],
     user_context: str = "",
+    market_context: dict[str, Any] | None = None,
 ) -> str:
     selected = [item for item in evidence if item.get("selected", True)]
     lines = [
@@ -71,6 +72,9 @@ def generate_prompt(
     ]
     if user_context:
         lines.extend(["", f"补充描述：{user_context}"])
+
+    if market_context and market_context.get("enabled"):
+        lines.extend(render_market_context_lines(market_context))
 
     lines.extend(
         [
@@ -109,6 +113,40 @@ def generate_prompt(
         ]
     )
     return "\n".join(lines)
+
+
+def render_market_context_lines(market_context: dict[str, Any]) -> list[str]:
+    lines = [
+        "",
+        "=" * 60,
+        "【结构化行情上下文】",
+    ]
+    if not market_context.get("ok"):
+        lines.extend(
+            [
+                f"行情数据不可用：{market_context.get('error') or 'market data unavailable'}",
+                "注意：不要把缺失行情数据当作价格没有波动。",
+            ]
+        )
+        return lines
+
+    summary = market_context.get("summary") or {}
+    lines.extend(
+        [
+            f"来源：{market_context.get('source') or 'market adapter'}",
+            f"交易对：{market_context.get('symbol')}",
+            f"周期：{market_context.get('interval')}",
+            f"窗口：{market_context.get('start')} 至 {market_context.get('end')}",
+            f"K 线数量：{summary.get('count')}",
+            f"首根收盘：{summary.get('first_close')}",
+            f"末根收盘：{summary.get('last_close')}",
+            f"涨跌：{summary.get('move')} ({summary.get('move_pct')}%)",
+            f"窗口高点：{summary.get('high')}",
+            f"窗口低点：{summary.get('low')}",
+            "注意：行情上下文只说明价格变化，不单独证明新闻因果。",
+        ]
+    )
+    return lines
 
 
 def parse_answer(raw_text: str) -> dict[str, Any]:

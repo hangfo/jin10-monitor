@@ -218,6 +218,79 @@ def datetime_local_value(value: object) -> str:
     return text[:16]
 
 
+def form_bool(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def parse_market_context_json(value: object) -> dict[str, object]:
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def summarize_klines(klines: list[object]) -> dict[str, object]:
+    if not klines:
+        return {}
+    first = klines[0]
+    last = klines[-1]
+    first_close = float(getattr(first, "close", 0.0) or 0.0)
+    last_close = float(getattr(last, "close", 0.0) or 0.0)
+    move = last_close - first_close
+    move_pct = (move / first_close * 100) if first_close else 0.0
+    return {
+        "count": len(klines),
+        "first_close": round(first_close, 8),
+        "last_close": round(last_close, 8),
+        "move": round(move, 8),
+        "move_pct": round(move_pct, 4),
+        "high": round(max(float(getattr(kline, "high", 0.0) or 0.0) for kline in klines), 8),
+        "low": round(min(float(getattr(kline, "low", 0.0) or 0.0) for kline in klines), 8),
+    }
+
+
+def build_market_context_for_prompt(
+    *,
+    enabled: bool,
+    symbol: str,
+    interval: str,
+    start: str,
+    end: str,
+) -> dict[str, object]:
+    if not enabled:
+        return {"enabled": False, "market_data_called": False}
+
+    adapter_name = configured_market_adapter_name()
+    adapter = get_market_adapter(adapter_name)
+    base = {
+        "enabled": True,
+        "ok": False,
+        "adapter": adapter_name,
+        "symbol": str(symbol or "").upper()[:20],
+        "interval": str(interval or "1m")[:12],
+        "start": start,
+        "end": end,
+        "market_data_called": bool(adapter),
+    }
+    if not adapter:
+        return {**base, "error": "market adapter not configured" if not adapter_name else "market adapter not implemented"}
+    try:
+        klines = adapter.fetch_klines(symbol=base["symbol"], interval=base["interval"], start=start, end=end)
+    except MarketAdapterError as exc:
+        return {**base, "error": str(exc)}
+    except Exception:
+        log.exception("market context fetch failed")
+        return {**base, "error": "unexpected market adapter error"}
+    return {
+        **base,
+        "ok": True,
+        "adapter": adapter.name,
+        "source": "Binance Spot",
+        "summary": summarize_klines(klines),
+    }
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Jin10 Monitor Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
     templates.env.globals["compact_text"] = compact_text
@@ -373,6 +446,18 @@ def create_app() -> FastAPI:
         screenshot_description = form.get("screenshot_description", "").strip()
         user_context = form.get("user_context", "").strip()
         evidence, boundary = build_evidence_for_preview(asset, window_start, window_end)
+        market_context = build_market_context_for_prompt(
+            enabled=form_bool(form.get("market_enabled", "")),
+            symbol=form.get("market_symbol", "BTCUSDT"),
+            interval=form.get("market_interval", "1m"),
+            start=window_start,
+            end=window_end,
+        )
+        if isinstance(boundary, dict):
+            boundary = {
+                **boundary,
+                "market_data_called": bool(market_context.get("market_data_called")),
+            }
         return templates.TemplateResponse(
             request,
             "analyze.html",
@@ -387,6 +472,7 @@ def create_app() -> FastAPI:
                 "screenshot_id": screenshot_id,
                 "screenshot_description": screenshot_description,
                 "user_context": user_context,
+                "market_context": market_context,
                 "evidence": evidence,
                 "boundary": boundary,
                 "known_assets": known_assets(),
@@ -411,6 +497,7 @@ def create_app() -> FastAPI:
             screenshot_id=screenshot_id,
             screenshot_description=screenshot_description,
         )
+        market_context = parse_market_context_json(form.get("market_context_json", "{}"))
         evidence = parse_evidence_json(form.get("evidence_json", "[]"))
         selected_ids = {
             key.removeprefix("sel_")
@@ -427,6 +514,7 @@ def create_app() -> FastAPI:
             window_end=window_end,
             evidence=evidence,
             user_context=user_context,
+            market_context=market_context,
         )
         run_id = create_run(
             question=question,
@@ -454,6 +542,7 @@ def create_app() -> FastAPI:
                 "from_item_id": from_item_id,
                 "screenshot_id": screenshot_id,
                 "user_context": user_context,
+                "market_context": market_context,
                 "evidence": evidence,
                 "prompt": prompt,
                 "known_assets": known_assets(),

@@ -9,9 +9,12 @@ from dashboard.app import (
     ALLOWED_SCREENSHOT_MIME_TYPES,
     app,
     append_screenshot_context,
+    parse_market_context_json,
     normalize_news_text,
     parse_multipart_upload,
+    summarize_klines,
 )
+from dashboard.market.base import Kline
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "dashboard" / "templates"
 
@@ -357,6 +360,101 @@ def test_prompt_generation_includes_selected_evidence_and_question():
     assert "美联储暂停加息" in prompt
 
 
+def test_prompt_generation_includes_optional_market_context():
+    prompt = manual_ai.generate_prompt(
+        question="BTC 是否新闻驱动",
+        asset="BTC",
+        window_start="2026-06-02 19:00:00",
+        window_end="2026-06-02 20:00:00",
+        evidence=[],
+        market_context={
+            "enabled": True,
+            "ok": True,
+            "source": "Binance Spot",
+            "symbol": "BTCUSDT",
+            "interval": "1m",
+            "start": "2026-06-02 19:00:00",
+            "end": "2026-06-02 20:00:00",
+            "summary": {
+                "count": 61,
+                "first_close": 69470.32,
+                "last_close": 69520.12,
+                "move": 49.8,
+                "move_pct": 0.0717,
+                "high": 69600.0,
+                "low": 69390.0,
+            },
+        },
+    )
+
+    assert "【结构化行情上下文】" in prompt
+    assert "Binance Spot" in prompt
+    assert "BTCUSDT" in prompt
+    assert "行情上下文只说明价格变化" in prompt
+
+
+def test_prompt_generation_marks_unavailable_market_context():
+    prompt = manual_ai.generate_prompt(
+        question="BTC 是否新闻驱动",
+        asset="BTC",
+        window_start="2026-06-02 19:00:00",
+        window_end="2026-06-02 20:00:00",
+        evidence=[],
+        market_context={
+            "enabled": True,
+            "ok": False,
+            "symbol": "BTCUSDT",
+            "interval": "1m",
+            "start": "2026-06-02 19:00:00",
+            "end": "2026-06-02 20:00:00",
+            "error": "market adapter not configured",
+        },
+    )
+
+    assert "【结构化行情上下文】" in prompt
+    assert "行情数据不可用：market adapter not configured" in prompt
+    assert "不要把缺失行情数据当作价格没有波动" in prompt
+
+
+def test_summarize_klines_returns_price_move_stats():
+    summary = summarize_klines(
+        [
+            Kline(
+                open_time="2026-06-02 19:00:00",
+                open=100.0,
+                high=102.0,
+                low=99.0,
+                close=101.0,
+                volume=1.0,
+            ),
+            Kline(
+                open_time="2026-06-02 19:01:00",
+                open=101.0,
+                high=104.0,
+                low=100.0,
+                close=103.0,
+                volume=2.0,
+            ),
+        ]
+    )
+
+    assert summary == {
+        "count": 2,
+        "first_close": 101.0,
+        "last_close": 103.0,
+        "move": 2.0,
+        "move_pct": 1.9802,
+        "high": 104.0,
+        "low": 99.0,
+    }
+
+
+def test_parse_market_context_json_accepts_only_json_objects():
+    assert parse_market_context_json('{"enabled": true}') == {"enabled": True}
+    assert parse_market_context_json("[]") == {}
+    assert parse_market_context_json("{bad json") == {}
+
+
 def test_prompt_generation_excludes_deselected_evidence():
     prompt = manual_ai.generate_prompt(
         question="q",
@@ -520,6 +618,17 @@ def test_analyze_compare_template_loads():
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
 
     assert env.get_template("analyze_compare.html") is not None
+
+
+def test_analyze_template_has_optional_market_context_controls():
+    analyze_template = (TEMPLATE_DIR / "analyze.html").read_text()
+
+    assert "结构化行情上下文（可选）" in analyze_template
+    assert 'name="market_enabled"' in analyze_template
+    assert 'name="market_symbol"' in analyze_template
+    assert 'name="market_interval"' in analyze_template
+    assert 'name="market_context_json"' in analyze_template
+    assert "只在勾选后请求 market adapter" in analyze_template
 
 
 def test_provider_and_market_boundaries_are_inert_without_config(monkeypatch):
