@@ -1,17 +1,20 @@
-更新时间：2026-06-03 22:01（Asia/Shanghai）
+更新时间：2026-06-04 05:22（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
+
+## 2026-06-04
+
+- 新增项目状态摘要 043：记录 `/system` 运维驾驶舱、`/telegram-status` unknown_timeout 核对、`/system/ws-initial` 下钻三个 P0 只读诊断闭环的完成状态、当前运行证据、后续 Provider Adapter 设计优先级和模型档位建议。
+
+## 2026-06-03
 
 - 新增 Dashboard `/system/ws-initial` 只读下钻：列出最近 `source='ws_initial'` 新入库快讯，标记是否晚于当前 `last_ingested_at` 游标，并展示 Telegram 最新状态和 `delivery_log` 确认状态；用于人工判断 WebSocket 重连快照是否覆盖短缺口，不推进游标、不补发 Telegram。
 - 增强 Dashboard `/telegram-status` unknown_timeout 只读核对：状态明细新增 `delivery_log` 确认列，汇总区拆分 24h unknown_timeout、已确认和仍需人工核对数量，帮助判断“超时未知但可能已成功”的投递记录；页面不重试、不补发、不写去重表。
 - 将 Dashboard `/system` 升级为运维驾驶舱：新增顶部总判断、人工动作建议、WebSocket / REST / WebSocket initial history / Telegram 四条链路卡、24h 入库来源与 Telegram 状态条形图；保留原始诊断表供开发排查，页面仍只读且不触发采集、REST 请求或 Telegram 发送。
 - 增强 Dashboard `/system` 只读运行告警：24h Telegram 卡片新增 `unknown_timeout` 数量；当 REST 曾间歇恢复后再次退避时明确提示不要误判为整体采集中断；当 24h 内存在 `unknown_timeout` 时提示人工核对但不自动重发，成功去重仍以 `delivery_log` 为准。
 - 新增项目状态摘要 042：记录 Binance 行情叠加三步完成、`CHANGELOG.md` 按日期分组规则、当前 WebSocket / REST / Telegram 运行状态，以及下一阶段 Provider、Vision、REST 补拉替代和告警增强的优先级编排。
-
-## 2026-06-03
-
 - 在 `/analyze` 手工分析流中加入可选结构化行情上下文：用户勾选后使用分析时间窗口请求 market adapter，预览页展示 Binance 行情摘要，并在生成 Prompt 时独立写入“结构化行情上下文”区块；未勾选或行情失败时手工分析流程继续可用。
 
 ## 2026-06-02
