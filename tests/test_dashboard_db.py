@@ -225,11 +225,19 @@ def test_query_system_health_includes_realtime_pipeline_diagnostics(dashboard_hi
     assert health["delivery_latest"]["unknown_timeout"]["message_id"] == "timeout-1"
     assert health["delivery_latest"]["failed"]["message_id"] == "failed-1"
     assert health["catchup_summary_latest"]["message_id"] == "catchup_summary:gap:start:end"
+    assert health["telegram_counts"] == {"sent": 3, "unknown_timeout": 1, "failed": 1}
     assert health["ws_initial_state"]["last_at"]
     assert health["ws_initial_state"]["count"] == "40"
     assert health["ws_initial_state"]["saved_count"] == "3"
     assert health["ws_initial_state"]["newest_published_at"]
     assert health["ws_initial_state"]["oldest_published_at"]
+    assert health["ops_overview"]["summary"]["status"] == "degraded"
+    assert health["ops_overview"]["summary"]["label"] == "降级运行"
+    lanes = {lane["key"]: lane for lane in health["ops_overview"]["lanes"]}
+    assert lanes["ws"]["badge"] == "可信主路"
+    assert lanes["ws_initial"]["headline"] == "新入库 3 条"
+    assert lanes["telegram"]["status"] == "warn"
+    assert any("核对最近 Telegram unknown_timeout" in action for action in health["ops_overview"]["actions"])
     notice_text = "\n".join(notice["text"] for notice in health["system_notices"])
     assert "WebSocket 初始历史最近快照新入库 3 条" in notice_text
     assert "可能覆盖了实时短缺口" in notice_text
@@ -262,6 +270,10 @@ def test_query_system_health_reads_persisted_rest_backoff_state(dashboard_histor
     assert health["rest_state"]["backoff_until"]
     assert health["rest_state"]["backoff_remaining_seconds"] > 0
     assert "HTTP 403" in health["rest_state"]["last_error"]
+    assert health["ops_overview"]["summary"]["status"] == "degraded"
+    rest_lane = next(lane for lane in health["ops_overview"]["lanes"] if lane["key"] == "rest")
+    assert rest_lane["badge"] == "当前退避"
+    assert any("观察 REST 退避截止时间" in action for action in health["ops_overview"]["actions"])
     assert any("REST 曾间歇恢复后当前再次退避" in notice["text"] for notice in health["system_notices"])
 
 

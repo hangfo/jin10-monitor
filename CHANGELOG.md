@@ -1,9 +1,10 @@
-更新时间：2026-06-03 20:46（Asia/Shanghai）
+更新时间：2026-06-03 21:37（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
+- 将 Dashboard `/system` 升级为运维驾驶舱：新增顶部总判断、人工动作建议、WebSocket / REST / WebSocket initial history / Telegram 四条链路卡、24h 入库来源与 Telegram 状态条形图；保留原始诊断表供开发排查，页面仍只读且不触发采集、REST 请求或 Telegram 发送。
 - 增强 Dashboard `/system` 只读运行告警：24h Telegram 卡片新增 `unknown_timeout` 数量；当 REST 曾间歇恢复后再次退避时明确提示不要误判为整体采集中断；当 24h 内存在 `unknown_timeout` 时提示人工核对但不自动重发，成功去重仍以 `delivery_log` 为准。
 - 新增项目状态摘要 042：记录 Binance 行情叠加三步完成、`CHANGELOG.md` 按日期分组规则、当前 WebSocket / REST / Telegram 运行状态，以及下一阶段 Provider、Vision、REST 补拉替代和告警增强的优先级编排。
 

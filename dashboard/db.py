@@ -85,6 +85,13 @@ def parse_history_datetime(value: object) -> Optional[datetime]:
     return None
 
 
+def safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value or default)
+    except (TypeError, ValueError):
+        return default
+
+
 def history_health() -> dict[str, Any]:
     db_path = history_db_path()
     health: dict[str, Any] = {
@@ -476,6 +483,121 @@ def query_tg_summary(*, hours: int = DEFAULT_HOURS) -> dict[str, Any]:
     }
 
 
+def build_ops_overview(
+    *,
+    monitor_status: str,
+    minutes_stale: Optional[float],
+    rest_status: str,
+    rest_state: dict[str, Any],
+    ws_initial_state: dict[str, Any],
+    realtime_sources: list[dict[str, Any]],
+    delivery_counts: dict[str, int],
+) -> dict[str, Any]:
+    source_map = {source["key"]: source for source in realtime_sources}
+    ws_count = safe_int(source_map.get("ws", {}).get("count_24h"))
+    ws_initial_saved = safe_int(ws_initial_state.get("saved_count"))
+    sent_count = delivery_counts.get("sent", 0)
+    unknown_timeout_count = delivery_counts.get("unknown_timeout", 0)
+    failed_count = delivery_counts.get("failed", 0)
+
+    if monitor_status == "error":
+        summary_status = "error"
+        summary_label = "需要立即排查"
+        summary_text = "主路入库已明显变旧，先确认 WebSocket 进程、launchd 状态和历史库写入。"
+    elif monitor_status == "warn":
+        summary_status = "warn"
+        summary_label = "需要关注"
+        summary_text = "主路仍有记录但新鲜度下降，建议观察 WebSocket 与补拉链路是否继续推进。"
+    elif rest_status == "forbidden_backoff" or unknown_timeout_count or failed_count:
+        summary_status = "degraded"
+        summary_label = "降级运行"
+        summary_text = "WebSocket 主路仍可观察，但 REST 或 Telegram 存在降级信号，需要人工看一眼。"
+    elif monitor_status == "ok":
+        summary_status = "ok"
+        summary_label = "运行正常"
+        summary_text = "WebSocket 主路新鲜，未发现需要立即处理的投递或补拉告警。"
+    else:
+        summary_status = "unknown"
+        summary_label = "状态未知"
+        summary_text = "暂无 last_ingested_at，先确认监控进程是否已完成启动并写入历史库。"
+
+    freshness = "无游标"
+    if minutes_stale is not None:
+        freshness = f"{minutes_stale} 分钟未入库"
+
+    ops_lanes = [
+        {
+            "key": "ws",
+            "label": "WebSocket 主路",
+            "status": "ok" if monitor_status == "ok" else monitor_status,
+            "badge": "可信主路" if monitor_status in {"ok", "warn"} else "需排查",
+            "headline": freshness,
+            "detail": "实时采集的第一判断来源。",
+            "latest": source_map.get("ws", {}).get("latest_published_at", ""),
+            "count_24h": ws_count,
+        },
+        {
+            "key": "rest",
+            "label": "REST 轮询",
+            "status": "degraded" if rest_status == "forbidden_backoff" else ("ok" if rest_status in {"ok", "recent"} else "warn"),
+            "badge": "当前退避" if rest_status == "forbidden_backoff" else ("可用" if rest_status in {"ok", "recent"} else "仅观察"),
+            "headline": rest_state.get("status") or rest_status,
+            "detail": "辅助补拉信号，不代表整体采集是否中断。",
+            "latest": source_map.get("rest", {}).get("latest_published_at", ""),
+            "count_24h": safe_int(source_map.get("rest", {}).get("count_24h")),
+        },
+        {
+            "key": "ws_initial",
+            "label": "Initial History",
+            "status": "info" if ws_initial_saved else "idle",
+            "badge": "补到新消息" if ws_initial_saved else "等待快照",
+            "headline": f"新入库 {ws_initial_saved} 条",
+            "detail": "重连快照可辅助人工判断短缺口。",
+            "latest": ws_initial_state.get("newest_published_at", ""),
+            "count_24h": safe_int(source_map.get("ws_initial", {}).get("count_24h")),
+        },
+        {
+            "key": "telegram",
+            "label": "Telegram 投递",
+            "status": "warn" if unknown_timeout_count or failed_count else "ok",
+            "badge": "需人工核对" if unknown_timeout_count or failed_count else "确认正常",
+            "headline": f"sent {sent_count} / timeout {unknown_timeout_count} / failed {failed_count}",
+            "detail": "unknown_timeout 不自动重发，成功去重仍看 delivery_log。",
+            "latest": "",
+            "count_24h": sent_count + unknown_timeout_count + failed_count,
+        },
+    ]
+
+    ops_actions = []
+    if monitor_status in {"warn", "error", "unknown"}:
+        ops_actions.append("先确认 WebSocket 主路是否继续推进 last_ingested_at。")
+    if rest_status == "forbidden_backoff":
+        ops_actions.append("观察 REST 退避截止时间和最近恢复时间，不把 403 退避误判为整体停采。")
+    if ws_initial_saved:
+        ops_actions.append("查看 WebSocket initial history 新入库记录，人工判断是否覆盖短缺口。")
+    if unknown_timeout_count:
+        ops_actions.append("核对最近 Telegram unknown_timeout 项；不要自动重发，避免破坏 delivery_log 去重语义。")
+    if failed_count:
+        ops_actions.append("检查最近 Telegram failed 明细，区分配置错误和单条消息异常。")
+    if not ops_actions:
+        ops_actions.append("无需立即动作，继续观察 WebSocket 新鲜度和 Telegram sent 数。")
+
+    max_source_count = max((safe_int(source.get("count_24h")) for source in realtime_sources), default=0)
+    max_telegram_count = max(delivery_counts.values(), default=0)
+    return {
+        "summary": {
+            "status": summary_status,
+            "label": summary_label,
+            "text": summary_text,
+            "freshness": freshness,
+        },
+        "lanes": ops_lanes,
+        "actions": ops_actions,
+        "max_source_count": max(1, max_source_count),
+        "max_telegram_count": max(1, max_telegram_count),
+    }
+
+
 def query_system_health() -> dict[str, Any]:
     db_path = history_db_path()
     since = since_text(24)
@@ -625,6 +747,20 @@ def query_system_health() -> dict[str, Any]:
             "level": "warn",
             "text": f"24h 内 Telegram unknown_timeout {unknown_timeout_24h} 条，建议人工核对投递状态；当前不会自动重发，成功去重仍以 delivery_log 为准。",
         })
+    telegram_counts = {
+        "sent": delivery_counts.get("sent", 0),
+        "unknown_timeout": unknown_timeout_24h,
+        "failed": delivery_counts.get("failed", 0),
+    }
+    ops_overview = build_ops_overview(
+        monitor_status=monitor_status,
+        minutes_stale=minutes_stale,
+        rest_status=rest_status,
+        rest_state=rest_state,
+        ws_initial_state=ws_initial_state,
+        realtime_sources=realtime_sources,
+        delivery_counts=telegram_counts,
+    )
     return {
         "monitor_status": monitor_status,
         "minutes_stale": minutes_stale,
@@ -646,6 +782,8 @@ def query_system_health() -> dict[str, Any]:
         "rest_state": rest_state,
         "ws_initial_state": ws_initial_state,
         "system_notices": system_notices,
+        "telegram_counts": telegram_counts,
+        "ops_overview": ops_overview,
         "delivery_latest": delivery_latest,
         "catchup_summary_latest": row_to_dict(catchup_summary_row) if catchup_summary_row else {},
     }
