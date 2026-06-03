@@ -1,8 +1,12 @@
-更新时间：2026-06-03 19:40（Asia/Shanghai）
+更新时间：2026-06-03 20:26（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
+
+- 新增项目状态摘要 042：记录 Binance 行情叠加三步完成、`CHANGELOG.md` 按日期分组规则、当前 WebSocket / REST / Telegram 运行状态，以及下一阶段 Provider、Vision、REST 补拉替代和告警增强的优先级编排。
+
+## 2026-06-03
 
 - 在 `/analyze` 手工分析流中加入可选结构化行情上下文：用户勾选后使用分析时间窗口请求 market adapter，预览页展示 Binance 行情摘要，并在生成 Prompt 时独立写入“结构化行情上下文”区块；未勾选或行情失败时手工分析流程继续可用。
 
