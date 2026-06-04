@@ -1,5 +1,7 @@
 import asyncio
 import json
+import threading
+import time
 import urllib.parse
 from datetime import datetime
 
@@ -126,6 +128,38 @@ def test_binance_adapter_uses_cache(monkeypatch):
 
     assert adapter.fetch_klines(**args)[0].close == 67050.4
     assert adapter.fetch_klines(**args)[0].close == 67050.4
+    assert len(calls) == 1
+
+
+def test_binance_adapter_deduplicates_concurrent_cache_misses():
+    calls = []
+    started = threading.Event()
+
+    class SlowAdapter(BinanceMarketAdapter):
+        def _fetch_json(self, path, params):
+            calls.append((path, params))
+            started.set()
+            time.sleep(0.05)
+            return sample_binance_payload()
+
+    adapter = SlowAdapter(base_url="https://example.test", timeout_seconds=1, cache_ttl_seconds=60)
+    args = {
+        "symbol": "BTCUSDT",
+        "interval": "1m",
+        "start": "2024-06-01 20:00:00",
+        "end": "2024-06-01 20:01:00",
+    }
+    results = []
+
+    first = threading.Thread(target=lambda: results.append(adapter.fetch_klines(**args)[0].close))
+    second = threading.Thread(target=lambda: results.append(adapter.fetch_klines(**args)[0].close))
+    first.start()
+    assert started.wait(timeout=1)
+    second.start()
+    first.join(timeout=1)
+    second.join(timeout=1)
+
+    assert results == [67050.4, 67050.4]
     assert len(calls) == 1
 
 

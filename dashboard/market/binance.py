@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -46,6 +47,8 @@ class BinanceMarketAdapter(BaseMarketAdapter):
             DEFAULT_CACHE_TTL_SECONDS,
         )
         self._cache: dict[str, _CacheEntry] = {}
+        self._in_flight: dict[str, threading.Event] = {}
+        self._lock = threading.Lock()
 
     @property
     def name(self) -> str:
@@ -68,24 +71,51 @@ class BinanceMarketAdapter(BaseMarketAdapter):
             f"{self.name}:{normalized_symbol}:{normalized_interval}:"
             f"{format_market_datetime(start_dt)}:{format_market_datetime(end_dt)}"
         )
-        cached = self._cache.get(cache_key)
-        now = time.time()
-        if cached and cached.expires_at > now:
-            return list(cached.klines)
+        event: threading.Event | None = None
+        with self._lock:
+            cached = self._cache.get(cache_key)
+            now = time.time()
+            if cached and cached.expires_at > now:
+                return list(cached.klines)
+            event = self._in_flight.get(cache_key)
+            if event is None:
+                event = threading.Event()
+                self._in_flight[cache_key] = event
+                should_fetch = True
+            else:
+                should_fetch = False
 
-        payload = self._fetch_json(
-            "/api/v3/klines",
-            {
-                "symbol": normalized_symbol,
-                "interval": normalized_interval,
-                "startTime": str(to_epoch_ms(start_dt)),
-                "endTime": str(to_epoch_ms(end_dt)),
-                "limit": str(min(MAX_KLINES, max(1, estimated))),
-            },
-        )
-        klines = parse_binance_klines(payload)
-        self._cache[cache_key] = _CacheEntry(now + max(0.0, self.cache_ttl_seconds), klines)
-        return list(klines)
+        if not should_fetch:
+            event.wait(timeout=max(0.1, self.timeout_seconds) + 1.0)
+            with self._lock:
+                cached = self._cache.get(cache_key)
+                if cached and cached.expires_at > time.time():
+                    return list(cached.klines)
+            raise MarketAdapterError("binance in-flight request did not populate cache")
+
+        try:
+            payload = self._fetch_json(
+                "/api/v3/klines",
+                {
+                    "symbol": normalized_symbol,
+                    "interval": normalized_interval,
+                    "startTime": str(to_epoch_ms(start_dt)),
+                    "endTime": str(to_epoch_ms(end_dt)),
+                    "limit": str(min(MAX_KLINES, max(1, estimated))),
+                },
+            )
+            klines = parse_binance_klines(payload)
+            with self._lock:
+                self._cache[cache_key] = _CacheEntry(
+                    time.time() + max(0.0, self.cache_ttl_seconds),
+                    klines,
+                )
+            return list(klines)
+        finally:
+            with self._lock:
+                finished = self._in_flight.pop(cache_key, None)
+            if finished:
+                finished.set()
 
     def _fetch_json(self, path: str, params: dict[str, str]) -> Any:
         url = f"{self.base_url}{path}?{urllib.parse.urlencode(params)}"

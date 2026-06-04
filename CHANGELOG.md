@@ -1,10 +1,16 @@
-更新时间：2026-06-04 05:22（Asia/Shanghai）
+更新时间：2026-06-04 20:11（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
 ## 2026-06-04
+
+- 修复 Dashboard 搜索关键字中的 SQLite `LIKE` 通配符误匹配：`%`、`_` 和反斜杠会按字面量搜索，避免快讯筛选、分页和最新时间判断失准。
+- 增强 Binance market adapter 缓存并发保护：同一 symbol / interval / window 同时未命中缓存时只发起一次 public REST 请求，等待者复用缓存结果或收到明确降级错误。
+- 实现 Dashboard LLM Provider Adapter 第一版：支持 Anthropic Messages API、Gemini API、OpenAI-compatible API（DeepSeek / GLM 等）和 OpenAI 备用 provider；`/analyze` Prompt 草稿可显式调用已配置 Provider 并保存到独立分析库，默认无 key 时不请求模型 API。
+- 新增 Provider Adapter 与 review 后续计划 007：记录本轮采纳项、暂缓删除旧 Dashboard 的边界、Gemini / GLM / DeepSeek / Anthropic 试用顺序和后续 P0/P1/P2 排期。
+- 新增项目状态摘要 044：记录 review 修复和 Provider Adapter 第一版收口、当前验证结果、明确未做事项，并给出下一 session 继续 Canvas mini 折线图的复制提示。
 
 - 新增项目状态摘要 043：记录 `/system` 运维驾驶舱、`/telegram-status` unknown_timeout 核对、`/system/ws-initial` 下钻三个 P0 只读诊断闭环的完成状态、当前运行证据、后续 Provider Adapter 设计优先级和模型档位建议。
 

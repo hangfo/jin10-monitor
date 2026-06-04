@@ -460,6 +460,21 @@
     </div>
     <textarea id="prompt-text" class="prompt-box" readonly>{{ prompt }}</textarea>
 
+    {% set available_providers = provider_statuses | selectattr('available') | list %}
+    {% if available_providers %}
+    <div style="border-top:1px solid var(--border-soft);margin-top:16px;padding-top:14px">
+      <h2 style="margin-top:0">一键调用 Provider</h2>
+      <form method="post" action="/analyze/{{ run_id }}/run-provider" style="align-items:center;display:flex;gap:10px;flex-wrap:wrap">
+        <select name="provider">
+          {% for provider in available_providers %}
+          <option value="{{ provider.key }}">{{ provider.label }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit">调用并保存</button>
+      </form>
+    </div>
+    {% endif %}
+
     <div style="border-top:1px solid var(--border-soft);margin-top:16px;padding-top:14px">
       <h2 style="margin-top:0">粘贴 AI 回答</h2>
       <form method="post" action="/analyze/save-answer">

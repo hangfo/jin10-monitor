@@ -1,4 +1,4 @@
-"""Optional LLM provider interfaces for future Phase 2B work."""
+"""Optional LLM provider interfaces for dashboard analysis."""
 
 from __future__ import annotations
 
@@ -55,6 +55,14 @@ def _anthropic_configured() -> bool:
     return bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
 
 
+def _gemini_configured() -> bool:
+    return bool(os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip())
+
+
+def _compatible_configured() -> bool:
+    return bool(os.getenv("COMPAT_LLM_API_KEY", "").strip())
+
+
 def provider_statuses() -> list[ProviderStatus]:
     return [
         ProviderStatus(
@@ -69,14 +77,28 @@ def provider_statuses() -> list[ProviderStatus]:
             label="OpenAI",
             configured=_openai_configured(),
             available=_openai_configured(),
-            note="Phase 2B 接入前仅检查 OPENAI_API_KEY 是否存在，不发起网络请求。",
+            note="配置 OPENAI_API_KEY 后可作为备用直连 provider。",
         ),
         ProviderStatus(
             key="anthropic",
             label="Anthropic",
             configured=_anthropic_configured(),
             available=_anthropic_configured(),
-            note="Phase 2B 接入前仅检查 ANTHROPIC_API_KEY 是否存在，不发起网络请求。",
+            note="配置 ANTHROPIC_API_KEY 后调用 Anthropic Messages API；默认不启用。",
+        ),
+        ProviderStatus(
+            key="gemini",
+            label="Gemini",
+            configured=_gemini_configured(),
+            available=_gemini_configured(),
+            note="推荐免费优先试用项；配置 GEMINI_API_KEY 或 GOOGLE_API_KEY 后调用 Gemini API。",
+        ),
+        ProviderStatus(
+            key="compatible",
+            label=os.getenv("COMPAT_LLM_LABEL", "OpenAI Compatible"),
+            configured=_compatible_configured(),
+            available=_compatible_configured(),
+            note="用于 DeepSeek / GLM 等 OpenAI-compatible API；配置 base URL、model 和 key 后启用。",
         ),
     ]
 
@@ -94,5 +116,15 @@ def get_provider(name: Optional[str]) -> Optional[BaseProvider]:
         from .anthropic_provider import AnthropicProvider
 
         provider = AnthropicProvider()
+        return provider if provider.is_available() else None
+    if provider_name == "gemini":
+        from .gemini_provider import GeminiProvider
+
+        provider = GeminiProvider()
+        return provider if provider.is_available() else None
+    if provider_name in {"compatible", "openai_compatible", "deepseek", "glm"}:
+        from .compatible_provider import OpenAICompatibleProvider
+
+        provider = OpenAICompatibleProvider()
         return provider if provider.is_available() else None
     return None

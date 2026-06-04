@@ -232,6 +232,21 @@ def test_query_recent_items_filters_keyword(dashboard_history_db):
     assert db.query_recent_items(keyword="missing keyword") == []
 
 
+def test_query_keyword_escapes_sql_like_wildcards(dashboard_history_db):
+    conn = sqlite3.connect(dashboard_history_db)
+    percent_ts = history_ts(-8)
+    insert_flash(conn, "percent-literal", percent_ts, "BTC 50%收益")
+    insert_flash(conn, "percent-wildcard", history_ts(-7), "BTC 50X收益")
+    insert_flash(conn, "underscore-literal", history_ts(-6), "BTC_突破")
+    insert_flash(conn, "underscore-wildcard", history_ts(-5), "BTCA突破")
+    conn.commit()
+    conn.close()
+
+    assert [row["id"] for row in db.query_recent_items(keyword="50%收益")] == ["percent-literal"]
+    assert [row["id"] for row in db.query_feed_page(keyword="BTC_突破")] == ["underscore-literal"]
+    assert db.query_latest_published_at(keyword="50%收益") == percent_ts
+
+
 def test_query_recent_items_clamps_limit(dashboard_history_db):
     rows = db.query_recent_items(limit=0)
 

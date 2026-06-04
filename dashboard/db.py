@@ -92,6 +92,10 @@ def safe_int(value: object, default: int = 0) -> int:
         return default
 
 
+def escape_like(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def history_health() -> dict[str, Any]:
     db_path = history_db_path()
     health: dict[str, Any] = {
@@ -130,8 +134,8 @@ def query_recent_items(
         clauses.append("h.priority_level = ?")
         params.append(priority)
     if keyword:
-        clauses.append("(h.title LIKE ? OR h.content LIKE ?)")
-        pattern = f"%{keyword[:80]}%"
+        clauses.append("(h.title LIKE ? ESCAPE '\\' OR h.content LIKE ? ESCAPE '\\')")
+        pattern = f"%{escape_like(keyword[:80])}%"
         params.extend([pattern, pattern])
     if tg_sent_only:
         clauses.append("EXISTS (SELECT 1 FROM delivery_log dl WHERE dl.message_id = h.id)")
@@ -208,8 +212,8 @@ def query_feed_page(
         clauses.append("h.priority_level = ?")
         params.append(priority)
     if keyword:
-        clauses.append("(h.title LIKE ? OR h.content LIKE ?)")
-        pattern = f"%{keyword[:80]}%"
+        clauses.append("(h.title LIKE ? ESCAPE '\\' OR h.content LIKE ? ESCAPE '\\')")
+        pattern = f"%{escape_like(keyword[:80])}%"
         params.extend([pattern, pattern])
     if tg_sent_only:
         clauses.append("EXISTS (SELECT 1 FROM delivery_log dl WHERE dl.message_id = h.id)")
@@ -282,8 +286,8 @@ def query_latest_published_at(
         clauses.append("h.priority_level = ?")
         params.append(priority)
     if keyword:
-        clauses.append("(h.title LIKE ? OR h.content LIKE ?)")
-        pattern = f"%{keyword[:80]}%"
+        clauses.append("(h.title LIKE ? ESCAPE '\\' OR h.content LIKE ? ESCAPE '\\')")
+        pattern = f"%{escape_like(keyword[:80])}%"
         params.extend([pattern, pattern])
     if tg_sent_only:
         clauses.append("EXISTS (SELECT 1 FROM delivery_log dl WHERE dl.message_id = h.id)")
@@ -332,9 +336,9 @@ def query_keyword_heatmap(*, hours: int = DEFAULT_HOURS, limit: int = 14) -> lis
                 """
                 SELECT COUNT(*)
                 FROM flash_history
-                WHERE published_at >= ? AND (title LIKE ? OR content LIKE ?)
+                WHERE published_at >= ? AND (title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
                 """,
-                (since_text(hours), f"%{keyword}%", f"%{keyword}%"),
+                (since_text(hours), f"%{escape_like(keyword)}%", f"%{escape_like(keyword)}%"),
             ).fetchone()[0]
             if count:
                 rows.append({"keyword": keyword, "count": count, "is_high": keyword in high_keywords})

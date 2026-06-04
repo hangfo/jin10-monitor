@@ -48,7 +48,7 @@ from .db import (
 from .evidence import build_evidence_for_preview, known_assets
 from .market.base import MarketAdapterError, configured_market_adapter_name, get_market_adapter
 from .manual_ai import PROMPT_VERSION, generate_prompt, parse_answer, render_answer_with_links
-from .providers.base import provider_statuses
+from .providers.base import ProviderError, get_provider, provider_statuses
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 PRIORITY_OPTIONS = [
@@ -104,6 +104,14 @@ def priority_css(level: object) -> str:
         "T1_NORMAL": "t1",
         "T0_NONE": "t0",
     }.get(str(level or ""), "t0")
+
+
+def callable_provider_statuses() -> list[dict[str, object]]:
+    return [
+        {"key": status.key, "label": status.label, "available": status.available, "note": status.note}
+        for status in provider_statuses()
+        if status.key != "manual"
+    ]
 
 
 def parse_int(value: object, default: int, minimum: int, maximum: int) -> int:
@@ -563,6 +571,7 @@ def create_app() -> FastAPI:
                 "market_context": market_context,
                 "evidence": evidence,
                 "prompt": prompt,
+                "provider_statuses": callable_provider_statuses(),
                 "known_assets": known_assets(),
                 "prefill": {},
                 "nav": query_nav_summary(),
@@ -581,6 +590,7 @@ def create_app() -> FastAPI:
             run_id=run_id,
             answer_text=answer_text,
             manual_prompt=manual_prompt,
+            model_label="manual_chatgpt_business",
             answer_json=parsed,
             judgement=str(parsed.get("judgement") or "unclear"),
             overall_confidence=float(parsed.get("overall_confidence") or 0),
@@ -636,8 +646,62 @@ def create_app() -> FastAPI:
                 "run": run,
                 "run_id": run_id,
                 "answer_html": answer_html,
+                "provider_statuses": callable_provider_statuses(),
+                "provider_error": str(request.query_params.get("provider_error", "") or ""),
+                "provider_success": str(request.query_params.get("provider_success", "") or ""),
                 "nav": query_nav_summary(),
             },
+        )
+
+    @app.post("/analyze/{run_id}/run-provider")
+    async def analyze_run_provider(request: Request, run_id: str):
+        form = await read_urlencoded_form(request)
+        provider_name = form.get("provider", "").strip()
+        init_analysis_db()
+        run = get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="analysis run not found")
+        if str(run.get("status") or "") != "draft":
+            return RedirectResponse(
+                f"/analyze/{run_id}?provider_error=analysis%20run%20is%20already%20done",
+                status_code=303,
+            )
+        manual_prompt = str(run.get("manual_prompt") or "").strip()
+        if not manual_prompt:
+            return RedirectResponse(
+                f"/analyze/{run_id}?provider_error=manual%20prompt%20is%20empty",
+                status_code=303,
+            )
+        provider = get_provider(provider_name)
+        if not provider:
+            return RedirectResponse(
+                f"/analyze/{run_id}?provider_error=provider%20is%20not%20available",
+                status_code=303,
+            )
+        try:
+            result = await asyncio.to_thread(
+                provider.complete,
+                "请严格执行用户 Prompt 中的系统指令，输出严格 JSON，不要添加前言或 Markdown 代码块。",
+                manual_prompt,
+            )
+            parsed = parse_answer(result.text)
+            save_answer(
+                run_id=run_id,
+                answer_text=result.text,
+                manual_prompt=manual_prompt,
+                model_label=result.model_label,
+                answer_json=parsed,
+                judgement=str(parsed.get("judgement") or "unclear"),
+                overall_confidence=float(parsed.get("overall_confidence") or 0),
+            )
+        except ProviderError as exc:
+            return RedirectResponse(
+                f"/analyze/{run_id}?provider_error={urlencode({'e': str(exc)[:160]})[2:]}",
+                status_code=303,
+            )
+        return RedirectResponse(
+            f"/analyze/{run_id}?provider_success={urlencode({'e': provider.name})[2:]}",
+            status_code=303,
         )
 
     @app.post("/analyze/{run_id}/delete")

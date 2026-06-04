@@ -551,6 +551,7 @@ def test_analysis_routes_are_registered_before_dynamic_detail():
     assert "/analyze/save-answer" in paths
     assert "/analyze/compare" in paths
     assert "/analyze/history" in paths
+    assert "/analyze/{run_id}/run-provider" in paths
     assert "/analyze/{run_id}" in paths
     assert paths.index("/analyze/compare") < paths.index("/analyze/{run_id}")
     assert paths.index("/analyze/history") < paths.index("/analyze/{run_id}")
@@ -634,6 +635,9 @@ def test_analyze_template_has_optional_market_context_controls():
 def test_provider_and_market_boundaries_are_inert_without_config(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("COMPAT_LLM_API_KEY", raising=False)
     monkeypatch.delenv("MARKET_ADAPTER", raising=False)
 
     from dashboard.market.base import configured_market_adapter_name, get_market_adapter
@@ -644,22 +648,87 @@ def test_provider_and_market_boundaries_are_inert_without_config(monkeypatch):
     assert get_provider("manual") is None
     assert get_provider("openai") is None
     assert get_provider("anthropic") is None
+    assert get_provider("gemini") is None
+    assert get_provider("compatible") is None
     assert configured_market_adapter_name() == ""
     assert get_market_adapter() is None
     statuses = {status.key: status for status in provider_statuses()}
     assert statuses["manual"].available is True
     assert statuses["openai"].available is False
     assert statuses["anthropic"].available is False
+    assert statuses["gemini"].available is False
+    assert statuses["compatible"].available is False
 
 
-def test_provider_stubs_report_configured_keys_without_network(monkeypatch):
+def test_provider_adapters_report_configured_keys_without_network(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setenv("COMPAT_LLM_API_KEY", "test-compatible-key")
 
     from dashboard.providers.base import get_provider
 
     assert get_provider("openai").is_available() is True
     assert get_provider("anthropic").is_available() is True
+    assert get_provider("gemini").is_available() is True
+    assert get_provider("compatible").is_available() is True
+
+
+def test_provider_adapters_parse_successful_responses(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setenv("COMPAT_LLM_API_KEY", "test-compatible-key")
+
+    from dashboard.providers.anthropic_provider import AnthropicProvider
+    from dashboard.providers.compatible_provider import OpenAICompatibleProvider
+    from dashboard.providers.gemini_provider import GeminiProvider
+
+    class FakeAnthropic(AnthropicProvider):
+        def _post_json(self, payload, *, api_key):
+            assert api_key == "test-anthropic-key"
+            return {
+                "model": "claude-test",
+                "content": [{"type": "text", "text": '{"judgement":"news_driven"}'}],
+                "usage": {"input_tokens": 11, "output_tokens": 7},
+            }
+
+    class FakeGemini(GeminiProvider):
+        def _post_json(self, payload, *, api_key):
+            assert api_key == "test-gemini-key"
+            return {
+                "candidates": [{"content": {"parts": [{"text": '{"judgement":"macro_sentiment"}'}]}}],
+                "usageMetadata": {"promptTokenCount": 13, "candidatesTokenCount": 5},
+            }
+
+    class FakeCompatible(OpenAICompatibleProvider):
+        def _post_json(self, payload, *, api_key):
+            assert api_key == "test-compatible-key"
+            return {
+                "model": "deepseek-test",
+                "choices": [{"message": {"content": '{"judgement":"unclear"}'}}],
+                "usage": {"prompt_tokens": 17, "completion_tokens": 3},
+            }
+
+    anthropic = FakeAnthropic().complete("system", "user")
+    gemini = FakeGemini().complete("system", "user")
+    compatible = FakeCompatible().complete("system", "user")
+
+    assert anthropic.text == '{"judgement":"news_driven"}'
+    assert anthropic.model_label == "anthropic:claude-test"
+    assert anthropic.input_tokens == 11
+    assert gemini.model_label == "gemini:gemini-2.5-flash"
+    assert gemini.output_tokens == 5
+    assert compatible.model_label == "compatible:deepseek-test"
+    assert compatible.input_tokens == 17
+
+
+def test_analyze_templates_expose_provider_run_controls():
+    analyze_template = (TEMPLATE_DIR / "analyze.html").read_text()
+    run_template = (TEMPLATE_DIR / "analyze_run.html").read_text()
+
+    assert "/analyze/{{ run_id }}/run-provider" in analyze_template
+    assert "/analyze/{{ run.id }}/run-provider" in run_template
+    assert "provider_error" in run_template
 
 
 def test_item_template_shows_published_at_to_second():

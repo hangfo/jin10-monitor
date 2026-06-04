@@ -121,6 +121,17 @@
   </div>
   {% endif %}
 
+  {% if provider_error %}
+  <div class="panel" style="background:var(--fail-bg);margin-bottom:12px;color:var(--fail-fg)">
+    Provider 调用失败：{{ provider_error }}
+  </div>
+  {% endif %}
+  {% if provider_success %}
+  <div class="panel" style="background:var(--sent-bg);margin-bottom:12px;color:var(--sent-fg)">
+    Provider 已保存：{{ provider_success }}
+  </div>
+  {% endif %}
+
   <div class="run-grid">
     <div>
       {% if run.status == 'done' and answer_html %}
@@ -131,6 +142,17 @@
       {% elif run.status == 'draft' %}
       <div class="card card-body" style="margin-bottom:16px">
         <h2 style="margin-top:0">草稿记录：粘贴回答</h2>
+        {% set available_providers = provider_statuses | selectattr('available') | list %}
+        {% if available_providers and run.manual_prompt %}
+        <form method="post" action="/analyze/{{ run.id }}/run-provider" style="align-items:center;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+          <select name="provider">
+            {% for provider in available_providers %}
+            <option value="{{ provider.key }}">{{ provider.label }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit">调用并保存</button>
+        </form>
+        {% endif %}
         <form method="post" action="/analyze/save-answer">
           <input type="hidden" name="run_id" value="{{ run.id }}">
           <input type="hidden" name="manual_prompt" value="{{ run.manual_prompt }}">
