@@ -743,6 +743,9 @@ def test_item_template_has_user_triggered_market_overlay():
 
     assert "行情上下文" in item_template
     assert "id=\"market-load\"" in item_template
+    assert "id=\"market-chart\"" in item_template
+    assert "drawMarketChart" in item_template
+    assert "data-news-time" in item_template
     assert "/api/market/klines?" in item_template
     assert "未加载。仅点击后请求 market adapter。" in item_template
     assert "addEventListener(\"click\"" in item_template

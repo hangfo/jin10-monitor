@@ -1,4 +1,4 @@
-更新时间：2026-06-04 20:11（Asia/Shanghai）
+更新时间：2026-06-04 20:20（Asia/Shanghai）
 
 # Changelog
 
@@ -6,6 +6,7 @@
 
 ## 2026-06-04
 
+- 在 `/item/{id}` 行情上下文面板新增 Canvas mini 折线图：点击加载行情后展示 close 走势、涨跌颜色、首尾价格和快讯时间竖线标记；仍保持用户触发、只读、无首页批量行情请求。
 - 修复 Dashboard 搜索关键字中的 SQLite `LIKE` 通配符误匹配：`%`、`_` 和反斜杠会按字面量搜索，避免快讯筛选、分页和最新时间判断失准。
 - 增强 Binance market adapter 缓存并发保护：同一 symbol / interval / window 同时未命中缓存时只发起一次 public REST 请求，等待者复用缓存结果或收到明确降级错误。
 - 实现 Dashboard LLM Provider Adapter 第一版：支持 Anthropic Messages API、Gemini API、OpenAI-compatible API（DeepSeek / GLM 等）和 OpenAI 备用 provider；`/analyze` Prompt 草稿可显式调用已配置 Provider 并保存到独立分析库，默认无 key 时不请求模型 API。

@@ -28,6 +28,49 @@
     font-weight: 650;
     margin-top: 3px;
   }
+  .market-chart-wrap {
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    margin-top: 12px;
+    padding: 10px;
+  }
+  .market-chart-head {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .market-chart-legend {
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 12px;
+    gap: 10px;
+  }
+  .market-chart-legend span {
+    align-items: center;
+    display: inline-flex;
+    gap: 4px;
+  }
+  .market-chart-dot {
+    border-radius: 999px;
+    display: inline-block;
+    height: 8px;
+    width: 8px;
+  }
+  .market-chart-dot.price {
+    background: var(--accent);
+  }
+  .market-chart-dot.news {
+    background: var(--warn-fg);
+  }
+  #market-chart {
+    display: block;
+    height: 180px;
+    width: 100%;
+  }
   .market-table {
     margin-top: 12px;
     overflow-x: auto;
@@ -98,7 +141,7 @@
   </section>
 
   <h2>行情上下文</h2>
-  <section class="panel" id="market-panel" data-default-start="{{ market_start }}" data-default-end="{{ market_end }}">
+  <section class="panel" id="market-panel" data-default-start="{{ market_start }}" data-default-end="{{ market_end }}" data-news-time="{{ (center.published_at or '')[:19] }}">
     <div class="market-controls">
       <div class="filter-group">
         <label for="market-symbol">交易对</label>
@@ -128,6 +171,16 @@
     <div class="market-status meta" id="market-status">未加载。仅点击后请求 market adapter。</div>
     <div id="market-result" hidden>
       <div class="market-summary" id="market-summary"></div>
+      <div class="market-chart-wrap">
+        <div class="market-chart-head">
+          <strong>分钟走势</strong>
+          <div class="market-chart-legend">
+            <span><i class="market-chart-dot price"></i>Close</span>
+            <span><i class="market-chart-dot news"></i>快讯时间</span>
+          </div>
+        </div>
+        <canvas id="market-chart" width="920" height="180" aria-label="行情走势折线图"></canvas>
+      </div>
       <div class="market-table">
         <table>
           <thead>
@@ -173,6 +226,9 @@
     const marketResult = document.getElementById("market-result");
     const marketSummary = document.getElementById("market-summary");
     const marketRows = document.getElementById("market-rows");
+    const marketPanel = document.getElementById("market-panel");
+    const marketChart = document.getElementById("market-chart");
+    let lastMarketKlines = [];
 
     function formatNumber(value) {
       const parsed = Number(value);
@@ -234,6 +290,120 @@
       marketRows.replaceChildren(...rows);
     }
 
+    function parseMarketTime(value) {
+      const text = String(value || "").trim();
+      if (!text) return NaN;
+      return new Date(text.replace(" ", "T")).getTime();
+    }
+
+    function drawMarketChart(klines) {
+      const context = marketChart.getContext("2d");
+      const rect = marketChart.getBoundingClientRect();
+      const width = Math.max(320, Math.floor(rect.width || 920));
+      const height = 180;
+      const ratio = window.devicePixelRatio || 1;
+      marketChart.width = Math.floor(width * ratio);
+      marketChart.height = Math.floor(height * ratio);
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, width, height);
+      context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim() || "#fff";
+      context.fillRect(0, 0, width, height);
+
+      const closes = klines.map((item) => Number(item.close)).filter((value) => Number.isFinite(value));
+      if (closes.length < 2) {
+        context.fillStyle = "#657177";
+        context.font = "12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+        context.fillText("K 线数量不足，无法绘制走势", 14, 28);
+        return;
+      }
+
+      const times = klines.map((item) => parseMarketTime(item.open_time));
+      const minClose = Math.min(...closes);
+      const maxClose = Math.max(...closes);
+      const padding = {top: 18, right: 58, bottom: 28, left: 58};
+      const chartWidth = width - padding.left - padding.right;
+      const chartHeight = height - padding.top - padding.bottom;
+      const priceRange = maxClose - minClose || Math.max(Math.abs(maxClose) * 0.001, 1);
+      const firstClose = Number(klines[0].close);
+      const lastClose = Number(klines[klines.length - 1].close);
+      const rising = lastClose >= firstClose;
+      const lineColor = rising ? "#17633a" : "#9d221d";
+      const fillColor = rising ? "rgba(23, 99, 58, 0.11)" : "rgba(157, 34, 29, 0.11)";
+      const gridColor = getComputedStyle(document.documentElement).getPropertyValue("--border-soft").trim() || "#e4e7e5";
+      const mutedColor = getComputedStyle(document.documentElement).getPropertyValue("--muted").trim() || "#657177";
+
+      function xForIndex(index) {
+        return padding.left + (klines.length === 1 ? 0 : (index / (klines.length - 1)) * chartWidth);
+      }
+
+      function yForClose(close) {
+        return padding.top + ((maxClose - close) / priceRange) * chartHeight;
+      }
+
+      context.strokeStyle = gridColor;
+      context.lineWidth = 1;
+      context.beginPath();
+      for (let i = 0; i <= 3; i += 1) {
+        const y = padding.top + (i / 3) * chartHeight;
+        context.moveTo(padding.left, y);
+        context.lineTo(width - padding.right, y);
+      }
+      context.stroke();
+
+      context.beginPath();
+      closes.forEach((close, index) => {
+        const x = xForIndex(index);
+        const y = yForClose(close);
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.lineTo(xForIndex(klines.length - 1), padding.top + chartHeight);
+      context.lineTo(xForIndex(0), padding.top + chartHeight);
+      context.closePath();
+      context.fillStyle = fillColor;
+      context.fill();
+
+      context.beginPath();
+      closes.forEach((close, index) => {
+        const x = xForIndex(index);
+        const y = yForClose(close);
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.strokeStyle = lineColor;
+      context.lineWidth = 2;
+      context.stroke();
+
+      const newsTime = parseMarketTime(marketPanel.dataset.newsTime);
+      const validTimes = times.filter((time) => Number.isFinite(time));
+      if (Number.isFinite(newsTime) && validTimes.length >= 2) {
+        const minTime = validTimes[0];
+        const maxTime = validTimes[validTimes.length - 1];
+        if (newsTime >= minTime && newsTime <= maxTime && maxTime > minTime) {
+          const newsX = padding.left + ((newsTime - minTime) / (maxTime - minTime)) * chartWidth;
+          context.setLineDash([4, 4]);
+          context.strokeStyle = "#7a4b00";
+          context.lineWidth = 1;
+          context.beginPath();
+          context.moveTo(newsX, padding.top);
+          context.lineTo(newsX, padding.top + chartHeight);
+          context.stroke();
+          context.setLineDash([]);
+          context.fillStyle = "#7a4b00";
+          context.font = "12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+          context.fillText("快讯", Math.min(newsX + 6, width - padding.right - 28), padding.top + 13);
+        }
+      }
+
+      context.fillStyle = mutedColor;
+      context.font = "12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+      context.fillText(formatNumber(maxClose), 6, padding.top + 4);
+      context.fillText(formatNumber(minClose), 6, padding.top + chartHeight);
+      context.fillText(formatNumber(firstClose), padding.left, height - 8);
+      const lastLabel = formatNumber(lastClose);
+      context.fillText(lastLabel, Math.max(padding.left, width - padding.right - lastLabel.length * 7), height - 8);
+    }
+
     document.getElementById("market-load").addEventListener("click", async () => {
       const symbol = document.getElementById("market-symbol").value;
       const interval = document.getElementById("market-interval").value;
@@ -251,10 +421,18 @@
         }
         marketStatus.textContent = `${data.adapter || "market"} · ${data.symbol || symbol} · ${data.interval || interval}`;
         renderMarketSummary(data.symbol || symbol, data.klines);
+        lastMarketKlines = data.klines;
+        drawMarketChart(lastMarketKlines);
         renderMarketRows(data.klines);
         marketResult.hidden = false;
       } catch (error) {
         marketStatus.textContent = `market data unavailable: ${error}`;
+      }
+    });
+
+    window.addEventListener("resize", () => {
+      if (!marketResult.hidden && lastMarketKlines.length) {
+        drawMarketChart(lastMarketKlines);
       }
     });
   </script>

@@ -1,4 +1,4 @@
-更新时间：2026-06-04 14:58（Asia/Shanghai）
+更新时间：2026-06-04 20:20（Asia/Shanghai）
 
 # 007 - Provider Adapter 与 Review 后续计划
 
@@ -61,6 +61,17 @@
 - `/analyze` 生成 Prompt 后，如果存在可用 Provider，显示“调用并保存”。
 - `/analyze/{run_id}` 草稿页同样支持显式调用。
 - 自动调用结果只写分析库，并保存 `model_label`。
+
+### Canvas mini 折线图
+
+采纳。
+
+实施：
+
+- 第一版放在 `/item/{id}` 行情上下文面板。
+- 用户点击“加载行情”后，在行情摘要和 K 线表格之间展示 close mini 折线图。
+- 图中标注快讯发布时间竖线，并按首尾 close 涨跌切换颜色。
+- 不新增后端 API，不首页批量请求行情。
 
 ## 3. 免费 / 低成本模型选择
 
@@ -156,14 +167,14 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 ### P0 / 下一步
 
 1. 验证 Gemini API 真实 key 的一键分析效果。
-2. 给 Provider 调用增加更友好的失败展示：HTTP 状态、厂商、模型、耗时。
-3. 给分析历史页展示 `model_label`，便于比较 Gemini / GLM / DeepSeek 输出质量。
+2. 给分析历史页展示 `model_label`，便于比较 Gemini / GLM / DeepSeek 输出质量。
+3. 给 Provider 调用增加更友好的失败展示：HTTP 状态、厂商、模型、耗时。
 
 推荐模型：`GPT-5.5 中`。
 
 ### P1
 
-1. mini Canvas 折线图：先放 `/item/{id}` 行情面板，再复用到 `/analyze` preview。
+1. 将 Canvas 行情图复用到 `/analyze` preview。
 2. Multipart 上传安全加固。
 3. `save_history_item` upsert 拆分和优先级回归测试。
 

@@ -1,4 +1,4 @@
-更新时间：2026-06-04 20:11（Asia/Shanghai）
+更新时间：2026-06-04 20:20（Asia/Shanghai）
 
 # 项目状态摘要 044：Provider Adapter 与 Review 修复收口
 
@@ -18,7 +18,7 @@
 
 - 可低风险落地的两个真实 Bug 已修复。
 - Provider Adapter 第一版已落地。
-- 行情面板 Canvas mini 折线图尚未做，应作为下一步优先可视化任务。
+- 行情面板 Canvas mini 折线图已在本轮追加完成。
 - 删除旧 Dashboard 死代码暂不混入本轮，应单独 refactor。
 
 ## 2. 当前仓库状态
@@ -37,6 +37,7 @@ fcfb758 docs(status): add ops diagnostics handoff
 - `/analyze` 一键调用 Provider 并保存分析结果。
 - `.env.example` Provider 配置示例。
 - review 后续计划文档 `007`。
+- `/item/{id}` 行情面板 Canvas mini 折线图。
 - 本项目状态摘要 `044`。
 
 当前正式 Dashboard 入口仍是：
@@ -138,6 +139,34 @@ com.rich.jin10-dashboard
 - `/system`、`/analyze`、`/healthz` 在 8765 烟测 200。
 - 全量 pytest 已通过。
 
+### 3.4 Canvas mini 折线图
+
+已完成。
+
+完成位置：
+
+- `/item/{id}` 行情上下文面板。
+
+行为：
+
+- 仍然只在用户点击“加载行情”后请求 `/api/market/klines`。
+- 成功返回 K 线后展示 close 走势 mini 折线图。
+- 按首尾 close 判断涨跌颜色。
+- 展示快讯发布时间竖线标记。
+- 保留行情摘要和 K 线表格。
+
+边界：
+
+- 不新增后端 API。
+- 不首页批量请求行情。
+- 不写业务历史库。
+- 不影响 `/analyze` Prompt 流程。
+
+验证：
+
+- 模板测试新增 `market-chart` / `drawMarketChart` / `data-news-time` 断言。
+- 全量 pytest 已通过。
+
 ## 4. 免费 / 低成本 LLM 选型
 
 推荐顺序：
@@ -183,23 +212,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 
 ## 5. 本轮明确未做
 
-### 5.1 行情面板 Canvas mini 折线图
-
-未做。
-
-这是下一步最推荐的可视化增强。
-
-原因：
-
-- 纯前端为主，风险低。
-- 视觉收益高，小白能一眼看出快讯前后价格变化。
-- 可先放 `/item/{id}` 行情面板，再复用到 `/analyze` preview。
-
-建议下一步优先做。
-
-推荐模型：`GPT-5.5 中`。
-
-### 5.2 删除旧版 Dashboard 死代码
+### 5.1 删除旧版 Dashboard 死代码
 
 未做。
 
@@ -216,7 +229,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 
 推荐模型：`GPT-5.5 中`。
 
-### 5.3 `save_history_item` Upsert 拆分
+### 5.2 `save_history_item` Upsert 拆分
 
 未做。
 
@@ -227,7 +240,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 
 推荐模型：`GPT-5.5 高`。
 
-### 5.4 Multipart 上传解析器替换
+### 5.3 Multipart 上传解析器替换
 
 未做。
 
@@ -238,7 +251,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 
 推荐模型：`GPT-5.5 中` 或 `GPT-5.5 高`。
 
-### 5.5 时区系统性治理
+### 5.4 时区系统性治理
 
 未做。
 
@@ -249,7 +262,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 
 推荐模型：`GPT-5.5 高`。
 
-### 5.6 `/system` 查询性能优化
+### 5.5 `/system` 查询性能优化
 
 未做。
 
@@ -260,7 +273,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 
 推荐模型：`GPT-5.5 中`。
 
-### 5.7 Evidence scoring 归一化
+### 5.6 Evidence scoring 归一化
 
 未做。
 
@@ -271,7 +284,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 
 推荐模型：`GPT-5.5 中`。
 
-### 5.8 Provider 输出质量 A/B 对比页
+### 5.7 Provider 输出质量 A/B 对比页
 
 未做。
 
@@ -311,20 +324,7 @@ sends_telegram=false
 
 ## 7. 推荐下一步
 
-### P0：Canvas mini 折线图
-
-做 `/item/{id}` 行情面板的 Canvas mini 折线图。
-
-目标：
-
-- 点击加载行情后，除了摘要和表格，还展示一条小折线。
-- 标注快讯发布时间。
-- 用颜色表示涨跌。
-- 保持无后端写入、无首页批量请求。
-
-推荐模型：`GPT-5.5 中`。
-
-### P1：Provider 真实试用
+### P0：Provider 真实试用
 
 申请 Gemini API key，配置 `.env`，重启 Dashboard 后走一次真实 `/analyze`。
 
@@ -336,7 +336,7 @@ sends_telegram=false
 
 推荐模型：`GPT-5.5 中`。
 
-### P1：分析历史展示 `model_label`
+### P0：分析历史展示 `model_label`
 
 让 `/analyze/history` 和 `/analyze/compare` 展示模型来源，方便后续比较 Gemini / GLM / DeepSeek。
 
@@ -365,12 +365,12 @@ git log --oneline -8
 - Provider 支持 Anthropic、Gemini、OpenAI-compatible、OpenAI；默认无 key 不请求模型 API。
 - Dashboard 仍是本地只读诊断和分析侧车，不作为采集入口。
 - 不请求金十 REST，不写业务历史库，不自动重发 Telegram unknown_timeout。
-- 行情面板 Canvas mini 折线图尚未做，是下一步最推荐可视化增强。
+- 行情面板 Canvas mini 折线图已完成，`/item/{id}` 点击加载行情后会展示 close 折线和快讯时间标记。
 
 推荐下一步：
-优先做 /item/{id} 行情面板 Canvas mini 折线图，点击加载行情后展示小折线、快讯时间标记和涨跌颜色；保持纯前端/只读，不首页批量请求，不改采集链路。
+优先做 Provider 真实 key 试用和分析历史 `model_label` 展示：先用 Gemini API key 跑一次 `/analyze`，再让历史和对比页清楚显示 Gemini / GLM / DeepSeek / Anthropic 来源。
 
 推荐模型：
-- GPT-5.5 中：Canvas mini 折线图、Provider 状态展示、分析历史 model_label。
+- GPT-5.5 中：Provider 真实试用、Provider 状态展示、分析历史 model_label、Canvas 复用到 `/analyze` preview。
 - GPT-5.5 高：save_history_item upsert 拆分、时区系统治理、任何业务写入链路或 Telegram/SQLite 游标改动。
 ```
