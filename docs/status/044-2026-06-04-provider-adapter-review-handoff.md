@@ -1,4 +1,4 @@
-更新时间：2026-06-04 20:20（Asia/Shanghai）
+更新时间：2026-06-04 20:35（Asia/Shanghai）
 
 # 项目状态摘要 044：Provider Adapter 与 Review 修复收口
 
@@ -18,7 +18,7 @@
 
 - 可低风险落地的两个真实 Bug 已修复。
 - Provider Adapter 第一版已落地。
-- 行情面板 Canvas mini 折线图已在本轮追加完成。
+- 行情面板已升级为交互 K 线图，包含蜡烛图、成交量、hover 数据和快讯时间竖线。
 - 删除旧 Dashboard 死代码暂不混入本轮，应单独 refactor。
 
 ## 2. 当前仓库状态
@@ -37,7 +37,7 @@ fcfb758 docs(status): add ops diagnostics handoff
 - `/analyze` 一键调用 Provider 并保存分析结果。
 - `.env.example` Provider 配置示例。
 - review 后续计划文档 `007`。
-- `/item/{id}` 行情面板 Canvas mini 折线图。
+- `/item/{id}` 行情面板交互 K 线图。
 - 本项目状态摘要 `044`。
 
 当前正式 Dashboard 入口仍是：
@@ -139,7 +139,7 @@ com.rich.jin10-dashboard
 - `/system`、`/analyze`、`/healthz` 在 8765 烟测 200。
 - 全量 pytest 已通过。
 
-### 3.4 Canvas mini 折线图
+### 3.4 交互 K 线图
 
 已完成。
 
@@ -149,22 +149,24 @@ com.rich.jin10-dashboard
 
 行为：
 
-- 仍然只在用户点击“加载行情”后请求 `/api/market/klines`。
-- 成功返回 K 线后展示 close 走势 mini 折线图。
-- 按首尾 close 判断涨跌颜色。
+- 页面打开后自动加载当前详情窗口行情。
+- 交易对、周期、开始和结束时间变化后自动刷新。
+- 保留“刷新行情”按钮，用于失败或人工重试。
+- 成功返回 K 线后展示蜡烛图、成交量、hover OHLCV 和拖动缩放。
 - 展示快讯发布时间竖线标记。
-- 保留行情摘要和 K 线表格。
+- K 线明细表默认折叠，供开发排查时展开。
 
 边界：
 
-- 不新增后端 API。
+- 引入本地 vendored `lightweight-charts@5.2.0`，不依赖 CDN。
+- 不新增后端 API，仍使用 `/api/market/klines`。
 - 不首页批量请求行情。
 - 不写业务历史库。
 - 不影响 `/analyze` Prompt 流程。
 
 验证：
 
-- 模板测试新增 `market-chart` / `drawMarketChart` / `data-news-time` 断言。
+- 模板测试覆盖 `CandlestickSeries`、`HistogramSeries`、crosshair、自动加载和表格折叠。
 - 全量 pytest 已通过。
 
 ## 4. 免费 / 低成本 LLM 选型
@@ -365,7 +367,7 @@ git log --oneline -8
 - Provider 支持 Anthropic、Gemini、OpenAI-compatible、OpenAI；默认无 key 不请求模型 API。
 - Dashboard 仍是本地只读诊断和分析侧车，不作为采集入口。
 - 不请求金十 REST，不写业务历史库，不自动重发 Telegram unknown_timeout。
-- 行情面板 Canvas mini 折线图已完成，`/item/{id}` 点击加载行情后会展示 close 折线和快讯时间标记。
+- 行情面板交互 K 线图已完成，`/item/{id}` 打开后会自动加载当前窗口行情并展示蜡烛图、成交量、hover 数据和快讯时间标记。
 
 推荐下一步：
 优先做 Provider 真实 key 试用和分析历史 `model_label` 展示：先用 Gemini API key 跑一次 `/analyze`，再让历史和对比页清楚显示 Gemini / GLM / DeepSeek / Anthropic 来源。

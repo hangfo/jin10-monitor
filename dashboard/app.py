@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlencode
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .analysis_db import (
@@ -51,6 +52,7 @@ from .manual_ai import PROMPT_VERSION, generate_prompt, parse_answer, render_ans
 from .providers.base import ProviderError, get_provider, provider_statuses
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 PRIORITY_OPTIONS = [
     ("", "全部"),
     ("T3_IMPORTANT", "T3 重要"),
@@ -302,6 +304,7 @@ def build_market_context_for_prompt(
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Jin10 Monitor Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     templates.env.globals["compact_text"] = compact_text
     templates.env.globals["priority_class"] = priority_class
     templates.env.globals["priority_css"] = priority_css

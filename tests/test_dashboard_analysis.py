@@ -575,6 +575,7 @@ def test_run_dashboard_loads_dotenv_before_uvicorn():
 def test_dashboard_bugfix_routes_are_registered():
     paths = [route.path for route in app.routes if hasattr(route, "path")]
 
+    assert "/static" in paths
     assert "/api/feed/latest-ts" in paths
     assert "/api/feed/page" in paths
     assert "/api/market/klines" in paths
@@ -740,15 +741,23 @@ def test_item_template_shows_published_at_to_second():
 
 def test_item_template_has_user_triggered_market_overlay():
     item_template = (TEMPLATE_DIR / "item.html").read_text()
+    vendor_path = TEMPLATE_DIR.parent / "static" / "vendor" / "lightweight-charts"
 
     assert "行情上下文" in item_template
     assert "id=\"market-load\"" in item_template
     assert "id=\"market-chart\"" in item_template
-    assert "drawMarketChart" in item_template
+    assert "lightweight-charts.standalone.production.js" in item_template
+    assert "LightweightCharts.CandlestickSeries" in item_template
+    assert "LightweightCharts.HistogramSeries" in item_template
+    assert "subscribeCrosshairMove" in item_template
+    assert "loadMarketData();" in item_template
     assert "data-news-time" in item_template
+    assert "market-table-summary" in item_template
     assert "/api/market/klines?" in item_template
-    assert "未加载。仅点击后请求 market adapter。" in item_template
+    assert "准备加载行情..." in item_template
     assert "addEventListener(\"click\"" in item_template
+    assert (vendor_path / "lightweight-charts.standalone.production.js").exists()
+    assert (vendor_path / "LICENSE").exists()
 
 
 def test_feed_rows_hide_internal_fields_and_empty_messages():

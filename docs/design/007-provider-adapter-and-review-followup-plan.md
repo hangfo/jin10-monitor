@@ -1,4 +1,4 @@
-更新时间：2026-06-04 20:20（Asia/Shanghai）
+更新时间：2026-06-04 20:35（Asia/Shanghai）
 
 # 007 - Provider Adapter 与 Review 后续计划
 
@@ -62,15 +62,17 @@
 - `/analyze/{run_id}` 草稿页同样支持显式调用。
 - 自动调用结果只写分析库，并保存 `model_label`。
 
-### Canvas mini 折线图
+### 交互 K 线图
 
 采纳。
 
 实施：
 
 - 第一版放在 `/item/{id}` 行情上下文面板。
-- 用户点击“加载行情”后，在行情摘要和 K 线表格之间展示 close mini 折线图。
-- 图中标注快讯发布时间竖线，并按首尾 close 涨跌切换颜色。
+- 使用本地 vendored `lightweight-charts@5.2.0`。
+- 页面打开后自动加载当前详情窗口行情。
+- 展示蜡烛图、成交量、hover OHLCV、拖动缩放和快讯时间竖线。
+- K 线明细表默认折叠。
 - 不新增后端 API，不首页批量请求行情。
 
 ## 3. 免费 / 低成本模型选择
@@ -174,7 +176,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-6
 
 ### P1
 
-1. 将 Canvas 行情图复用到 `/analyze` preview。
+1. 将交互 K 线图复用到 `/analyze` preview。
 2. Multipart 上传安全加固。
 3. `save_history_item` upsert 拆分和优先级回归测试。
 

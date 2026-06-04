@@ -2,6 +2,7 @@
 {% block title %}Jin10 Item {{ center.id }}{% endblock %}
 
 {% block head %}
+<script src="/static/vendor/lightweight-charts/lightweight-charts.standalone.production.js"></script>
 <style>
   .market-controls {
     align-items: end;
@@ -33,6 +34,7 @@
     border-radius: 6px;
     margin-top: 12px;
     padding: 10px;
+    position: relative;
   }
   .market-chart-head {
     align-items: center;
@@ -61,15 +63,64 @@
     width: 8px;
   }
   .market-chart-dot.price {
-    background: var(--accent);
+    background: var(--sent-fg);
   }
   .market-chart-dot.news {
     background: var(--warn-fg);
   }
   #market-chart {
-    display: block;
-    height: 180px;
+    height: 360px;
+    min-height: 300px;
+    position: relative;
     width: 100%;
+  }
+  .market-news-line {
+    border-left: 1px dashed var(--warn-fg);
+    bottom: 24px;
+    display: none;
+    pointer-events: none;
+    position: absolute;
+    top: 46px;
+    z-index: 2;
+  }
+  .market-news-line span {
+    background: var(--warn-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 999px;
+    color: var(--warn-fg);
+    font-size: 12px;
+    left: 6px;
+    padding: 1px 7px;
+    position: absolute;
+    top: 6px;
+    white-space: nowrap;
+  }
+  .market-tooltip {
+    background: color-mix(in srgb, var(--surface) 96%, #000 4%);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+    display: none;
+    font-size: 12px;
+    left: 12px;
+    line-height: 1.5;
+    min-width: 190px;
+    padding: 8px 10px;
+    pointer-events: none;
+    position: absolute;
+    top: 54px;
+    z-index: 3;
+  }
+  .market-table details {
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    margin-top: 12px;
+    padding: 9px 10px;
+  }
+  .market-table summary {
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
   }
   .market-table {
     margin-top: 12px;
@@ -166,35 +217,40 @@
         <label for="market-end">结束</label>
         <input id="market-end" type="text" class="mono" value="{{ market_end }}" placeholder="YYYY-MM-DD HH:MM:SS">
       </div>
-      <button type="button" id="market-load">加载行情</button>
+      <button type="button" id="market-load">刷新行情</button>
     </div>
-    <div class="market-status meta" id="market-status">未加载。仅点击后请求 market adapter。</div>
+    <div class="market-status meta" id="market-status">准备加载行情...</div>
     <div id="market-result" hidden>
       <div class="market-summary" id="market-summary"></div>
       <div class="market-chart-wrap">
         <div class="market-chart-head">
-          <strong>分钟走势</strong>
+          <strong>K 线走势</strong>
           <div class="market-chart-legend">
-            <span><i class="market-chart-dot price"></i>Close</span>
+            <span><i class="market-chart-dot price"></i>蜡烛 + 成交量</span>
             <span><i class="market-chart-dot news"></i>快讯时间</span>
           </div>
         </div>
-        <canvas id="market-chart" width="920" height="180" aria-label="行情走势折线图"></canvas>
+        <div id="market-chart" aria-label="行情 K 线图"></div>
+        <div class="market-news-line" id="market-news-line"><span>快讯</span></div>
+        <div class="market-tooltip" id="market-tooltip"></div>
       </div>
       <div class="market-table">
-        <table>
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th>Open</th>
-              <th>High</th>
-              <th>Low</th>
-              <th>Close</th>
-              <th>Volume</th>
-            </tr>
-          </thead>
-          <tbody id="market-rows"></tbody>
-        </table>
+        <details>
+          <summary id="market-table-summary">K 线明细</summary>
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>Open</th>
+                <th>High</th>
+                <th>Low</th>
+                <th>Close</th>
+                <th>Volume</th>
+              </tr>
+            </thead>
+            <tbody id="market-rows"></tbody>
+          </table>
+        </details>
       </div>
     </div>
   </section>
@@ -226,9 +282,16 @@
     const marketResult = document.getElementById("market-result");
     const marketSummary = document.getElementById("market-summary");
     const marketRows = document.getElementById("market-rows");
+    const marketTableSummary = document.getElementById("market-table-summary");
     const marketPanel = document.getElementById("market-panel");
-    const marketChart = document.getElementById("market-chart");
+    const marketChartElement = document.getElementById("market-chart");
+    const marketNewsLine = document.getElementById("market-news-line");
+    const marketTooltip = document.getElementById("market-tooltip");
     let lastMarketKlines = [];
+    let chart = null;
+    let candleSeries = null;
+    let volumeSeries = null;
+    let loadTimer = null;
 
     function formatNumber(value) {
       const parsed = Number(value);
@@ -288,123 +351,147 @@
         return row;
       });
       marketRows.replaceChildren(...rows);
+      marketTableSummary.textContent = `K 线明细（${klines.length} 条）`;
     }
 
-    function parseMarketTime(value) {
+    function parseMarketMs(value) {
       const text = String(value || "").trim();
       if (!text) return NaN;
       return new Date(text.replace(" ", "T")).getTime();
     }
 
-    function drawMarketChart(klines) {
-      const context = marketChart.getContext("2d");
-      const rect = marketChart.getBoundingClientRect();
-      const width = Math.max(320, Math.floor(rect.width || 920));
-      const height = 180;
-      const ratio = window.devicePixelRatio || 1;
-      marketChart.width = Math.floor(width * ratio);
-      marketChart.height = Math.floor(height * ratio);
-      context.setTransform(ratio, 0, 0, ratio, 0, 0);
-      context.clearRect(0, 0, width, height);
-      context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim() || "#fff";
-      context.fillRect(0, 0, width, height);
-
-      const closes = klines.map((item) => Number(item.close)).filter((value) => Number.isFinite(value));
-      if (closes.length < 2) {
-        context.fillStyle = "#657177";
-        context.font = "12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
-        context.fillText("K 线数量不足，无法绘制走势", 14, 28);
-        return;
-      }
-
-      const times = klines.map((item) => parseMarketTime(item.open_time));
-      const minClose = Math.min(...closes);
-      const maxClose = Math.max(...closes);
-      const padding = {top: 18, right: 58, bottom: 28, left: 58};
-      const chartWidth = width - padding.left - padding.right;
-      const chartHeight = height - padding.top - padding.bottom;
-      const priceRange = maxClose - minClose || Math.max(Math.abs(maxClose) * 0.001, 1);
-      const firstClose = Number(klines[0].close);
-      const lastClose = Number(klines[klines.length - 1].close);
-      const rising = lastClose >= firstClose;
-      const lineColor = rising ? "#17633a" : "#9d221d";
-      const fillColor = rising ? "rgba(23, 99, 58, 0.11)" : "rgba(157, 34, 29, 0.11)";
-      const gridColor = getComputedStyle(document.documentElement).getPropertyValue("--border-soft").trim() || "#e4e7e5";
-      const mutedColor = getComputedStyle(document.documentElement).getPropertyValue("--muted").trim() || "#657177";
-
-      function xForIndex(index) {
-        return padding.left + (klines.length === 1 ? 0 : (index / (klines.length - 1)) * chartWidth);
-      }
-
-      function yForClose(close) {
-        return padding.top + ((maxClose - close) / priceRange) * chartHeight;
-      }
-
-      context.strokeStyle = gridColor;
-      context.lineWidth = 1;
-      context.beginPath();
-      for (let i = 0; i <= 3; i += 1) {
-        const y = padding.top + (i / 3) * chartHeight;
-        context.moveTo(padding.left, y);
-        context.lineTo(width - padding.right, y);
-      }
-      context.stroke();
-
-      context.beginPath();
-      closes.forEach((close, index) => {
-        const x = xForIndex(index);
-        const y = yForClose(close);
-        if (index === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      });
-      context.lineTo(xForIndex(klines.length - 1), padding.top + chartHeight);
-      context.lineTo(xForIndex(0), padding.top + chartHeight);
-      context.closePath();
-      context.fillStyle = fillColor;
-      context.fill();
-
-      context.beginPath();
-      closes.forEach((close, index) => {
-        const x = xForIndex(index);
-        const y = yForClose(close);
-        if (index === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      });
-      context.strokeStyle = lineColor;
-      context.lineWidth = 2;
-      context.stroke();
-
-      const newsTime = parseMarketTime(marketPanel.dataset.newsTime);
-      const validTimes = times.filter((time) => Number.isFinite(time));
-      if (Number.isFinite(newsTime) && validTimes.length >= 2) {
-        const minTime = validTimes[0];
-        const maxTime = validTimes[validTimes.length - 1];
-        if (newsTime >= minTime && newsTime <= maxTime && maxTime > minTime) {
-          const newsX = padding.left + ((newsTime - minTime) / (maxTime - minTime)) * chartWidth;
-          context.setLineDash([4, 4]);
-          context.strokeStyle = "#7a4b00";
-          context.lineWidth = 1;
-          context.beginPath();
-          context.moveTo(newsX, padding.top);
-          context.lineTo(newsX, padding.top + chartHeight);
-          context.stroke();
-          context.setLineDash([]);
-          context.fillStyle = "#7a4b00";
-          context.font = "12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
-          context.fillText("快讯", Math.min(newsX + 6, width - padding.right - 28), padding.top + 13);
-        }
-      }
-
-      context.fillStyle = mutedColor;
-      context.font = "12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-      context.fillText(formatNumber(maxClose), 6, padding.top + 4);
-      context.fillText(formatNumber(minClose), 6, padding.top + chartHeight);
-      context.fillText(formatNumber(firstClose), padding.left, height - 8);
-      const lastLabel = formatNumber(lastClose);
-      context.fillText(lastLabel, Math.max(padding.left, width - padding.right - lastLabel.length * 7), height - 8);
+    function parseMarketTime(value) {
+      const ms = parseMarketMs(value);
+      return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
     }
 
-    document.getElementById("market-load").addEventListener("click", async () => {
+    function chartColors() {
+      const styles = getComputedStyle(document.documentElement);
+      return {
+        background: styles.getPropertyValue("--surface").trim() || "#fff",
+        text: styles.getPropertyValue("--text").trim() || "#1f2528",
+        muted: styles.getPropertyValue("--muted").trim() || "#657177",
+        grid: styles.getPropertyValue("--border-soft").trim() || "#e4e7e5",
+        up: styles.getPropertyValue("--sent-fg").trim() || "#17633a",
+        down: styles.getPropertyValue("--fail-fg").trim() || "#9d221d",
+        warn: styles.getPropertyValue("--warn-fg").trim() || "#7a4b00",
+      };
+    }
+
+    function initMarketChart() {
+      if (chart) return;
+      const colors = chartColors();
+      chart = LightweightCharts.createChart(marketChartElement, {
+        height: 360,
+        autoSize: true,
+        layout: {
+          background: {color: colors.background},
+          textColor: colors.muted,
+        },
+        grid: {
+          vertLines: {color: colors.grid},
+          horzLines: {color: colors.grid},
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        rightPriceScale: {
+          borderColor: colors.grid,
+          scaleMargins: {top: 0.08, bottom: 0.28},
+        },
+        timeScale: {
+          borderColor: colors.grid,
+          rightOffset: 4,
+          timeVisible: true,
+          secondsVisible: false,
+        },
+      });
+      candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+        upColor: colors.up,
+        downColor: colors.down,
+        borderUpColor: colors.up,
+        borderDownColor: colors.down,
+        wickUpColor: colors.up,
+        wickDownColor: colors.down,
+      });
+      volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
+        priceFormat: {type: "volume"},
+        priceScaleId: "",
+      });
+      volumeSeries.priceScale().applyOptions({
+        scaleMargins: {top: 0.76, bottom: 0},
+      });
+      chart.subscribeCrosshairMove((param) => {
+        if (!param || !param.time || !param.point) {
+          marketTooltip.style.display = "none";
+          return;
+        }
+        const candle = param.seriesData.get(candleSeries);
+        const volume = param.seriesData.get(volumeSeries);
+        if (!candle) {
+          marketTooltip.style.display = "none";
+          return;
+        }
+        const x = Math.min(Math.max(param.point.x + 14, 8), marketChartElement.clientWidth - 210);
+        const y = Math.min(Math.max(param.point.y + 14, 8), 250);
+        marketTooltip.style.display = "block";
+        marketTooltip.style.left = `${x}px`;
+        marketTooltip.style.top = `${y + 42}px`;
+        const timeLabel = new Date(Number(param.time) * 1000).toLocaleString();
+        marketTooltip.innerHTML = [
+          `<strong>${timeLabel}</strong>`,
+          `O ${formatNumber(candle.open)} H ${formatNumber(candle.high)}`,
+          `L ${formatNumber(candle.low)} C ${formatNumber(candle.close)}`,
+          `Vol ${formatNumber(volume ? volume.value : "")}`,
+        ].join("<br>");
+      });
+      chart.timeScale().subscribeVisibleTimeRangeChange(updateNewsLine);
+    }
+
+    function updateNewsLine() {
+      if (!chart) return;
+      const newsTime = parseMarketTime(marketPanel.dataset.newsTime);
+      if (!newsTime) {
+        marketNewsLine.style.display = "none";
+        return;
+      }
+      const coordinate = chart.timeScale().timeToCoordinate(newsTime);
+      if (coordinate === null || !Number.isFinite(coordinate)) {
+        marketNewsLine.style.display = "none";
+        return;
+      }
+      marketNewsLine.style.display = "block";
+      marketNewsLine.style.left = `${Math.round(coordinate) + 10}px`;
+    }
+
+    function renderMarketChart(klines) {
+      initMarketChart();
+      const candleData = [];
+      const volumeData = [];
+      klines.forEach((item) => {
+        const time = parseMarketTime(item.open_time);
+        if (!time) return;
+        const open = Number(item.open);
+        const high = Number(item.high);
+        const low = Number(item.low);
+        const close = Number(item.close);
+        const volume = Number(item.volume);
+        if (![open, high, low, close].every(Number.isFinite)) return;
+        const colors = chartColors();
+        candleData.push({time, open, high, low, close});
+        volumeData.push({
+          time,
+          value: Number.isFinite(volume) ? volume : 0,
+          color: close >= open ? "rgba(23, 99, 58, 0.45)" : "rgba(157, 34, 29, 0.45)",
+        });
+      });
+      candleSeries.setData(candleData);
+      volumeSeries.setData(volumeData);
+      chart.timeScale().fitContent();
+      requestAnimationFrame(updateNewsLine);
+    }
+
+    async function loadMarketData() {
       const symbol = document.getElementById("market-symbol").value;
       const interval = document.getElementById("market-interval").value;
       const start = document.getElementById("market-start").value.trim();
@@ -422,18 +509,36 @@
         marketStatus.textContent = `${data.adapter || "market"} · ${data.symbol || symbol} · ${data.interval || interval}`;
         renderMarketSummary(data.symbol || symbol, data.klines);
         lastMarketKlines = data.klines;
-        drawMarketChart(lastMarketKlines);
-        renderMarketRows(data.klines);
         marketResult.hidden = false;
+        renderMarketChart(lastMarketKlines);
+        renderMarketRows(data.klines);
       } catch (error) {
         marketStatus.textContent = `market data unavailable: ${error}`;
       }
-    });
+    }
+
+    function scheduleMarketLoad() {
+      window.clearTimeout(loadTimer);
+      loadTimer = window.setTimeout(loadMarketData, 300);
+    }
+
+    document.getElementById("market-load").addEventListener("click", loadMarketData);
+    document.getElementById("market-symbol").addEventListener("change", scheduleMarketLoad);
+    document.getElementById("market-interval").addEventListener("change", scheduleMarketLoad);
+    document.getElementById("market-start").addEventListener("change", scheduleMarketLoad);
+    document.getElementById("market-end").addEventListener("change", scheduleMarketLoad);
 
     window.addEventListener("resize", () => {
-      if (!marketResult.hidden && lastMarketKlines.length) {
-        drawMarketChart(lastMarketKlines);
+      if (chart) {
+        chart.applyOptions({width: marketChartElement.clientWidth});
+        updateNewsLine();
       }
     });
+
+    if (window.LightweightCharts) {
+      loadMarketData();
+    } else {
+      marketStatus.textContent = "行情图表组件加载失败，可刷新页面重试。";
+    }
   </script>
 {% endblock %}
