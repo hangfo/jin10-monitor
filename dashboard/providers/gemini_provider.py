@@ -30,6 +30,7 @@ class GeminiProvider(BaseProvider):
             DEFAULT_PROVIDER_TIMEOUT_SECONDS,
         )
         self.max_tokens = max_tokens if max_tokens is not None else env_int("GEMINI_MAX_TOKENS", 1800)
+        self.thinking_budget = env_int("GEMINI_THINKING_BUDGET", -1, minimum=-1, maximum=24576)
 
     @property
     def name(self) -> str:
@@ -48,15 +49,23 @@ class GeminiProvider(BaseProvider):
             "generationConfig": {
                 "temperature": env_float("GEMINI_TEMPERATURE", 0.2, minimum=0.0, maximum=2.0),
                 "maxOutputTokens": self.max_tokens,
+                "responseMimeType": "application/json",
             },
         }
+        if self.thinking_budget >= 0:
+            payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": self.thinking_budget}
         response = self._post_json(payload, api_key=api_key)
         candidates = response.get("candidates") or []
         if not candidates or not isinstance(candidates[0], dict):
             raise ProviderError("Gemini returned no candidates")
+        finish_reason = str(candidates[0].get("finishReason") or "")
         content = candidates[0].get("content") if isinstance(candidates[0].get("content"), dict) else {}
         parts = content.get("parts") if isinstance(content, dict) else []
         text = "\n".join(str(part.get("text") or "") for part in parts or [] if isinstance(part, dict)).strip()
+        if finish_reason and finish_reason != "STOP":
+            detail = str(candidates[0].get("finishMessage") or "").strip()
+            suffix = f": {detail}" if detail else ""
+            raise ProviderError(f"Gemini stopped with finishReason={finish_reason}{suffix}")
         if not text:
             raise ProviderError("Gemini returned an empty response")
         usage = response.get("usageMetadata") if isinstance(response.get("usageMetadata"), dict) else {}
@@ -65,6 +74,7 @@ class GeminiProvider(BaseProvider):
             model_label=f"gemini:{self.model}",
             input_tokens=_optional_int(usage.get("promptTokenCount")),
             output_tokens=_optional_int(usage.get("candidatesTokenCount")),
+            finish_reason=finish_reason,
         )
 
     def _post_json(self, payload: dict[str, Any], *, api_key: str) -> dict[str, Any]:

@@ -167,6 +167,19 @@
     display: none;
     font-size: 12px;
   }
+  .call-status,
+  .selection-hint,
+  .prompt-hint {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .selection-hint.warn,
+  .prompt-hint.warn {
+    color: var(--warn-fg);
+  }
+  .provider-form.submitting button[type="submit"] {
+    opacity: 0.72;
+  }
   @media (max-width: 760px) {
     .analysis-grid {
       grid-template-columns: 1fr;
@@ -216,7 +229,7 @@
         </div>
         <div class="filter-group">
           <span class="filter-label">分析标的 *</span>
-          <select name="asset">
+          <select id="asset-select" name="asset">
             {% for asset in known_assets %}
             <option value="{{ asset }}"{{ ' selected' if asset == prefill.get('asset', 'BTC') }}>{{ asset }}</option>
             {% endfor %}
@@ -265,12 +278,12 @@
           <span class="filter-label">结构化行情上下文（可选）</span>
           <div class="market-context-box">
             <label class="check">
-              <input type="checkbox" name="market_enabled" value="1">
+              <input id="market-enabled" type="checkbox" name="market_enabled" value="1">
               加入 Binance 行情摘要（使用上方时间窗口）
             </label>
             <div class="filter-group">
               <span class="filter-label">交易对</span>
-              <select name="market_symbol">
+              <select id="market-symbol" name="market_symbol">
                 {% for symbol in ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"] %}
                 <option value="{{ symbol }}">{{ symbol }}</option>
                 {% endfor %}
@@ -283,7 +296,7 @@
                 <option value="5m">5m</option>
               </select>
             </div>
-            <div class="muted">只在勾选后请求 market adapter；失败时仍可继续生成 Prompt。</div>
+            <div id="market-symbol-hint" class="muted">只在勾选后请求 market adapter；失败时仍可继续生成 Prompt。</div>
           </div>
         </div>
         <div class="filter-group full-row">
@@ -320,6 +333,44 @@
     if (!document.getElementById("window-start").value && !document.getElementById("window-end").value) {
       setQuickWindow(30);
     }
+
+    const assetToSymbol = {
+      BTC: "BTCUSDT",
+      ETH: "ETHUSDT",
+      SOL: "SOLUSDT",
+      BNB: "BNBUSDT",
+    };
+    const assetSelect = document.getElementById("asset-select");
+    const marketSymbol = document.getElementById("market-symbol");
+    const marketEnabled = document.getElementById("market-enabled");
+    const marketHint = document.getElementById("market-symbol-hint");
+    let marketSymbolTouched = false;
+
+    function syncMarketSymbol(force = false) {
+      const symbol = assetToSymbol[assetSelect.value];
+      if (symbol && (force || !marketSymbolTouched)) {
+        marketSymbol.value = symbol;
+      }
+      const supported = Boolean(symbol);
+      marketEnabled.disabled = !supported;
+      marketSymbol.disabled = !supported;
+      if (!supported) {
+        marketEnabled.checked = false;
+        marketHint.textContent = "当前标的没有 Binance USDT 映射；不会加入行情摘要。";
+      } else {
+        marketHint.textContent = `已按 ${assetSelect.value} 自动匹配 ${marketSymbol.value}；只在勾选后请求 market adapter。`;
+      }
+    }
+
+    marketSymbol.addEventListener("change", () => {
+      marketSymbolTouched = true;
+      syncMarketSymbol(false);
+    });
+    assetSelect.addEventListener("change", () => {
+      marketSymbolTouched = false;
+      syncMarketSymbol(true);
+    });
+    syncMarketSymbol(true);
 
     document.getElementById("screenshot-file").addEventListener("change", (event) => {
       const file = event.target.files[0];
@@ -406,12 +457,12 @@
       <input id="evidence-json-input" type="hidden" name="evidence_json" value="">
 
       {% if evidence %}
-      <div class="muted" style="margin-bottom:8px">找到 {{ evidence | length }} 条候选证据。取消勾选明显无关项后生成 Prompt。</div>
+      <div id="selection-hint" class="selection-hint" style="margin-bottom:8px"></div>
       {% for ev in evidence %}
       {% set css = priority_css(ev.priority_level) %}
       <div class="ev-row">
-        <input class="ev-check" type="checkbox" name="sel_{{ ev.news_id }}" value="1" checked>
-        <span class="ev-score">{{ "%.2f"|format(ev.relevance_score) }}</span>
+        <input class="ev-check" type="checkbox" name="sel_{{ ev.news_id }}" value="1"{{ ' checked' if loop.index <= 10 }} onchange="updateSelectionHint()">
+        <span class="ev-score" title="本地相关度分数，不是模型置信度。越接近 1，说明和标的、关键词、时间窗口越匹配。">{{ "%.2f"|format(ev.relevance_score) }}</span>
         <div class="ev-body">
           <div class="ev-title">
             <span class="pill {{ css }}">{{ ev.priority_level }}</span>
@@ -436,6 +487,15 @@
     </form>
   </div>
   <script>
+    function updateSelectionHint() {
+      const total = document.querySelectorAll(".ev-check").length;
+      const selected = document.querySelectorAll(".ev-check:checked").length;
+      const hint = document.getElementById("selection-hint");
+      if (!hint) return;
+      hint.textContent = `找到 ${total} 条候选证据，已选 ${selected} 条。建议保留 5-10 条最相关新闻；左侧分数是本地相关度，不是置信度。`;
+      hint.classList.toggle("warn", selected > 10);
+    }
+
     function submitPreview() {
       const evidence = {{ evidence | tojson }};
       const checked = new Set([...document.querySelectorAll(".ev-check:checked")].map((item) => item.name.replace("sel_", "")));
@@ -443,6 +503,7 @@
       document.getElementById("evidence-json-input").value = JSON.stringify(evidence);
       document.getElementById("preview-form").submit();
     }
+    updateSelectionHint();
   </script>
   {% endif %}
 
@@ -452,6 +513,9 @@
       <div>
         <strong>Prompt 已生成</strong>
         <span class="muted mono">run_id: {{ run_id }}</span>
+        <div class="prompt-hint{% if selected_count > 10 or prompt_length > 6000 %} warn{% endif %}">
+          已选 {{ selected_count }} 条证据，Prompt 约 {{ prompt_length }} 字。建议 5-10 条；超过 6000 字时更容易慢或截断。
+        </div>
       </div>
       <div style="align-items:center;display:flex;gap:8px">
         <button type="button" onclick="copyPrompt()">复制 Prompt</button>
@@ -464,13 +528,14 @@
     {% if available_providers %}
     <div style="border-top:1px solid var(--border-soft);margin-top:16px;padding-top:14px">
       <h2 style="margin-top:0">一键调用 Provider</h2>
-      <form method="post" action="/analyze/{{ run_id }}/run-provider" style="align-items:center;display:flex;gap:10px;flex-wrap:wrap">
+      <form class="provider-form" method="post" action="/analyze/{{ run_id }}/run-provider" style="align-items:center;display:flex;gap:10px;flex-wrap:wrap">
         <select name="provider">
           {% for provider in available_providers %}
           <option value="{{ provider.key }}">{{ provider.label }}</option>
           {% endfor %}
         </select>
         <button type="submit">调用并保存</button>
+        <span class="call-status" aria-live="polite"></span>
       </form>
     </div>
     {% endif %}
@@ -496,6 +561,21 @@
         setTimeout(() => { item.style.display = "none"; }, 1600);
       });
     }
+
+    document.querySelectorAll(".provider-form").forEach((form) => {
+      form.addEventListener("submit", () => {
+        form.classList.add("submitting");
+        const button = form.querySelector("button[type='submit']");
+        const status = form.querySelector(".call-status");
+        if (button) {
+          button.disabled = true;
+          button.textContent = "调用中...";
+        }
+        if (status) {
+          status.textContent = "正在等待 Provider 返回，通常需要几十秒。";
+        }
+      });
+    });
   </script>
   {% endif %}
 {% endblock %}

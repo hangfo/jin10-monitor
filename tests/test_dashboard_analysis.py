@@ -9,6 +9,7 @@ from dashboard.app import (
     ALLOWED_SCREENSHOT_MIME_TYPES,
     app,
     append_screenshot_context,
+    provider_error_redirect,
     parse_market_context_json,
     normalize_news_text,
     parse_multipart_upload,
@@ -283,6 +284,31 @@ def test_save_answer_transitions_to_done(tmp_path):
     assert run["overall_confidence"] == 0.75
 
 
+def test_list_runs_includes_model_label(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    run_id = analysis_db.create_run(
+        "Question",
+        "ETH",
+        "2026-05-23 09:00:00",
+        "2026-05-23 10:00:00",
+        [],
+        path=db_path,
+    )
+    analysis_db.save_answer(
+        run_id,
+        "raw answer text",
+        model_label="gemini:gemini-2.5-flash",
+        answer_json={"judgement": "news_driven"},
+        judgement="news_driven",
+        path=db_path,
+    )
+
+    runs = analysis_db.list_runs(path=db_path)
+
+    assert runs[0]["model_label"] == "gemini:gemini-2.5-flash"
+
+
 def test_evidence_builder_scores_and_labels_news_id(tmp_path, monkeypatch):
     history_path = tmp_path / "history.sqlite3"
     conn = create_history_db(history_path)
@@ -538,6 +564,13 @@ def test_parse_answer_unparseable_stores_raw_text():
     assert parsed["raw_text"].startswith("这是完全无法解析")
 
 
+def test_provider_error_redirect_quotes_message():
+    response = provider_error_redirect("run-1", "bad json")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/analyze/run-1?provider_error=bad+json"
+
+
 def test_analysis_routes_are_registered_before_dynamic_detail():
     paths = [
         route.path
@@ -696,8 +729,14 @@ def test_provider_adapters_parse_successful_responses(monkeypatch):
     class FakeGemini(GeminiProvider):
         def _post_json(self, payload, *, api_key):
             assert api_key == "test-gemini-key"
+            assert payload["generationConfig"]["responseMimeType"] == "application/json"
             return {
-                "candidates": [{"content": {"parts": [{"text": '{"judgement":"macro_sentiment"}'}]}}],
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {"parts": [{"text": '{"judgement":"macro_sentiment"}'}]},
+                    }
+                ],
                 "usageMetadata": {"promptTokenCount": 13, "candidatesTokenCount": 5},
             }
 
@@ -723,6 +762,32 @@ def test_provider_adapters_parse_successful_responses(monkeypatch):
     assert compatible.input_tokens == 17
 
 
+def test_gemini_provider_rejects_non_stop_finish_reason(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+
+    from dashboard.providers.base import ProviderError
+    from dashboard.providers.gemini_provider import GeminiProvider
+
+    class FakeGemini(GeminiProvider):
+        def _post_json(self, payload, *, api_key):
+            return {
+                "candidates": [
+                    {
+                        "finishReason": "MAX_TOKENS",
+                        "content": {"parts": [{"text": '{"summary":"cut"'}]},
+                    }
+                ],
+                "usageMetadata": {"promptTokenCount": 13, "candidatesTokenCount": 5},
+            }
+
+    try:
+        FakeGemini().complete("system", "user")
+    except ProviderError as exc:
+        assert "finishReason=MAX_TOKENS" in str(exc)
+    else:
+        raise AssertionError("ProviderError was not raised")
+
+
 def test_analyze_templates_expose_provider_run_controls():
     analyze_template = (TEMPLATE_DIR / "analyze.html").read_text()
     run_template = (TEMPLATE_DIR / "analyze_run.html").read_text()
@@ -730,6 +795,25 @@ def test_analyze_templates_expose_provider_run_controls():
     assert "/analyze/{{ run_id }}/run-provider" in analyze_template
     assert "/analyze/{{ run.id }}/run-provider" in run_template
     assert "provider_error" in run_template
+    assert "调用中..." in analyze_template
+    assert "调用中..." in run_template
+
+
+def test_analyze_templates_show_selection_hints_and_asset_market_sync():
+    analyze_template = (TEMPLATE_DIR / "analyze.html").read_text()
+    history_template = (TEMPLATE_DIR / "analyze_history.html").read_text()
+    compare_template = (TEMPLATE_DIR / "analyze_compare.html").read_text()
+    run_template = (TEMPLATE_DIR / "analyze_run.html").read_text()
+
+    assert "assetToSymbol" in analyze_template
+    assert "ETHUSDT" in analyze_template
+    assert "本地相关度分数，不是模型置信度" in analyze_template
+    assert "建议 5-10 条" in analyze_template
+    assert "loop.index <= 10" in analyze_template
+    assert "Prompt 约" in analyze_template
+    assert "model_label" in history_template
+    assert "model_label" in compare_template
+    assert "模型：" in run_template
 
 
 def test_item_template_shows_published_at_to_second():

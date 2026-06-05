@@ -341,7 +341,7 @@ def list_runs(
             f"""
             SELECT id, question, asset, window_start, window_end, judgement,
                    overall_confidence, status, evidence_count, selected_count,
-                   created_at, updated_at
+                   model_label, created_at, updated_at
             FROM analysis_runs
             {where}
             ORDER BY created_at DESC

@@ -116,6 +116,11 @@ def callable_provider_statuses() -> list[dict[str, object]]:
     ]
 
 
+def provider_error_redirect(run_id: str, message: str) -> RedirectResponse:
+    error = urlencode({"e": str(message or "provider error")[:180]})[2:]
+    return RedirectResponse(f"/analyze/{run_id}?provider_error={error}", status_code=303)
+
+
 def parse_int(value: object, default: int, minimum: int, maximum: int) -> int:
     try:
         parsed = int(str(value))
@@ -558,6 +563,7 @@ def create_app() -> FastAPI:
             user_context=user_context,
             market_context=market_context,
         )
+        selected_count = sum(1 for item in evidence if item.get("selected", True))
         run_id = create_run(
             question=question,
             asset=asset,
@@ -587,6 +593,8 @@ def create_app() -> FastAPI:
                 "market_context": market_context,
                 "evidence": evidence,
                 "prompt": prompt,
+                "prompt_length": len(prompt),
+                "selected_count": selected_count,
                 "provider_statuses": callable_provider_statuses(),
                 "known_assets": known_assets(),
                 "prefill": {},
@@ -678,22 +686,13 @@ def create_app() -> FastAPI:
         if not run:
             raise HTTPException(status_code=404, detail="analysis run not found")
         if str(run.get("status") or "") != "draft":
-            return RedirectResponse(
-                f"/analyze/{run_id}?provider_error=analysis%20run%20is%20already%20done",
-                status_code=303,
-            )
+            return provider_error_redirect(run_id, "analysis run is already done")
         manual_prompt = str(run.get("manual_prompt") or "").strip()
         if not manual_prompt:
-            return RedirectResponse(
-                f"/analyze/{run_id}?provider_error=manual%20prompt%20is%20empty",
-                status_code=303,
-            )
+            return provider_error_redirect(run_id, "manual prompt is empty")
         provider = get_provider(provider_name)
         if not provider:
-            return RedirectResponse(
-                f"/analyze/{run_id}?provider_error=provider%20is%20not%20available",
-                status_code=303,
-            )
+            return provider_error_redirect(run_id, "provider is not available")
         try:
             result = await asyncio.to_thread(
                 provider.complete,
@@ -701,6 +700,11 @@ def create_app() -> FastAPI:
                 manual_prompt,
             )
             parsed = parse_answer(result.text)
+            if parsed.get("parse_error"):
+                return provider_error_redirect(
+                    run_id,
+                    f"{result.model_label} returned invalid JSON; draft was kept",
+                )
             save_answer(
                 run_id=run_id,
                 answer_text=result.text,
@@ -711,10 +715,7 @@ def create_app() -> FastAPI:
                 overall_confidence=float(parsed.get("overall_confidence") or 0),
             )
         except ProviderError as exc:
-            return RedirectResponse(
-                f"/analyze/{run_id}?provider_error={urlencode({'e': str(exc)[:160]})[2:]}",
-                status_code=303,
-            )
+            return provider_error_redirect(run_id, str(exc))
         return RedirectResponse(
             f"/analyze/{run_id}?provider_success={urlencode({'e': provider.name})[2:]}",
             status_code=303,

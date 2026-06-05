@@ -113,6 +113,7 @@
       <div class="meta">
         {{ (run.created_at or '')[:16] }} ·
         <span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">{{ '已完成' if run.status == 'done' else '草稿' }}</span>
+        · {{ run.model_label or 'manual_chatgpt_business' }}
         · {{ run.judgement or '未分类' }}
       </div>
 

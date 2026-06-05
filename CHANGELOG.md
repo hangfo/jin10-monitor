@@ -6,6 +6,9 @@
 
 ## 2026-06-05
 
+- 修复 Dashboard Provider 调用体验和失败保护：`/analyze` 调用按钮提交后立即显示“调用中”并禁用，Gemini 返回 `MAX_TOKENS` 等非正常 `finishReason` 或不可解析 JSON 时保留草稿并显示错误，不再保存为伪“已完成”；Gemini 请求增加 JSON 输出约束，并补充 `GEMINI_THINKING_BUDGET` 示例配置。
+- 优化 `/analyze` 证据与行情选择：证据预览默认只勾选前 10 条最高相关度候选，并显示已选条数、建议上限和“本地相关度不是模型置信度”的说明；Prompt 页显示已选证据数和 Prompt 长度提示；分析标的 BTC/ETH/SOL/BNB 会自动匹配对应 USDT 交易对，非加密标的会禁用 Binance 行情摘要，避免 ETH 问题误带 BTCUSDT 行情。
+- 在分析详情、历史分析和对比分析页展示 `model_label`，便于区分手工 ChatGPT、Gemini、GLM、DeepSeek 等不同来源的分析结果。
 - 修复 `/item/{id}` 交互 K 线图的时间对齐问题：秒级快讯窗口会扩展到完整 K 线边界，避免 `±15m`、`±60m` 或自定义窗口少算首尾蜡烛；快讯竖线改为锚定到快讯发生时刻所在的 K 线，随拖动和缩放同步移动；横轴刻度改为自适应 `HH:mm`，时间输入改用更宽的 `datetime-local` 控件。
 - 修复 `/item/{id}` K 线图显示细节：快讯竖线在移出当前可视时间范围后隐藏，底部按成交量 0 轴动态截断且不穿过时间轴；成交量改为独立 pane 和独立右侧刻度，隐藏 TradingView attribution logo，并用自定义分割线避免遮挡右侧价格轴。
 - 新增项目状态摘要 045：记录交互 K 线图体验收口、当前验证结果、未做事项，以及换新 session 后的下一步建议和 GPT-5.5 模型档位。

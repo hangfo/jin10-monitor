@@ -81,6 +81,7 @@
           <th>问题</th>
           <th>窗口</th>
           <th>状态</th>
+          <th>模型</th>
           <th>类型</th>
           <th title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。≥75% 较可信；50-75% 仅供参考；<50% 证据不足。">置信度</th>
           <th>证据</th>
@@ -100,6 +101,7 @@
               {{ '已完成' if run.status == 'done' else '草稿' }}
             </span>
           </td>
+          <td class="muted">{{ run.model_label or 'manual_chatgpt_business' }}</td>
           <td class="muted">{{ run.judgement or '—' }}</td>
           <td>{% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}</td>
           <td class="muted">{{ run.selected_count }}/{{ run.evidence_count }}</td>

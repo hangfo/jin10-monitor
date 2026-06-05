@@ -22,6 +22,7 @@ class CompletionResult:
     model_label: str
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
+    finish_reason: str = ""
 
 
 @dataclass(frozen=True)

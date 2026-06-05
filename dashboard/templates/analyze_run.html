@@ -67,6 +67,13 @@
   .side-evidence:last-child {
     border-bottom: 0;
   }
+  .call-status {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .provider-form.submitting button[type="submit"] {
+    opacity: 0.72;
+  }
   @media (max-width: 900px) {
     .run-grid {
       grid-template-columns: 1fr;
@@ -100,6 +107,7 @@
       状态：<span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">{{ '已完成' if run.status == 'done' else '草稿' }}</span>
     </span>
     <span>证据：{{ run.selected_count }} / {{ run.evidence_count }}</span>
+    <span>模型：<strong>{{ run.model_label or 'manual_chatgpt_business' }}</strong></span>
     {% if run.judgement %}<span>类型：{{ run.judgement }}</span>{% endif %}
     {% if run.overall_confidence %}
     <span title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。≥75% 较可信；50-75% 仅供参考；<50% 证据不足。">置信度：{{ "%.0f%%"|format(run.overall_confidence * 100) }}</span>
@@ -144,13 +152,14 @@
         <h2 style="margin-top:0">草稿记录：粘贴回答</h2>
         {% set available_providers = provider_statuses | selectattr('available') | list %}
         {% if available_providers and run.manual_prompt %}
-        <form method="post" action="/analyze/{{ run.id }}/run-provider" style="align-items:center;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <form class="provider-form" method="post" action="/analyze/{{ run.id }}/run-provider" style="align-items:center;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
           <select name="provider">
             {% for provider in available_providers %}
             <option value="{{ provider.key }}">{{ provider.label }}</option>
             {% endfor %}
           </select>
           <button type="submit">调用并保存</button>
+          <span class="call-status" aria-live="polite"></span>
         </form>
         {% endif %}
         <form method="post" action="/analyze/save-answer">
@@ -201,4 +210,20 @@
     </aside>
   </div>
   {% endif %}
+  <script>
+    document.querySelectorAll(".provider-form").forEach((form) => {
+      form.addEventListener("submit", () => {
+        form.classList.add("submitting");
+        const button = form.querySelector("button[type='submit']");
+        const status = form.querySelector(".call-status");
+        if (button) {
+          button.disabled = true;
+          button.textContent = "调用中...";
+        }
+        if (status) {
+          status.textContent = "正在等待 Provider 返回，通常需要几十秒。";
+        }
+      });
+    });
+  </script>
 {% endblock %}
