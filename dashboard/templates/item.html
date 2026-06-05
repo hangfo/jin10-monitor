@@ -10,8 +10,18 @@
     flex-wrap: wrap;
     gap: 10px;
   }
-  .market-controls input[type="text"] {
-    width: 170px;
+  #market-panel {
+    scroll-margin-top: 76px;
+  }
+  .market-window-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .market-controls input[type="datetime-local"] {
+    min-width: 236px;
+    width: 236px;
   }
   .market-summary {
     display: grid;
@@ -32,6 +42,7 @@
   .market-chart-wrap {
     border: 1px solid var(--border-soft);
     border-radius: 6px;
+    overflow: hidden;
     margin-top: 12px;
     padding: 10px;
     position: relative;
@@ -75,13 +86,19 @@
     width: 100%;
   }
   .market-news-line {
-    border-left: 1px dashed var(--warn-fg);
-    bottom: 24px;
+    border-left: 2px dashed var(--warn-fg);
     display: none;
     pointer-events: none;
     position: absolute;
     top: 46px;
     z-index: 2;
+  }
+  .market-volume-divider {
+    border-top: 1px solid var(--border-soft);
+    display: none;
+    pointer-events: none;
+    position: absolute;
+    z-index: 1;
   }
   .market-news-line span {
     background: var(--warn-bg);
@@ -193,6 +210,11 @@
 
   <h2>行情上下文</h2>
   <section class="panel" id="market-panel" data-default-start="{{ market_start }}" data-default-end="{{ market_end }}" data-news-time="{{ (center.published_at or '')[:19] }}">
+    <div class="market-window-tabs" aria-label="行情与上下文窗口">
+      {% for option in [5, 15, 30, 60] %}
+      <a class="button-link {{ 'secondary' if option != minutes else '' }}" href="/item/{{ center.id }}?minutes={{ option }}#market-panel">±{{ option }}m</a>
+      {% endfor %}
+    </div>
     <div class="market-controls">
       <div class="filter-group">
         <label for="market-symbol">交易对</label>
@@ -211,11 +233,11 @@
       </div>
       <div class="filter-group">
         <label for="market-start">开始</label>
-        <input id="market-start" type="text" class="mono" value="{{ market_start }}" placeholder="YYYY-MM-DD HH:MM:SS">
+        <input id="market-start" type="datetime-local" class="mono" value="{{ datetime_local_value(market_start) }}" step="60">
       </div>
       <div class="filter-group">
         <label for="market-end">结束</label>
-        <input id="market-end" type="text" class="mono" value="{{ market_end }}" placeholder="YYYY-MM-DD HH:MM:SS">
+        <input id="market-end" type="datetime-local" class="mono" value="{{ datetime_local_value(market_end) }}" step="60">
       </div>
       <button type="button" id="market-load">刷新行情</button>
     </div>
@@ -256,12 +278,6 @@
   </section>
 
   <h2>前后 {{ minutes }} 分钟上下文</h2>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-    {% for option in [5, 15, 30, 60] %}
-    <a class="button-link {{ 'secondary' if option != minutes else '' }}" href="/item/{{ center.id }}?minutes={{ option }}">±{{ option }}m</a>
-    {% endfor %}
-  </div>
-
   <div class="card">
     {% for item in context_items %}
     <div class="timeline-item {{ 'center' if item.id == center.id else '' }}">
@@ -292,6 +308,7 @@
     let candleSeries = null;
     let volumeSeries = null;
     let loadTimer = null;
+    let newsChartTime = null;
 
     function formatNumber(value) {
       const parsed = Number(value);
@@ -306,17 +323,21 @@
       const low = Math.min(...klines.map((item) => Number(item.low)));
       const startClose = Number(first.close);
       const endClose = Number(last.close);
-      const move = endClose - startClose;
-      const pct = startClose ? (move / startClose) * 100 : 0;
+      const newsIndex = indexAtOrBeforeNews(klines);
+      const newsClose = newsIndex >= 0 ? Number(klines[newsIndex].close) : startClose;
+      const postMove = endClose - newsClose;
+      const postPct = newsClose ? (postMove / newsClose) * 100 : 0;
+      const totalVolume = klines.reduce((total, item) => total + (Number(item.volume) || 0), 0);
+      const maxVolume = Math.max(...klines.map((item) => Number(item.volume) || 0));
       const stats = [
-        ["交易对", symbol],
-        ["首根收盘", formatNumber(startClose)],
+        ["交易对 / 周期", `${symbol} · ${document.getElementById("market-interval").value}`],
+        ["快讯前收盘", formatNumber(newsClose)],
         ["末根收盘", formatNumber(endClose)],
-        ["涨跌", `${formatNumber(move)} (${pct.toFixed(2)}%)`],
-        ["窗口高点", formatNumber(high)],
-        ["窗口低点", formatNumber(low)],
+        ["快讯后涨跌", `${formatNumber(postMove)} (${postPct.toFixed(2)}%)`],
+        ["窗口高 / 低", `${formatNumber(high)} / ${formatNumber(low)}`],
+        ["成交量合计", formatNumber(totalVolume)],
+        ["最大单根成交量", formatNumber(maxVolume)],
         ["K 线数量", String(klines.length)],
-        ["数据来源", "Binance Spot"],
       ];
       marketSummary.replaceChildren(...stats.map(([label, value]) => {
         const stat = document.createElement("div");
@@ -354,15 +375,62 @@
       marketTableSummary.textContent = `K 线明细（${klines.length} 条）`;
     }
 
-    function parseMarketMs(value) {
+    function parseBeijingParts(value) {
       const text = String(value || "").trim();
-      if (!text) return NaN;
-      return new Date(text.replace(" ", "T")).getTime();
+      const match = text.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+      if (!match) return null;
+      return {
+        year: Number(match[1]),
+        month: Number(match[2]),
+        day: Number(match[3]),
+        hour: Number(match[4]),
+        minute: Number(match[5]),
+        second: Number(match[6] || 0),
+      };
     }
 
     function parseMarketTime(value) {
-      const ms = parseMarketMs(value);
-      return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+      const parts = parseBeijingParts(value);
+      if (!parts) return null;
+      return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) / 1000);
+    }
+
+    function formatBeijingChartTime(time) {
+      const date = new Date(Number(time) * 1000);
+      const pad = (value) => String(value).padStart(2, "0");
+      return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+    }
+
+    function formatBeijingTickTime(time) {
+      const date = new Date(Number(time) * 1000);
+      const pad = (value) => String(value).padStart(2, "0");
+      return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+    }
+
+    function indexAtOrBeforeNews(klines) {
+      const newsTime = parseMarketTime(marketPanel.dataset.newsTime);
+      if (!newsTime) return -1;
+      let index = -1;
+      klines.forEach((item, itemIndex) => {
+        const time = parseMarketTime(item.open_time);
+        if (time !== null && time <= newsTime) {
+          index = itemIndex;
+        }
+      });
+      return index;
+    }
+
+    function updateNewsChartTime(klines) {
+      const index = indexAtOrBeforeNews(klines);
+      const fallbackIndex = klines.length ? Math.floor(klines.length / 2) : -1;
+      const item = klines[index >= 0 ? index : fallbackIndex];
+      newsChartTime = item ? parseMarketTime(item.open_time) : null;
+    }
+
+    function marketInputText(inputId) {
+      const value = document.getElementById(inputId).value.trim();
+      if (!value) return "";
+      return `${value.replace("T", " ")}:00`;
     }
 
     function chartColors() {
@@ -386,6 +454,12 @@
         autoSize: true,
         layout: {
           background: {color: colors.background},
+          attributionLogo: false,
+          panes: {
+            separatorColor: "transparent",
+            separatorHoverColor: "transparent",
+            enableResize: false,
+          },
           textColor: colors.muted,
         },
         grid: {
@@ -394,6 +468,9 @@
         },
         crosshair: {
           mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        localization: {
+          timeFormatter: formatBeijingChartTime,
         },
         rightPriceScale: {
           borderColor: colors.grid,
@@ -404,6 +481,7 @@
           rightOffset: 4,
           timeVisible: true,
           secondsVisible: false,
+          tickMarkFormatter: formatBeijingTickTime,
         },
       });
       candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
@@ -413,13 +491,15 @@
         borderDownColor: colors.down,
         wickUpColor: colors.up,
         wickDownColor: colors.down,
+        priceLineVisible: false,
       });
       volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
         priceFormat: {type: "volume"},
-        priceScaleId: "",
-      });
+        priceLineVisible: false,
+      }, 1);
       volumeSeries.priceScale().applyOptions({
-        scaleMargins: {top: 0.76, bottom: 0},
+        borderColor: colors.grid,
+        scaleMargins: {top: 0.06, bottom: 0},
       });
       chart.subscribeCrosshairMove((param) => {
         if (!param || !param.time || !param.point) {
@@ -437,37 +517,72 @@
         marketTooltip.style.display = "block";
         marketTooltip.style.left = `${x}px`;
         marketTooltip.style.top = `${y + 42}px`;
-        const timeLabel = new Date(Number(param.time) * 1000).toLocaleString();
+        const timeLabel = formatBeijingChartTime(param.time);
         marketTooltip.innerHTML = [
           `<strong>${timeLabel}</strong>`,
-          `O ${formatNumber(candle.open)} H ${formatNumber(candle.high)}`,
-          `L ${formatNumber(candle.low)} C ${formatNumber(candle.close)}`,
-          `Vol ${formatNumber(volume ? volume.value : "")}`,
+          `开 ${formatNumber(candle.open)}　高 ${formatNumber(candle.high)}`,
+          `低 ${formatNumber(candle.low)}　收 ${formatNumber(candle.close)}`,
+          `成交量 ${formatNumber(volume ? volume.value : "")}`,
         ].join("<br>");
       });
       chart.timeScale().subscribeVisibleTimeRangeChange(updateNewsLine);
     }
 
+    function ensureVolumeDivider() {
+      let divider = document.getElementById("market-volume-divider");
+      if (!divider) {
+        divider = document.createElement("div");
+        divider.id = "market-volume-divider";
+        divider.className = "market-volume-divider";
+        marketChartElement.after(divider);
+      }
+      return divider;
+    }
+
+    function updateVolumeDivider() {
+      if (!chart || !volumeSeries) return;
+      const panes = typeof chart.panes === "function" ? chart.panes() : [];
+      if (panes.length < 2) return;
+      const pricePaneHeight = panes[0].getHeight();
+      const divider = ensureVolumeDivider();
+      divider.style.display = "block";
+      divider.style.left = `${marketChartElement.offsetLeft}px`;
+      divider.style.top = `${marketChartElement.offsetTop + pricePaneHeight}px`;
+      divider.style.width = `${chart.timeScale().width()}px`;
+    }
+
     function updateNewsLine() {
-      if (!chart) return;
-      const newsTime = parseMarketTime(marketPanel.dataset.newsTime);
+      updateVolumeDivider();
+      if (!chart || !volumeSeries) return;
+      const newsTime = newsChartTime;
       if (!newsTime) {
         marketNewsLine.style.display = "none";
         return;
       }
       const coordinate = chart.timeScale().timeToCoordinate(newsTime);
-      if (coordinate === null || !Number.isFinite(coordinate)) {
+      const chartWidth = chart.timeScale().width();
+      if (coordinate === null || !Number.isFinite(coordinate) || coordinate < 0 || coordinate > chartWidth) {
+        marketNewsLine.style.display = "none";
+        return;
+      }
+      const panes = typeof chart.panes === "function" ? chart.panes() : [];
+      const pricePaneHeight = panes.length >= 2 ? panes[0].getHeight() : 0;
+      const volumeZero = volumeSeries.priceToCoordinate(0);
+      if (volumeZero === null || !Number.isFinite(volumeZero)) {
         marketNewsLine.style.display = "none";
         return;
       }
       marketNewsLine.style.display = "block";
-      marketNewsLine.style.left = `${Math.round(coordinate) + 10}px`;
+      marketNewsLine.style.left = `${Math.round(marketChartElement.offsetLeft + coordinate)}px`;
+      marketNewsLine.style.top = `${marketChartElement.offsetTop}px`;
+      marketNewsLine.style.height = `${Math.max(0, Math.round(pricePaneHeight + volumeZero))}px`;
     }
 
     function renderMarketChart(klines) {
       initMarketChart();
       const candleData = [];
       const volumeData = [];
+      updateNewsChartTime(klines);
       klines.forEach((item) => {
         const time = parseMarketTime(item.open_time);
         if (!time) return;
@@ -488,14 +603,17 @@
       candleSeries.setData(candleData);
       volumeSeries.setData(volumeData);
       chart.timeScale().fitContent();
-      requestAnimationFrame(updateNewsLine);
+      requestAnimationFrame(() => {
+        updateVolumeDivider();
+        updateNewsLine();
+      });
     }
 
     async function loadMarketData() {
       const symbol = document.getElementById("market-symbol").value;
       const interval = document.getElementById("market-interval").value;
-      const start = document.getElementById("market-start").value.trim();
-      const end = document.getElementById("market-end").value.trim();
+      const start = marketInputText("market-start");
+      const end = marketInputText("market-end");
       const params = new URLSearchParams({symbol, interval, start, end});
       marketStatus.textContent = "加载中...";
       marketResult.hidden = true;
@@ -506,7 +624,7 @@
           marketStatus.textContent = `${data.error || "market data unavailable"}${data.detail ? `: ${data.detail}` : ""}`;
           return;
         }
-        marketStatus.textContent = `${data.adapter || "market"} · ${data.symbol || symbol} · ${data.interval || interval}`;
+        marketStatus.textContent = `已加载 ${data.klines.length} 根 K 线 · 可拖动或滚轮缩放`;
         renderMarketSummary(data.symbol || symbol, data.klines);
         lastMarketKlines = data.klines;
         marketResult.hidden = false;

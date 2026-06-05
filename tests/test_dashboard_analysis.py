@@ -749,7 +749,31 @@ def test_item_template_has_user_triggered_market_overlay():
     assert "lightweight-charts.standalone.production.js" in item_template
     assert "LightweightCharts.CandlestickSeries" in item_template
     assert "LightweightCharts.HistogramSeries" in item_template
+    assert "}, 1);" in item_template
     assert "subscribeCrosshairMove" in item_template
+    assert "formatBeijingChartTime" in item_template
+    assert "formatBeijingTickTime" in item_template
+    assert "tickMarkFormatter" in item_template
+    assert "priceLineVisible: false" in item_template
+    assert "separatorColor" in item_template
+    assert "attributionLogo: false" in item_template
+    assert "market-volume-divider" in item_template
+    assert "chart.timeScale().width()" in item_template
+    assert "coordinate < 0 || coordinate > chartWidth" in item_template
+    assert "volumeSeries.priceToCoordinate(0)" in item_template
+    assert "marketNewsLine.style.height" in item_template
+    assert "scaleMargins: {top: 0.06, bottom: 0}" in item_template
+    assert "newsChartTime" in item_template
+    assert "indexAtOrBeforeNews" in item_template
+    assert 'type="datetime-local"' in item_template
+    assert "market-window-tabs" in item_template
+    assert "marketInputText" in item_template
+    assert "开 ${formatNumber(candle.open)}" in item_template
+    assert "快讯前收盘" in item_template
+    assert "成交量合计" in item_template
+    assert "最大单根成交量" in item_template
+    assert "#market-panel" in item_template
+    assert "已加载 ${data.klines.length} 根 K 线" in item_template
     assert "loadMarketData();" in item_template
     assert "data-news-time" in item_template
     assert "market-table-summary" in item_template

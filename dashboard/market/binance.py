@@ -63,6 +63,8 @@ class BinanceMarketAdapter(BaseMarketAdapter):
             raise MarketAdapterError("end must be later than start")
 
         interval_seconds = ALLOWED_INTERVALS[normalized_interval]
+        start_dt = floor_market_datetime(start_dt, interval_seconds)
+        end_dt = ceil_market_datetime(end_dt, interval_seconds)
         estimated = int(((end_dt - start_dt).total_seconds() // interval_seconds) + 1)
         if estimated > MAX_KLINES:
             raise MarketAdapterError(f"window too large for interval {normalized_interval}; max {MAX_KLINES} klines")
@@ -181,6 +183,19 @@ def parse_market_datetime(value: str, *, label: str) -> datetime:
 
 def format_market_datetime(value: datetime) -> str:
     return value.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def floor_market_datetime(value: datetime, interval_seconds: int) -> datetime:
+    timestamp = int(value.timestamp())
+    floored = timestamp - (timestamp % interval_seconds)
+    return datetime.fromtimestamp(floored).replace(microsecond=0)
+
+
+def ceil_market_datetime(value: datetime, interval_seconds: int) -> datetime:
+    timestamp = int(value.timestamp())
+    remainder = timestamp % interval_seconds
+    ceiled = timestamp if remainder == 0 else timestamp + (interval_seconds - remainder)
+    return datetime.fromtimestamp(ceiled).replace(microsecond=0)
 
 
 def to_epoch_ms(value: datetime) -> int:

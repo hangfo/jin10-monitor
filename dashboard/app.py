@@ -229,6 +229,17 @@ def datetime_local_value(value: object) -> str:
     return text[:16]
 
 
+def floor_to_minute(value):
+    return value.replace(second=0, microsecond=0)
+
+
+def ceil_to_minute(value):
+    rounded = value.replace(second=0, microsecond=0)
+    if value.second or value.microsecond:
+        rounded = rounded + timedelta(minutes=1)
+    return rounded
+
+
 def form_bool(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -358,8 +369,10 @@ def create_app() -> FastAPI:
         if center_dt:
             window_start = (center_dt - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
             window_end = (center_dt + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
-            market_start = window_start
-            market_end = window_end
+            market_start_dt = floor_to_minute(center_dt - timedelta(minutes=minutes))
+            market_end_dt = ceil_to_minute(center_dt + timedelta(minutes=minutes))
+            market_start = market_start_dt.strftime("%Y-%m-%d %H:%M:%S")
+            market_end = market_end_dt.strftime("%Y-%m-%d %H:%M:%S")
             analyze_url = "/analyze?" + urlencode(
                 {
                     "from_item_id": message_id,
@@ -844,8 +857,8 @@ def create_app() -> FastAPI:
                     "adapter": adapter.name,
                     "symbol": symbol,
                     "interval": interval,
-                    "start": start,
-                    "end": end,
+                    "start": klines[0].open_time if klines else start,
+                    "end": klines[-1].open_time if klines else end,
                     "klines": [kline.__dict__ for kline in klines],
                 }
             )

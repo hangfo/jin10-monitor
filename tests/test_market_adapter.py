@@ -13,6 +13,7 @@ from dashboard.market.binance import (
     BinanceMarketAdapter,
     parse_binance_klines,
     parse_market_datetime,
+    to_epoch_ms,
 )
 from dashboard.market.base import MarketAdapterError
 
@@ -107,6 +108,50 @@ def test_binance_adapter_fetches_and_normalizes_klines(monkeypatch):
     assert query["limit"] == ["6"]
     assert "startTime" in query
     assert "endTime" in query
+
+
+def test_binance_adapter_expands_second_precision_window_to_full_klines(monkeypatch):
+    captured = []
+
+    def fake_urlopen(request, timeout):
+        captured.append(request.full_url)
+        return FakeResponse(sample_binance_payload())
+
+    monkeypatch.setattr("dashboard.market.binance.urllib.request.urlopen", fake_urlopen)
+    adapter = BinanceMarketAdapter(base_url="https://example.test", cache_ttl_seconds=60)
+
+    adapter.fetch_klines(
+        symbol="BTCUSDT",
+        interval="1m",
+        start="2024-06-01 20:00:35",
+        end="2024-06-01 20:02:05",
+    )
+
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(captured[0]).query)
+    assert query["startTime"] == [str(to_epoch_ms(datetime(2024, 6, 1, 20, 0, 0)))]
+    assert query["endTime"] == [str(to_epoch_ms(datetime(2024, 6, 1, 20, 3, 0)))]
+    assert query["limit"] == ["4"]
+
+
+def test_binance_adapter_keeps_exact_minute_window_count_stable(monkeypatch):
+    captured = []
+
+    def fake_urlopen(request, timeout):
+        captured.append(request.full_url)
+        return FakeResponse(sample_binance_payload())
+
+    monkeypatch.setattr("dashboard.market.binance.urllib.request.urlopen", fake_urlopen)
+    adapter = BinanceMarketAdapter(base_url="https://example.test", cache_ttl_seconds=60)
+
+    adapter.fetch_klines(
+        symbol="BTCUSDT",
+        interval="1m",
+        start="2024-06-01 19:44:00",
+        end="2024-06-01 21:44:00",
+    )
+
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(captured[0]).query)
+    assert query["limit"] == ["121"]
 
 
 def test_binance_adapter_uses_cache(monkeypatch):

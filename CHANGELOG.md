@@ -1,12 +1,19 @@
-更新时间：2026-06-04 20:35（Asia/Shanghai）
+更新时间：2026-06-05 22:12（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
+## 2026-06-05
+
+- 修复 `/item/{id}` 交互 K 线图的时间对齐问题：秒级快讯窗口会扩展到完整 K 线边界，避免 `±15m`、`±60m` 或自定义窗口少算首尾蜡烛；快讯竖线改为锚定到快讯发生时刻所在的 K 线，随拖动和缩放同步移动；横轴刻度改为自适应 `HH:mm`，时间输入改用更宽的 `datetime-local` 控件。
+- 修复 `/item/{id}` K 线图显示细节：快讯竖线在移出当前可视时间范围后隐藏，底部按成交量 0 轴动态截断且不穿过时间轴；成交量改为独立 pane 和独立右侧刻度，隐藏 TradingView attribution logo，并用自定义分割线避免遮挡右侧价格轴。
+- 新增项目状态摘要 045：记录交互 K 线图体验收口、当前验证结果、未做事项，以及换新 session 后的下一步建议和 GPT-5.5 模型档位。
+
 ## 2026-06-04
 
 - 将 `/item/{id}` 行情上下文面板升级为交互 K 线图：引入本地 vendored TradingView Lightweight Charts，自动加载当前详情窗口行情，展示蜡烛图、成交量、hover OHLCV、拖动缩放和快讯时间竖线；K 线明细表默认折叠，仍保持只读、无首页批量行情请求。
+- 优化 `/item/{id}` 交互 K 线体验：将 `±5m/±15m/±30m/±60m` 窗口切换移到行情图上方并定位回行情面板；图表时间轴和 hover 提示统一显示北京时间，提示文案中文化，关闭默认横向价格虚线并保留随缩放移动的快讯时间竖线；摘要卡片改为快讯前收盘、快讯后涨跌、成交量合计等更有用指标。
 - 修复 Dashboard 搜索关键字中的 SQLite `LIKE` 通配符误匹配：`%`、`_` 和反斜杠会按字面量搜索，避免快讯筛选、分页和最新时间判断失准。
 - 增强 Binance market adapter 缓存并发保护：同一 symbol / interval / window 同时未命中缓存时只发起一次 public REST 请求，等待者复用缓存结果或收到明确降级错误。
 - 实现 Dashboard LLM Provider Adapter 第一版：支持 Anthropic Messages API、Gemini API、OpenAI-compatible API（DeepSeek / GLM 等）和 OpenAI 备用 provider；`/analyze` Prompt 草稿可显式调用已配置 Provider 并保存到独立分析库，默认无 key 时不请求模型 API。

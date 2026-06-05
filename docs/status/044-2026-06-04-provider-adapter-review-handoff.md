@@ -1,4 +1,4 @@
-更新时间：2026-06-04 20:35（Asia/Shanghai）
+更新时间：2026-06-05 22:12（Asia/Shanghai）
 
 # 项目状态摘要 044：Provider Adapter 与 Review 修复收口
 
@@ -19,6 +19,7 @@
 - 可低风险落地的两个真实 Bug 已修复。
 - Provider Adapter 第一版已落地。
 - 行情面板已升级为交互 K 线图，包含蜡烛图、成交量、hover 数据和快讯时间竖线。
+- 交互 K 线图已补齐分钟边界对齐、快讯竖线锚定、北京时间刻度、原生时间输入体验和成交量独立 pane。
 - 删除旧 Dashboard 死代码暂不混入本轮，应单独 refactor。
 
 ## 2. 当前仓库状态
@@ -26,7 +27,7 @@
 本摘要生成前 HEAD：
 
 ```text
-fcfb758 docs(status): add ops diagnostics handoff
+37480bf feat(dashboard): add interactive market chart
 ```
 
 本轮变更准备提交，涉及：
@@ -38,6 +39,7 @@ fcfb758 docs(status): add ops diagnostics handoff
 - `.env.example` Provider 配置示例。
 - review 后续计划文档 `007`。
 - `/item/{id}` 行情面板交互 K 线图。
+- `/item/{id}` 行情窗口 K 线边界对齐和竖线锚定修复。
 - 本项目状态摘要 `044`。
 
 当前正式 Dashboard 入口仍是：
@@ -153,7 +155,14 @@ com.rich.jin10-dashboard
 - 交易对、周期、开始和结束时间变化后自动刷新。
 - 保留“刷新行情”按钮，用于失败或人工重试。
 - 成功返回 K 线后展示蜡烛图、成交量、hover OHLCV 和拖动缩放。
-- 展示快讯发布时间竖线标记。
+- `±5m/±15m/±30m/±60m` 窗口切换移到行情面板顶部，点击后定位回行情面板，避免页面焦点漂移。
+- 图表横轴刻度自适应显示 `HH:mm`，hover 提示保留完整北京时间并中文化。
+- 行情请求会把秒级窗口扩展到完整 K 线边界，避免 `±15m`、`±60m` 或自定义窗口少算首尾蜡烛。
+- 快讯发布时间竖线锚定到快讯所在 K 线，随缩放和左右拖动自适应移动；移出当前可视时间范围后隐藏，底部按成交量 0 轴动态截断且不穿过时间轴。
+- 成交量使用独立 pane 和独立右侧刻度，隐藏 TradingView attribution logo，并用自定义分割线与上方价格 K 线区分，避免遮挡右侧价格轴。
+- 关闭默认横向价格虚线，避免和快讯竖线语义混淆。
+- 摘要卡片展示快讯前收盘、快讯后涨跌、成交量合计、最大单根成交量等更有用指标。
+- 开始 / 结束时间改用原生 `datetime-local` 控件，宽度足够展示完整时间。
 - K 线明细表默认折叠，供开发排查时展开。
 
 边界：
@@ -367,7 +376,7 @@ git log --oneline -8
 - Provider 支持 Anthropic、Gemini、OpenAI-compatible、OpenAI；默认无 key 不请求模型 API。
 - Dashboard 仍是本地只读诊断和分析侧车，不作为采集入口。
 - 不请求金十 REST，不写业务历史库，不自动重发 Telegram unknown_timeout。
-- 行情面板交互 K 线图已完成，`/item/{id}` 打开后会自动加载当前窗口行情并展示蜡烛图、成交量、hover 数据和快讯时间标记。
+- 行情面板交互 K 线图已完成，`/item/{id}` 打开后会自动加载当前窗口行情并展示蜡烛图、成交量、hover 数据和快讯时间竖线；秒级窗口会扩展到完整 K 线边界，K 线根数按首尾边界稳定计算。
 
 推荐下一步：
 优先做 Provider 真实 key 试用和分析历史 `model_label` 展示：先用 Gemini API key 跑一次 `/analyze`，再让历史和对比页清楚显示 Gemini / GLM / DeepSeek / Anthropic 来源。
