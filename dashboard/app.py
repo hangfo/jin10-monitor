@@ -121,6 +121,21 @@ def provider_error_redirect(run_id: str, message: str) -> RedirectResponse:
     return RedirectResponse(f"/analyze/{run_id}?provider_error={error}", status_code=303)
 
 
+def format_provider_error(message: str) -> str:
+    text = str(message or "").strip()
+    if not text:
+        return "Provider 调用失败，请稍后重试。"
+    if "finishReason=" in text:
+        return f"Provider 调用失败：{text}"
+    if "invalid JSON" in text or "parse" in text.lower():
+        return "模型返回了不可解析 JSON，已保留草稿，请减少证据数量或重新调用。"
+    if "not configured" in text or "API_KEY" in text:
+        return "Provider 调用失败：API Key 未配置或不可用。"
+    if "not available" in text:
+        return "Provider 调用失败：当前 Provider 不可用。"
+    return f"Provider 调用失败：{text}"
+
+
 def parse_int(value: object, default: int, minimum: int, maximum: int) -> int:
     try:
         parsed = int(str(value))
@@ -703,7 +718,7 @@ def create_app() -> FastAPI:
             if parsed.get("parse_error"):
                 return provider_error_redirect(
                     run_id,
-                    f"{result.model_label} returned invalid JSON; draft was kept",
+                    format_provider_error(f"{result.model_label} returned invalid JSON; draft was kept"),
                 )
             save_answer(
                 run_id=run_id,
@@ -715,7 +730,7 @@ def create_app() -> FastAPI:
                 overall_confidence=float(parsed.get("overall_confidence") or 0),
             )
         except ProviderError as exc:
-            return provider_error_redirect(run_id, str(exc))
+            return provider_error_redirect(run_id, format_provider_error(str(exc)))
         return RedirectResponse(
             f"/analyze/{run_id}?provider_success={urlencode({'e': provider.name})[2:]}",
             status_code=303,

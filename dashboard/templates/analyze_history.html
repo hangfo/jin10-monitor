@@ -51,7 +51,7 @@
   <div class="page-head">
     <h1>历史分析</h1>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <a class="button-link secondary" href="/analyze/compare">对比</a>
+      <button id="compare-top-btn" class="button-link secondary" type="button" onclick="goCompare()" disabled>对比</button>
       <a class="button-link" href="/analyze">新建分析</a>
     </div>
   </div>
@@ -139,9 +139,11 @@
       const bar = document.getElementById("compare-bar");
       const hint = document.getElementById("compare-hint");
       const button = document.getElementById("compare-btn");
+      const topButton = document.getElementById("compare-top-btn");
       bar.classList.toggle("visible", ids.length > 0);
       hint.textContent = ids.length === 1 ? "已选 1 条" : `已选 ${ids.length} 条`;
       button.disabled = ids.length !== 2;
+      topButton.disabled = ids.length !== 2;
     }
 
     function goCompare() {

@@ -9,6 +9,7 @@ from dashboard.app import (
     ALLOWED_SCREENSHOT_MIME_TYPES,
     app,
     append_screenshot_context,
+    format_provider_error,
     provider_error_redirect,
     parse_market_context_json,
     normalize_news_text,
@@ -340,6 +341,41 @@ def test_evidence_builder_scores_and_labels_news_id(tmp_path, monkeypatch):
     assert [item["news_id"] for item in packet] == ["btc-1"]
     assert packet[0]["relevance_score"] > 0
     assert "BTC" in packet[0]["matched_keywords"] or "比特币" in packet[0]["matched_keywords"]
+    assert packet[0]["score_reasons"]
+
+
+def test_evidence_v2_prioritizes_macro_transmission_over_summary(tmp_path, monkeypatch):
+    history_path = tmp_path / "history.sqlite3"
+    conn = create_history_db(history_path)
+    insert_flash(
+        conn,
+        "summary",
+        "2026-06-05 23:08:00",
+        "金十数据整理：欧盘美盘重要新闻汇总",
+        "加息 伊朗 美联储 通胀 利率 特朗普 美国 中国",
+        "T3_IMPORTANT",
+    )
+    insert_flash(
+        conn,
+        "macro",
+        "2026-06-05 23:00:00",
+        "美国5月非农就业人口远超预期，美元走强",
+        "市场上调美联储加息概率，收益率上涨，风险偏好下降",
+        "T2_HIGH",
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("HISTORY_DB", str(history_path))
+
+    packet, _boundary = evidence.build_evidence_for_preview(
+        "ETH",
+        "2026-06-05 22:43:00",
+        "2026-06-05 23:43:00",
+    )
+
+    assert [item["news_id"] for item in packet[:2]] == ["macro", "summary"]
+    assert "利率/美元/流动性传导" in packet[0]["score_reasons"]
+    assert "汇总/预告降权" in packet[1]["score_reasons"]
 
 
 def test_evidence_builder_returns_empty_on_bad_window():
@@ -376,6 +412,7 @@ def test_prompt_generation_includes_selected_evidence_and_question():
                 "news_source": "Reuters",
                 "relevance_score": 0.85,
                 "matched_keywords": ["美联储"],
+                "score_reasons": ["利率/美元/流动性传导"],
                 "selected": True,
             }
         ],
@@ -384,6 +421,10 @@ def test_prompt_generation_includes_selected_evidence_and_question():
     assert "BTC 为何上涨" in prompt
     assert "ev001" in prompt
     assert "美联储暂停加息" in prompt
+    assert "利率/美元/流动性传导" in prompt
+    assert "优先输出 4-8 条 catalysts" in prompt
+    assert "news_driven：一条或几条具体新闻/数据能直接解释主要波动" in prompt
+    assert "macro_sentiment：主要是利率、美元、通胀、就业、地缘风险等宏观风险偏好共同传导" in prompt
 
 
 def test_prompt_generation_includes_optional_market_context():
@@ -569,6 +610,16 @@ def test_provider_error_redirect_quotes_message():
 
     assert response.status_code == 303
     assert response.headers["location"] == "/analyze/run-1?provider_error=bad+json"
+
+
+def test_format_provider_error_uses_chinese_actionable_copy():
+    assert format_provider_error("gemini:gemini-2.5-flash returned invalid JSON; draft was kept") == (
+        "模型返回了不可解析 JSON，已保留草稿，请减少证据数量或重新调用。"
+    )
+    assert (
+        format_provider_error("Gemini stopped with finishReason=MAX_TOKENS")
+        == "Provider 调用失败：Gemini stopped with finishReason=MAX_TOKENS"
+    )
 
 
 def test_analysis_routes_are_registered_before_dynamic_detail():
@@ -809,9 +860,12 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "ETHUSDT" in analyze_template
     assert "本地相关度分数，不是模型置信度" in analyze_template
     assert "建议 5-10 条" in analyze_template
+    assert "最多展示 40 条" in analyze_template
     assert "loop.index <= 10" in analyze_template
     assert "Prompt 约" in analyze_template
     assert "model_label" in history_template
+    assert "compare-top-btn" in history_template
+    assert "topButton.disabled = ids.length !== 2" in history_template
     assert "model_label" in compare_template
     assert "模型：" in run_template
 

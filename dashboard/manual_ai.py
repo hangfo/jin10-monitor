@@ -26,7 +26,14 @@ SYSTEM_INSTRUCTION = """\
 3. 如果证据不足以得出结论，在 missing_evidence 中说明，不强行归因。
 4. impact_path 必须具体说明机制，不能只写“利好”或“利空”。
 5. 必须说明新闻如何影响风险偏好、利率预期、美元流动性、供需或仓位，而不是只复述新闻。
-6. 输出严格 JSON，不要 markdown 代码块，不要任何前言后语。
+6. 在证据充分时优先输出 4-8 条 catalysts；不要为了凑数重复同一条传导链。
+7. judgement 判定标准必须一致：
+   - news_driven：一条或几条具体新闻/数据能直接解释主要波动。
+   - macro_sentiment：主要是利率、美元、通胀、就业、地缘风险等宏观风险偏好共同传导，没有单一新闻足够解释。
+   - technical_breakout：主要由价格、成交量、突破/跌破等行情结构解释，新闻只是辅助。
+   - unclear：证据不足、时间不吻合或因果链不清楚。
+8. 如果多个证据属于同一传导链，可合并说明，但 catalysts 应覆盖不同的高置信传导链。
+9. 输出严格 JSON，不要 markdown 代码块，不要任何前言后语。
 
 输出格式：
 {
@@ -93,12 +100,15 @@ def generate_prompt(
         keyword_note = ""
         if item.get("matched_keywords"):
             keyword_note = "\n    命中关键词：" + "，".join(str(k) for k in item["matched_keywords"])
+        reason_note = ""
+        if item.get("score_reasons"):
+            reason_note = "\n    本地评分理由：" + " / ".join(str(k) for k in item["score_reasons"])
         lines.extend(
             [
                 f"[{index}] news_id={item.get('news_id') or item.get('id')}",
                 f"    时间：{item.get('published_at', '')}",
                 f"    优先级：{item.get('priority_level', '')}（相关度 {float(item.get('relevance_score') or 0):.2f}）",
-                f"    内容：{content_line}{extra}{keyword_note}",
+                f"    内容：{content_line}{extra}{keyword_note}{reason_note}",
                 f"    来源：{item.get('news_source') or '—'}",
                 "",
             ]

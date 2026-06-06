@@ -317,6 +317,7 @@ def get_run(run_id: str, path: Optional[Path] = None) -> Optional[dict[str, Any]
                 row_dict["content"] = packet_item.get("content", "")
                 row_dict["priority_level"] = packet_item.get("priority_level", "")
                 row_dict["news_source"] = packet_item.get("news_source", "")
+                row_dict["score_reasons"] = packet_item.get("score_reasons", [])
             enriched_rows.append(row_dict)
         run["evidence_rows"] = enriched_rows
     return run

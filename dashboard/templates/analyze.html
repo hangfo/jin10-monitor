@@ -462,7 +462,7 @@
       {% set css = priority_css(ev.priority_level) %}
       <div class="ev-row">
         <input class="ev-check" type="checkbox" name="sel_{{ ev.news_id }}" value="1"{{ ' checked' if loop.index <= 10 }} onchange="updateSelectionHint()">
-        <span class="ev-score" title="本地相关度分数，不是模型置信度。越接近 1，说明和标的、关键词、时间窗口越匹配。">{{ "%.2f"|format(ev.relevance_score) }}</span>
+        <span class="ev-score" title="本地相关度分数，不是模型置信度。v2 综合标的、宏观传导、因果词、时间贴近和噪声降权。">{{ "%.2f"|format(ev.relevance_score) }}</span>
         <div class="ev-body">
           <div class="ev-title">
             <span class="pill {{ css }}">{{ ev.priority_level }}</span>
@@ -472,6 +472,9 @@
             {{ ev.published_at[:16] }} · {{ ev.news_source or '—' }}
             {% if ev.matched_keywords %} · {{ ev.matched_keywords | join('、') }}{% endif %}
           </div>
+          {% if ev.score_reasons %}
+          <div class="ev-meta">评分理由：{{ ev.score_reasons | join(' / ') }}</div>
+          {% endif %}
         </div>
         <a class="muted" href="/item/{{ ev.news_id }}" target="_blank">打开</a>
       </div>
@@ -492,7 +495,7 @@
       const selected = document.querySelectorAll(".ev-check:checked").length;
       const hint = document.getElementById("selection-hint");
       if (!hint) return;
-      hint.textContent = `找到 ${total} 条候选证据，已选 ${selected} 条。建议保留 5-10 条最相关新闻；左侧分数是本地相关度，不是置信度。`;
+      hint.textContent = `找到 ${total} 条候选证据，已选 ${selected} 条。最多展示 40 条，建议保留 5-10 条最相关新闻；左侧分数是 v2 本地相关度，不是置信度。`;
       hint.classList.toggle("warn", selected > 10);
     }
 

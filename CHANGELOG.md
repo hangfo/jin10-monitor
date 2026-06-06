@@ -1,8 +1,16 @@
-更新时间：2026-06-05 22:12（Asia/Shanghai）
+更新时间：2026-06-06 16:37（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
+
+## 2026-06-06
+
+- 将 `/analyze` 证据相关度升级为 v2 多因子评分：综合标的命中、利率/美元/流动性、地缘/能源风险、因果语言、数据/预期差、时间贴近和优先级，并对汇总、预告、整理、广告和同主题重复内容降权；候选证据上限从 25 条扩展到 40 条，但默认仍只勾选前 10 条以控制 Prompt 长度。
+- 在证据预览、分析详情和 Prompt 中展示 v2 评分理由，帮助区分“本地相关度”与“模型置信度”；新增只读 `scripts/backtest_evidence_scoring.py` 回测脚本，用历史 LLM 单条证据置信度评估 v1/v2 top-k 排序效果。
+- 优化 Provider 调用错误提示与 Gemini prompt 口径：Provider 错误改为中文可行动提示；Prompt 明确 `news_driven`、`macro_sentiment`、`technical_breakout`、`unclear` 判定标准，并要求证据充分时优先输出 4-8 条不同传导链 catalysts。
+- 修复历史分析页右上角“对比”按钮裸跳空对比页的问题：顶部按钮现在与底部浮动栏一致，只有选满两条记录才可用，并携带选中 ids 进入 `/analyze/compare`。
+- 新增项目状态摘要 046：记录 v2 评分模型、回测结果、Provider/Gemini 观察、当前未提交外部链路边界，以及下一步建议。
 
 ## 2026-06-05
 
