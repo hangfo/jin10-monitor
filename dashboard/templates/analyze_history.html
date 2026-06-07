@@ -82,6 +82,7 @@
           <th>窗口</th>
           <th>状态</th>
           <th>模型</th>
+          <th>开始</th>
           <th>耗时</th>
           <th>类型</th>
           <th title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。≥75% 较可信；50-75% 仅供参考；<50% 证据不足。">置信度</th>
@@ -98,12 +99,13 @@
           <td>{{ (run.question or '')[:90] }}</td>
           <td class="muted">{{ (run.window_start or '')[5:16] }}<br>{{ (run.window_end or '')[5:16] }}</td>
           <td>
-            <span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">
-              {{ '已完成' if run.status == 'done' else '草稿' }}
+            <span class="pill {{ analysis_status_class(run.status) }}">
+              {{ analysis_status_label(run.status) }}
             </span>
           </td>
-          <td class="muted">{{ run.model_label if run.status == 'done' else '待调用 / 待回填' }}</td>
-          <td class="muted">{% if run.provider_elapsed_ms %}{{ "%.1fs"|format(run.provider_elapsed_ms / 1000) }}{% else %}—{% endif %}</td>
+          <td class="muted">{% if run.status == 'done' %}{{ run.model_label }}{% elif run.provider_name %}{{ run.provider_name }}{% else %}待调用 / 待回填{% endif %}</td>
+          <td class="muted">{{ (run.provider_started_at or '')[:16] if run.provider_started_at else '—' }}</td>
+          <td class="muted">{% if run.provider_elapsed_ms %}{{ "%.1fs"|format(run.provider_elapsed_ms / 1000) }}{% elif run.status == 'running' %}进行中{% else %}—{% endif %}</td>
           <td class="muted">{{ judgement_label(run.judgement) if run.judgement else '—' }}</td>
           <td>{% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}</td>
           <td class="muted">{{ run.selected_count }}/{{ run.evidence_count }}</td>

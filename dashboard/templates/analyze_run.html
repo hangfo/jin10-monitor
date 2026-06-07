@@ -151,12 +151,13 @@
     <div class="run-overview-line">
       <span class="metric"><span class="metric-label">标的</span><span class="metric-value">{{ run.asset }}</span></span>
       <span class="metric wide"><span class="metric-label">窗口</span><span class="metric-value">{{ run.window_start }} - {{ run.window_end }}</span></span>
-      <span class="metric"><span class="metric-label">状态</span><span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">{{ '已完成' if run.status == 'done' else '草稿' }}</span></span>
+      <span class="metric"><span class="metric-label">状态</span><span class="pill {{ analysis_status_class(run.status) }}">{{ analysis_status_label(run.status) }}</span></span>
       <span class="metric"><span class="metric-label">证据</span><span class="metric-value">{{ run.selected_count }} / {{ run.evidence_count }}</span></span>
-      <span class="metric wide"><span class="metric-label">模型</span><span class="metric-value">{{ run.model_label if run.status == 'done' else '待调用 / 待回填' }}</span></span>
+      <span class="metric wide"><span class="metric-label">Provider</span><span class="metric-value">{% if run.status == 'done' %}{{ run.model_label }}{% elif run.provider_name %}{{ run.provider_name }}{% else %}待调用 / 待回填{% endif %}</span></span>
     </div>
     <div class="run-overview-line">
-      <span class="metric"><span class="metric-label">耗时</span><span class="metric-value">{% if run.provider_elapsed_ms %}{{ "%.1fs"|format(run.provider_elapsed_ms / 1000) }}{% else %}—{% endif %}</span></span>
+      <span class="metric"><span class="metric-label">开始</span><span class="metric-value">{{ (run.provider_started_at or '')[:16] if run.provider_started_at else '—' }}</span></span>
+      <span class="metric"><span class="metric-label">耗时</span><span class="metric-value">{% if run.provider_elapsed_ms %}{{ "%.1fs"|format(run.provider_elapsed_ms / 1000) }}{% elif run.status == 'running' %}进行中{% else %}—{% endif %}</span></span>
       <span class="metric"><span class="metric-label">类型</span><span class="metric-value">{{ judgement_label(run.judgement) if run.judgement else '—' }}</span></span>
       <span class="metric"><span class="metric-label">置信度</span><span class="metric-value" title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。≥75% 较可信；50-75% 仅供参考；<50% 证据不足。">{% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}</span></span>
       <span class="run-id-chip">分析 ID <span class="mono">{{ run.id }}</span></span>
@@ -191,6 +192,11 @@
     Provider 已保存：{{ provider_success }}
   </div>
   {% endif %}
+  {% if provider_started %}
+  <div class="panel" style="background:var(--warn-bg);margin-bottom:12px;color:var(--warn-fg)">
+    Provider 已开始后台调用：{{ provider_started }}。可刷新本页或回到历史页查看完成/失败状态。
+  </div>
+  {% endif %}
   {% if provider_review_warning %}
   <div class="panel" style="background:var(--warn-bg);margin-bottom:12px;color:var(--warn-fg)">
     {{ provider_review_warning }}
@@ -204,9 +210,13 @@
         <h2>AI 分析结论</h2>
         {{ answer_html | safe }}
       </div>
-      {% elif run.status == 'draft' %}
+      {% elif run.status in ['draft', 'running'] %}
       <div class="card card-body" style="margin-bottom:16px">
-        <h2 style="margin-top:0">草稿记录：调用 Provider 或粘贴回答</h2>
+        <h2 style="margin-top:0">{{ 'Provider 调用中' if run.status == 'running' else '草稿记录：调用 Provider 或粘贴回答' }}</h2>
+        {% if run.status == 'running' %}
+        <p class="muted">后台任务正在执行，开始时间 {{ (run.provider_started_at or '')[:16] }}，Provider：{{ run.provider_name or run.model_label }}。</p>
+        <a class="button-link secondary" href="/analyze/{{ run.id }}?provider={{ selected_provider }}">刷新状态</a>
+        {% else %}
         {% if run.manual_prompt %}
         <div style="align-items:center;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
           <button type="button" onclick="copyDraftPrompt()">复制 Prompt</button>
@@ -232,6 +242,7 @@
           <textarea name="answer_text" rows="9" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font:inherit;resize:vertical">{{ run.answer_text }}</textarea>
           <button type="submit" style="margin-top:10px">保存分析记录</button>
         </form>
+        {% endif %}
       </div>
       {% endif %}
 
@@ -298,7 +309,7 @@
           button.textContent = "调用中...";
         }
         if (status) {
-          status.textContent = "正在等待 Provider 返回，通常需要几十秒。";
+          status.textContent = "已提交后台调用，页面会立即返回。";
         }
       });
     });

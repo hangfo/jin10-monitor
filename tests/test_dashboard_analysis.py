@@ -9,6 +9,7 @@ from dashboard.app import (
     ALLOWED_SCREENSHOT_MIME_TYPES,
     app,
     append_screenshot_context,
+    analysis_status_label,
     format_provider_error,
     market_context_default_enabled,
     provider_error_redirect,
@@ -330,6 +331,60 @@ def test_provider_error_is_persisted_until_success(tmp_path):
     assert run["status"] == "done"
     assert run["provider_error"] == ""
     assert run["provider_error_at"] == ""
+
+
+def test_mark_provider_running_tracks_start_and_provider(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    run_id = analysis_db.create_run(
+        "Question",
+        "ETH",
+        "2026-05-23 09:00:00",
+        "2026-05-23 10:00:00",
+        [],
+        path=db_path,
+    )
+
+    started = analysis_db.mark_provider_running(
+        run_id,
+        provider_name="compatible",
+        provider_label="GLM:glm-4.7-flash",
+        path=db_path,
+    )
+    run = analysis_db.get_run(run_id, path=db_path)
+
+    assert started is True
+    assert run["status"] == "running"
+    assert run["provider_name"] == "compatible"
+    assert run["provider_started_at"]
+    assert run["model_label"] == "GLM:glm-4.7-flash"
+    assert analysis_db.mark_provider_running(run_id, provider_name="gemini", path=db_path) is False
+
+
+def test_provider_error_returns_running_run_to_draft(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    run_id = analysis_db.create_run(
+        "Question",
+        "ETH",
+        "2026-05-23 09:00:00",
+        "2026-05-23 10:00:00",
+        [],
+        path=db_path,
+    )
+    analysis_db.mark_provider_running(run_id, provider_name="gemini", path=db_path)
+
+    analysis_db.save_provider_error(
+        run_id,
+        "Provider 调用失败：timeout",
+        provider_elapsed_ms=42000,
+        path=db_path,
+    )
+    run = analysis_db.get_run(run_id, path=db_path)
+
+    assert run["status"] == "draft"
+    assert "timeout" in run["provider_error"]
+    assert run["provider_elapsed_ms"] == 42000
 
 
 def test_list_runs_includes_model_label(tmp_path):
@@ -794,6 +849,11 @@ def test_provider_error_redirect_quotes_message():
     assert response.headers["location"] == "/analyze/run-1?provider_error=bad+json&provider=compatible"
 
 
+def test_analysis_status_label_includes_running():
+    assert analysis_status_label("running") == "调用中"
+    assert analysis_status_label("done") == "已完成"
+
+
 def test_format_provider_error_uses_chinese_actionable_copy():
     assert format_provider_error("gemini:gemini-2.5-flash returned invalid JSON; draft was kept") == (
         "模型返回了不可解析 JSON，已保留草稿，请减少证据数量或重新调用。详情：gemini:gemini-2.5-flash"
@@ -1074,7 +1134,13 @@ def test_analyze_templates_expose_provider_run_controls():
     assert "selected_provider == provider.key" in run_template
     assert "provider_review_warning" in run_template
     assert "provider_elapsed_ms" in run_template
+    assert "provider_started_at" in run_template
+    assert "analysis_status_label(run.status)" in run_template
+    assert "Provider 调用中" in run_template
+    assert "后台调用" in run_template
     assert "provider_elapsed_ms" in history_template
+    assert "provider_started_at" in history_template
+    assert "analysis_status_label(run.status)" in history_template
     assert "judgement_label(run.judgement)" in run_template
     assert "judgement_label(run.judgement)" in history_template
     assert "分析 ID" in run_template
@@ -1082,7 +1148,7 @@ def test_analyze_templates_expose_provider_run_controls():
     assert "待调用 / 待回填" in run_template
     assert "copyDraftPrompt" in run_template
     assert "draft-prompt-text" in run_template
-    assert "调用中..." in analyze_template
+    assert "提交中..." in analyze_template
     assert "调用中..." in run_template
 
 

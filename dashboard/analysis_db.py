@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     answer_text TEXT NOT NULL DEFAULT '',
     answer_json TEXT NOT NULL DEFAULT '{}',
     model_label TEXT NOT NULL DEFAULT 'manual_chatgpt_business',
+    provider_name TEXT NOT NULL DEFAULT '',
+    provider_started_at TEXT NOT NULL DEFAULT '',
     provider_error TEXT NOT NULL DEFAULT '',
     provider_error_at TEXT NOT NULL DEFAULT '',
     provider_elapsed_ms INTEGER NOT NULL DEFAULT 0,
@@ -121,6 +123,10 @@ def ensure_analysis_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE analysis_runs ADD COLUMN provider_error_at TEXT NOT NULL DEFAULT ''")
     if "provider_elapsed_ms" not in columns:
         conn.execute("ALTER TABLE analysis_runs ADD COLUMN provider_elapsed_ms INTEGER NOT NULL DEFAULT 0")
+    if "provider_name" not in columns:
+        conn.execute("ALTER TABLE analysis_runs ADD COLUMN provider_name TEXT NOT NULL DEFAULT ''")
+    if "provider_started_at" not in columns:
+        conn.execute("ALTER TABLE analysis_runs ADD COLUMN provider_started_at TEXT NOT NULL DEFAULT ''")
 
 
 def now_text() -> str:
@@ -218,12 +224,46 @@ def save_provider_error(
         conn.execute(
             """
             UPDATE analysis_runs
-            SET provider_error = ?, provider_error_at = ?, provider_elapsed_ms = ?, updated_at = ?
-            WHERE id = ? AND status = 'draft'
+            SET provider_error = ?, provider_error_at = ?, provider_elapsed_ms = ?, status = 'draft', updated_at = ?
+            WHERE id = ? AND status IN ('draft', 'running')
             """,
             (str(message or "")[:1200], updated_at, max(0, int(provider_elapsed_ms or 0)), updated_at, run_id),
         )
         conn.commit()
+
+
+def mark_provider_running(
+    run_id: str,
+    *,
+    provider_name: str,
+    provider_label: str = "",
+    path: Optional[Path] = None,
+) -> bool:
+    updated_at = now_text()
+    with open_analysis_db(path) as conn:
+        cursor = conn.execute(
+            """
+            UPDATE analysis_runs
+            SET status = 'running',
+                provider_name = ?,
+                provider_started_at = ?,
+                provider_error = '',
+                provider_error_at = '',
+                provider_elapsed_ms = 0,
+                model_label = ?,
+                updated_at = ?
+            WHERE id = ? AND status = 'draft'
+            """,
+            (
+                str(provider_name or "")[:80],
+                updated_at,
+                str(provider_label or provider_name or "")[:120],
+                updated_at,
+                run_id,
+            ),
+        )
+        conn.commit()
+    return cursor.rowcount == 1
 
 
 def save_answer(
@@ -287,6 +327,7 @@ def save_answer(
             "answer_json = ?",
             "manual_prompt = ?",
             "model_label = ?",
+            "provider_name = ?",
             "provider_error = ?",
             "provider_error_at = ?",
             "provider_elapsed_ms = ?",
@@ -300,6 +341,7 @@ def save_answer(
             json.dumps(answer_json, ensure_ascii=False),
             manual_prompt,
             model_label or "manual_chatgpt_business",
+            model_label or "",
             "",
             "",
             max(0, int(provider_elapsed_ms or 0)),
@@ -378,7 +420,8 @@ def list_runs(
             f"""
             SELECT id, question, asset, window_start, window_end, judgement,
                    overall_confidence, status, evidence_count, selected_count,
-                   model_label, provider_error, provider_error_at, provider_elapsed_ms,
+                   model_label, provider_name, provider_started_at,
+                   provider_error, provider_error_at, provider_elapsed_ms,
                    created_at, updated_at
             FROM analysis_runs
             {where}

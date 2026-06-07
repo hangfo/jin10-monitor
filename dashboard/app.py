@@ -11,7 +11,7 @@ from datetime import timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -25,6 +25,7 @@ from .analysis_db import (
     get_screenshot,
     init_analysis_db,
     list_runs,
+    mark_provider_running,
     save_answer,
     save_provider_error,
     save_screenshot,
@@ -205,11 +206,80 @@ def format_provider_error(message: str) -> str:
         return "Provider 调用失败：Prompt 为空，请重新生成 Prompt。"
     if "analysis run is already done" in text:
         return "Provider 调用失败：这条分析已经完成，请使用重新分析创建新草稿。"
+    if "provider is already running" in text:
+        return "Provider 正在调用中，请稍后刷新查看结果。"
     if "not configured" in text or "API_KEY" in text:
         return "Provider 调用失败：API Key 未配置或不可用。"
     if "not available" in text:
         return "Provider 调用失败：当前 Provider 不可用。"
     return f"Provider 调用失败：{text}"
+
+
+def analysis_status_label(status: object) -> str:
+    return {
+        "done": "已完成",
+        "running": "调用中",
+        "draft": "草稿",
+    }.get(str(status or ""), "草稿")
+
+
+def analysis_status_class(status: object) -> str:
+    return {
+        "done": "sent",
+        "running": "normal",
+        "draft": "none",
+    }.get(str(status or ""), "none")
+
+
+async def execute_provider_run(run_id: str, provider_name: str, manual_prompt: str) -> None:
+    provider = get_provider(provider_name)
+    if not provider:
+        save_provider_error(run_id, format_provider_error("provider is not available"))
+        return
+    start_time = time.monotonic()
+    try:
+        result = await asyncio.to_thread(
+            provider.complete,
+            provider_system_prompt(provider_name, provider.name),
+            manual_prompt,
+        )
+        provider_elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        parsed = parse_answer(result.text)
+        if parsed.get("parse_error"):
+            preview = provider_raw_preview(result.text)
+            save_provider_error(
+                run_id,
+                format_provider_error(
+                    f"{result.model_label} returned invalid JSON; draft was kept; elapsed={provider_elapsed_ms / 1000:.1f}s; raw preview: {preview}"
+                ),
+                provider_elapsed_ms=provider_elapsed_ms,
+            )
+            return
+        save_answer(
+            run_id=run_id,
+            answer_text=result.text,
+            manual_prompt=manual_prompt,
+            model_label=result.model_label,
+            answer_json=parsed,
+            judgement=str(parsed.get("judgement") or "unclear"),
+            overall_confidence=float(parsed.get("overall_confidence") or 0),
+            provider_elapsed_ms=provider_elapsed_ms,
+        )
+    except ProviderError as exc:
+        provider_elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        save_provider_error(
+            run_id,
+            format_provider_error(f"{provider.name}: {exc}; elapsed={provider_elapsed_ms / 1000:.1f}s"),
+            provider_elapsed_ms=provider_elapsed_ms,
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard for background tasks.
+        provider_elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        log.exception("Provider background task failed for %s", run_id)
+        save_provider_error(
+            run_id,
+            format_provider_error(f"background task failed: {type(exc).__name__}: {exc}"),
+            provider_elapsed_ms=provider_elapsed_ms,
+        )
 
 
 def parse_int(value: object, default: int, minimum: int, maximum: int) -> int:
@@ -419,6 +489,8 @@ def create_app() -> FastAPI:
     templates.env.globals["confidence_help"] = CONFIDENCE_HELP
     templates.env.globals["normalize_news_text"] = normalize_news_text
     templates.env.globals["judgement_label"] = judgement_label
+    templates.env.globals["analysis_status_label"] = analysis_status_label
+    templates.env.globals["analysis_status_class"] = analysis_status_class
 
     @app.get("/")
     async def index(request: Request):
@@ -770,13 +842,14 @@ def create_app() -> FastAPI:
                 "provider_statuses": callable_provider_statuses(),
                 "provider_error": str(request.query_params.get("provider_error", "") or ""),
                 "provider_success": str(request.query_params.get("provider_success", "") or ""),
+                "provider_started": str(request.query_params.get("provider_started", "") or ""),
                 "selected_provider": str(request.query_params.get("provider", "") or ""),
                 "nav": query_nav_summary(),
             },
         )
 
     @app.post("/analyze/{run_id}/run-provider")
-    async def analyze_run_provider(request: Request, run_id: str):
+    async def analyze_run_provider(request: Request, run_id: str, background_tasks: BackgroundTasks):
         form = await read_urlencoded_form(request)
         provider_name = form.get("provider", "").strip()
         init_analysis_db()
@@ -786,7 +859,9 @@ def create_app() -> FastAPI:
         if str(run.get("status") or "") != "draft":
             return provider_error_redirect(
                 run_id,
-                format_provider_error("analysis run is already done"),
+                format_provider_error(
+                    "provider is already running" if str(run.get("status") or "") == "running" else "analysis run is already done"
+                ),
                 provider_name=provider_name,
             )
         manual_prompt = str(run.get("manual_prompt") or "").strip()
@@ -803,45 +878,16 @@ def create_app() -> FastAPI:
                 format_provider_error("provider is not available"),
                 provider_name=provider_name,
             )
-        try:
-            start_time = time.monotonic()
-            result = await asyncio.to_thread(
-                provider.complete,
-                provider_system_prompt(provider_name, provider.name),
-                manual_prompt,
-            )
-            provider_elapsed_ms = int((time.monotonic() - start_time) * 1000)
-            parsed = parse_answer(result.text)
-            if parsed.get("parse_error"):
-                preview = provider_raw_preview(result.text)
-                return save_and_redirect_provider_error(
-                    run_id,
-                    format_provider_error(
-                        f"{result.model_label} returned invalid JSON; draft was kept; elapsed={provider_elapsed_ms / 1000:.1f}s; raw preview: {preview}"
-                    ),
-                    provider_name=provider_name,
-                    provider_elapsed_ms=provider_elapsed_ms,
-                )
-            save_answer(
-                run_id=run_id,
-                answer_text=result.text,
-                manual_prompt=manual_prompt,
-                model_label=result.model_label,
-                answer_json=parsed,
-                judgement=str(parsed.get("judgement") or "unclear"),
-                overall_confidence=float(parsed.get("overall_confidence") or 0),
-                provider_elapsed_ms=provider_elapsed_ms,
-            )
-        except ProviderError as exc:
-            provider_elapsed_ms = int((time.monotonic() - start_time) * 1000) if "start_time" in locals() else 0
-            return save_and_redirect_provider_error(
+        started = mark_provider_running(run_id, provider_name=provider_name, provider_label=provider.name)
+        if not started:
+            return provider_error_redirect(
                 run_id,
-                format_provider_error(f"{provider.name}: {exc}; elapsed={provider_elapsed_ms / 1000:.1f}s"),
+                format_provider_error("provider is already running"),
                 provider_name=provider_name,
-                provider_elapsed_ms=provider_elapsed_ms,
             )
+        background_tasks.add_task(execute_provider_run, run_id, provider_name, manual_prompt)
         return RedirectResponse(
-            f"/analyze/{run_id}?{urlencode({'provider_success': provider.name, 'provider': provider_name})}",
+            f"/analyze/{run_id}?{urlencode({'provider_started': provider.name, 'provider': provider_name})}",
             status_code=303,
         )
 

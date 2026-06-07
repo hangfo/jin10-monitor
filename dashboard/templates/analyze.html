@@ -678,10 +678,10 @@
         const status = form.querySelector(".call-status");
         if (button) {
           button.disabled = true;
-          button.textContent = "调用中...";
+          button.textContent = "提交中...";
         }
         if (status) {
-          status.textContent = "正在等待 Provider 返回，通常需要几十秒。";
+          status.textContent = "提交后将进入后台调用，可到详情页查看状态。";
         }
       });
     });
