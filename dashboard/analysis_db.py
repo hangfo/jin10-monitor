@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     answer_text TEXT NOT NULL DEFAULT '',
     answer_json TEXT NOT NULL DEFAULT '{}',
     model_label TEXT NOT NULL DEFAULT 'manual_chatgpt_business',
+    provider_error TEXT NOT NULL DEFAULT '',
+    provider_error_at TEXT NOT NULL DEFAULT '',
     prompt_version TEXT NOT NULL DEFAULT 'v1',
     evidence_count INTEGER NOT NULL DEFAULT 0,
     selected_count INTEGER NOT NULL DEFAULT 0,
@@ -112,6 +114,10 @@ def ensure_analysis_columns(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_runs)").fetchall()}
     if "screenshot_id" not in columns:
         conn.execute("ALTER TABLE analysis_runs ADD COLUMN screenshot_id TEXT NOT NULL DEFAULT ''")
+    if "provider_error" not in columns:
+        conn.execute("ALTER TABLE analysis_runs ADD COLUMN provider_error TEXT NOT NULL DEFAULT ''")
+    if "provider_error_at" not in columns:
+        conn.execute("ALTER TABLE analysis_runs ADD COLUMN provider_error_at TEXT NOT NULL DEFAULT ''")
 
 
 def now_text() -> str:
@@ -197,6 +203,25 @@ def create_run(
     return run_id
 
 
+def save_provider_error(
+    run_id: str,
+    message: str,
+    *,
+    path: Optional[Path] = None,
+) -> None:
+    updated_at = now_text()
+    with open_analysis_db(path) as conn:
+        conn.execute(
+            """
+            UPDATE analysis_runs
+            SET provider_error = ?, provider_error_at = ?, updated_at = ?
+            WHERE id = ? AND status = 'draft'
+            """,
+            (str(message or "")[:500], updated_at, updated_at, run_id),
+        )
+        conn.commit()
+
+
 def save_answer(
     run_id: str,
     answer_text: str,
@@ -257,6 +282,8 @@ def save_answer(
             "answer_json = ?",
             "manual_prompt = ?",
             "model_label = ?",
+            "provider_error = ?",
+            "provider_error_at = ?",
             "judgement = ?",
             "overall_confidence = ?",
             "status = ?",
@@ -267,6 +294,8 @@ def save_answer(
             json.dumps(answer_json, ensure_ascii=False),
             manual_prompt,
             model_label or "manual_chatgpt_business",
+            "",
+            "",
             judgement,
             float(overall_confidence or 0),
             "done",
@@ -342,7 +371,7 @@ def list_runs(
             f"""
             SELECT id, question, asset, window_start, window_end, judgement,
                    overall_confidence, status, evidence_count, selected_count,
-                   model_label, created_at, updated_at
+                   model_label, provider_error, provider_error_at, created_at, updated_at
             FROM analysis_runs
             {where}
             ORDER BY created_at DESC

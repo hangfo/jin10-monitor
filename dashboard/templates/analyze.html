@@ -33,6 +33,13 @@
     background: var(--surface);
     color: var(--accent);
   }
+  .step-nav-item.locked {
+    cursor: not-allowed;
+    opacity: 0.58;
+  }
+  a.step-nav-item {
+    text-decoration: none;
+  }
   .analysis-grid {
     display: grid;
     gap: 14px 16px;
@@ -77,11 +84,72 @@
     border: 1px solid var(--border-soft);
     border-radius: 6px;
     display: grid;
-    gap: 10px;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    padding: 10px;
+    gap: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px;
   }
-  .market-context-box .check {
+  .market-toggle-card {
+    align-items: center;
+    background: var(--bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    gap: 12px;
+    grid-column: 1 / -1;
+    padding: 12px;
+  }
+  .market-toggle-card.disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+  }
+  .market-toggle-card input {
+    height: 1px;
+    opacity: 0;
+    position: absolute;
+    width: 1px;
+  }
+  .market-switch {
+    background: #b8c4c1;
+    border-radius: 999px;
+    flex: 0 0 auto;
+    height: 28px;
+    position: relative;
+    transition: background 0.16s ease;
+    width: 52px;
+  }
+  .market-switch::after {
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+    content: "";
+    height: 22px;
+    left: 3px;
+    position: absolute;
+    top: 3px;
+    transition: transform 0.16s ease;
+    width: 22px;
+  }
+  #market-enabled:checked + .market-switch {
+    background: var(--accent);
+  }
+  #market-enabled:checked + .market-switch::after {
+    transform: translateX(24px);
+  }
+  .market-toggle-copy strong {
+    display: block;
+    font-size: 15px;
+    margin-bottom: 3px;
+  }
+  .market-toggle-copy span {
+    color: var(--muted);
+    display: block;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .market-context-status {
+    color: var(--muted);
+    font-size: 13px;
     grid-column: 1 / -1;
   }
   .market-preview {
@@ -204,20 +272,25 @@
     <a class="button-link secondary" href="/analyze/history">历史分析</a>
   </div>
 
-  <div class="step-nav">
-    {% for item in [
-      ('input', '1 输入'),
-      ('preview', '2 证据预览'),
-      ('prompt', '3 生成 Prompt'),
-      ('answer', '4 回填答案')
-    ] %}
-      {% set step_id = item[0] %}
-      {% set label = item[1] %}
-      <div class="step-nav-item{% if step == step_id %} active{% elif (step == 'preview' and step_id == 'input') or (step == 'prompt' and step_id in ['input', 'preview']) or (step == 'answer' and step_id in ['input', 'preview', 'prompt']) %} done{% endif %}">
-        {{ label }}
-      </div>
-    {% endfor %}
-  </div>
+  {% set input_url = "/analyze?asset=" ~ ((asset if asset is defined else prefill.get('asset', 'BTC')) | urlencode) ~ "&window_start=" ~ ((window_start if window_start is defined else prefill.get('window_start', '')) | urlencode) ~ "&window_end=" ~ ((window_end if window_end is defined else prefill.get('window_end', '')) | urlencode) ~ "&question=" ~ ((question if question is defined else prefill.get('question', '')) | urlencode) ~ "&from_item_id=" ~ ((from_item_id if from_item_id is defined else prefill.get('from_item_id', '')) | urlencode) %}
+  <nav class="step-nav" aria-label="分析步骤">
+    {% if step == 'input' or not step %}
+    <span class="step-nav-item active">1 输入</span>
+    <span class="step-nav-item locked" aria-disabled="true">2 证据预览</span>
+    <span class="step-nav-item locked" aria-disabled="true">3 生成 Prompt</span>
+    <span class="step-nav-item locked" aria-disabled="true">4 回填答案</span>
+    {% elif step == 'preview' %}
+    <a class="step-nav-item done" href="{{ input_url }}">1 输入</a>
+    <span class="step-nav-item active">2 证据预览</span>
+    <span class="step-nav-item locked" aria-disabled="true">3 生成 Prompt</span>
+    <span class="step-nav-item locked" aria-disabled="true">4 回填答案</span>
+    {% elif step == 'prompt' %}
+    <a class="step-nav-item done" href="{{ input_url }}">1 输入</a>
+    <button class="step-nav-item done" type="button" onclick="history.back()">2 证据预览</button>
+    <span class="step-nav-item active">3 生成 Prompt</span>
+    <a class="step-nav-item done" href="#answer-section">4 回填答案</a>
+    {% endif %}
+  </nav>
 
   {% if step == 'input' or not step %}
   <div class="card card-body">
@@ -277,9 +350,13 @@
         <div class="filter-group full-row">
           <span class="filter-label">结构化行情上下文（可选）</span>
           <div class="market-context-box">
-            <label class="check">
-              <input id="market-enabled" type="checkbox" name="market_enabled" value="1">
-              加入 Binance 行情摘要（使用上方时间窗口）
+            <label id="market-toggle-card" class="market-toggle-card">
+              <input id="market-enabled" type="checkbox" name="market_enabled" value="1"{{ ' checked' if market_default_enabled }}>
+              <span class="market-switch" aria-hidden="true"></span>
+              <span class="market-toggle-copy">
+                <strong>加入行情摘要</strong>
+                <span id="market-toggle-status">默认不请求行情数据；开启后拉取所选交易对的 K 线摘要。</span>
+              </span>
             </label>
             <div class="filter-group">
               <span class="filter-label">交易对</span>
@@ -296,7 +373,7 @@
                 <option value="5m">5m</option>
               </select>
             </div>
-            <div id="market-symbol-hint" class="muted">只在勾选后请求 market adapter；失败时仍可继续生成 Prompt。</div>
+            <div id="market-symbol-hint" class="market-context-status">默认不请求；开启后请求 market adapter，失败时仍可继续生成 Prompt。</div>
           </div>
         </div>
         <div class="filter-group full-row">
@@ -343,8 +420,24 @@
     const assetSelect = document.getElementById("asset-select");
     const marketSymbol = document.getElementById("market-symbol");
     const marketEnabled = document.getElementById("market-enabled");
+    const marketToggleCard = document.getElementById("market-toggle-card");
+    const marketToggleStatus = document.getElementById("market-toggle-status");
     const marketHint = document.getElementById("market-symbol-hint");
     let marketSymbolTouched = false;
+
+    function updateMarketToggleCopy() {
+      if (marketEnabled.disabled) {
+        marketToggleStatus.textContent = "当前标的没有可用交易对映射，无法加入行情摘要。";
+        marketToggleCard.classList.add("disabled");
+        return;
+      }
+      marketToggleCard.classList.remove("disabled");
+      if (marketEnabled.checked) {
+        marketToggleStatus.textContent = `已开启，将请求 Binance Spot · ${marketSymbol.value} · ${document.querySelector("[name='market_interval']").value}。`;
+      } else {
+        marketToggleStatus.textContent = "未启用，不请求行情数据；需要价格涨跌摘要时再打开。";
+      }
+    }
 
     function syncMarketSymbol(force = false) {
       const symbol = assetToSymbol[assetSelect.value];
@@ -358,10 +451,13 @@
         marketEnabled.checked = false;
         marketHint.textContent = "当前标的没有 Binance USDT 映射；不会加入行情摘要。";
       } else {
-        marketHint.textContent = `已按 ${assetSelect.value} 自动匹配 ${marketSymbol.value}；只在勾选后请求 market adapter。`;
+        marketHint.textContent = `已按 ${assetSelect.value} 自动匹配 ${marketSymbol.value}；默认不请求，勾选后才请求 market adapter。`;
       }
+      updateMarketToggleCopy();
     }
 
+    marketEnabled.addEventListener("change", updateMarketToggleCopy);
+    document.querySelector("[name='market_interval']").addEventListener("change", updateMarketToggleCopy);
     marketSymbol.addEventListener("change", () => {
       marketSymbolTouched = true;
       syncMarketSymbol(false);
@@ -461,7 +557,7 @@
       {% for ev in evidence %}
       {% set css = priority_css(ev.priority_level) %}
       <div class="ev-row">
-        <input class="ev-check" type="checkbox" name="sel_{{ ev.news_id }}" value="1"{{ ' checked' if loop.index <= 10 }} onchange="updateSelectionHint()">
+        <input class="ev-check" type="checkbox" name="sel_{{ ev.news_id }}" value="1"{{ ' checked' if ev.selected }} onchange="updateSelectionHint()">
         <span class="ev-score" title="本地相关度分数，不是模型置信度。v2 综合标的、宏观传导、因果词、时间贴近和噪声降权。">{{ "%.2f"|format(ev.relevance_score) }}</span>
         <div class="ev-body">
           <div class="ev-title">
@@ -474,6 +570,9 @@
           </div>
           {% if ev.score_reasons %}
           <div class="ev-meta">评分理由：{{ ev.score_reasons | join(' / ') }}</div>
+          {% endif %}
+          {% if ev.selection_note %}
+          <div class="ev-meta">选择策略：{{ ev.selection_note }}</div>
           {% endif %}
         </div>
         <a class="muted" href="/item/{{ ev.news_id }}" target="_blank">打开</a>
@@ -495,8 +594,8 @@
       const selected = document.querySelectorAll(".ev-check:checked").length;
       const hint = document.getElementById("selection-hint");
       if (!hint) return;
-      hint.textContent = `找到 ${total} 条候选证据，已选 ${selected} 条。最多展示 40 条，建议保留 5-10 条最相关新闻；左侧分数是 v2 本地相关度，不是置信度。`;
-      hint.classList.toggle("warn", selected > 10);
+      hint.textContent = `找到 ${total} 条候选证据，已选 ${selected} 条。最多展示 40 条；v3 默认只选高相关且不重复的证据，低分、汇总和预告会展示但默认不进入 Prompt。`;
+      hint.classList.toggle("warn", selected > 10 || selected < 3);
     }
 
     function submitPreview() {
@@ -517,7 +616,14 @@
         <strong>Prompt 已生成</strong>
         <span class="muted mono">run_id: {{ run_id }}</span>
         <div class="prompt-hint{% if selected_count > 10 or prompt_length > 6000 %} warn{% endif %}">
-          已选 {{ selected_count }} 条证据，Prompt 约 {{ prompt_length }} 字。建议 5-10 条；超过 6000 字时更容易慢或截断。
+          已选 {{ selected_count }} 条证据，Prompt 约 {{ prompt_length }} 字。建议 5-10 条。
+          {% if selected_count > 14 or prompt_length > 9000 %}
+          Prompt 偏长，Provider 更容易超时或触发长度限制；建议先减少到 8-10 条高分且不重复的证据。
+          {% elif selected_count > 10 or prompt_length > 6000 %}
+          当前偏长，Provider 可能变慢；如遇失败，优先减少相似新闻或汇总新闻。
+          {% else %}
+          长度正常，适合调用 Provider 或复制给 ChatGPT。
+          {% endif %}
         </div>
       </div>
       <div style="align-items:center;display:flex;gap:8px">
@@ -543,7 +649,7 @@
     </div>
     {% endif %}
 
-    <div style="border-top:1px solid var(--border-soft);margin-top:16px;padding-top:14px">
+    <div id="answer-section" style="border-top:1px solid var(--border-soft);margin-top:16px;padding-top:14px">
       <h2 style="margin-top:0">粘贴 AI 回答</h2>
       <form method="post" action="/analyze/save-answer">
         <input type="hidden" name="run_id" value="{{ run_id }}">

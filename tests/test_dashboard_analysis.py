@@ -10,6 +10,7 @@ from dashboard.app import (
     app,
     append_screenshot_context,
     format_provider_error,
+    market_context_default_enabled,
     provider_error_redirect,
     parse_market_context_json,
     normalize_news_text,
@@ -285,6 +286,40 @@ def test_save_answer_transitions_to_done(tmp_path):
     assert run["overall_confidence"] == 0.75
 
 
+def test_provider_error_is_persisted_until_success(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    run_id = analysis_db.create_run(
+        "Question",
+        "ETH",
+        "2026-05-23 09:00:00",
+        "2026-05-23 10:00:00",
+        [],
+        path=db_path,
+    )
+
+    analysis_db.save_provider_error(run_id, "Provider 调用失败：Gemini stopped with finishReason=MAX_TOKENS", path=db_path)
+    run = analysis_db.get_run(run_id, path=db_path)
+
+    assert run["status"] == "draft"
+    assert "MAX_TOKENS" in run["provider_error"]
+    assert run["provider_error_at"]
+
+    analysis_db.save_answer(
+        run_id,
+        "raw answer text",
+        answer_json={"judgement": "news_driven", "overall_confidence": 0.75},
+        judgement="news_driven",
+        overall_confidence=0.75,
+        path=db_path,
+    )
+    run = analysis_db.get_run(run_id, path=db_path)
+
+    assert run["status"] == "done"
+    assert run["provider_error"] == ""
+    assert run["provider_error_at"] == ""
+
+
 def test_list_runs_includes_model_label(tmp_path):
     db_path = tmp_path / "analysis.sqlite3"
     analysis_db.init_analysis_db(db_path)
@@ -376,6 +411,37 @@ def test_evidence_v2_prioritizes_macro_transmission_over_summary(tmp_path, monke
     assert [item["news_id"] for item in packet[:2]] == ["macro", "summary"]
     assert "利率/美元/流动性传导" in packet[0]["score_reasons"]
     assert "汇总/预告降权" in packet[1]["score_reasons"]
+    assert packet[0]["selected"] is True
+    assert packet[1]["selected"] is False
+    assert packet[1]["selection_note"] == "汇总/预告默认不选"
+
+
+def test_evidence_v3_default_selection_filters_low_relevance_noise(tmp_path, monkeypatch):
+    history_path = tmp_path / "history.sqlite3"
+    conn = create_history_db(history_path)
+    insert_flash(
+        conn,
+        "macro",
+        "2026-06-06 13:08:00",
+        "美国非农强于预期，美元走强",
+        "市场上调美联储加息概率，收益率上涨，风险偏好下降",
+        "T2_HIGH",
+    )
+    insert_flash(conn, "noise", "2026-06-06 12:30:00", "地方停电消息", "与市场无关", "T2_HIGH")
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("HISTORY_DB", str(history_path))
+
+    packet, _boundary = evidence.build_evidence_for_preview(
+        "ETH",
+        "2026-06-06 12:00:00",
+        "2026-06-06 13:10:00",
+    )
+
+    by_id = {item["news_id"]: item for item in packet}
+    assert by_id["macro"]["selected"] is True
+    assert by_id["noise"]["selected"] is False
+    assert by_id["noise"]["selection_note"] == "低相关默认不选"
 
 
 def test_evidence_builder_returns_empty_on_bad_window():
@@ -522,6 +588,20 @@ def test_parse_market_context_json_accepts_only_json_objects():
     assert parse_market_context_json("{bad json") == {}
 
 
+def test_market_context_default_requires_explicit_flag_and_adapter(monkeypatch):
+    monkeypatch.delenv("MARKET_CONTEXT_DEFAULT_ENABLED", raising=False)
+    monkeypatch.setenv("MARKET_ADAPTER", "binance")
+    assert market_context_default_enabled() is False
+
+    monkeypatch.setenv("MARKET_CONTEXT_DEFAULT_ENABLED", "1")
+    monkeypatch.setenv("MARKET_ADAPTER", "")
+    assert market_context_default_enabled() is False
+
+    monkeypatch.setenv("MARKET_CONTEXT_DEFAULT_ENABLED", "1")
+    monkeypatch.setenv("MARKET_ADAPTER", "binance")
+    assert market_context_default_enabled() is True
+
+
 def test_prompt_generation_excludes_deselected_evidence():
     prompt = manual_ai.generate_prompt(
         question="q",
@@ -618,7 +698,7 @@ def test_format_provider_error_uses_chinese_actionable_copy():
     )
     assert (
         format_provider_error("Gemini stopped with finishReason=MAX_TOKENS")
-        == "Provider 调用失败：Gemini stopped with finishReason=MAX_TOKENS"
+        == "Provider 调用失败：Gemini 输出被 MAX_TOKENS 截断，已保留草稿；请减少证据数量，或调高 GEMINI_MAX_TOKENS 后重试。"
     )
 
 
@@ -714,7 +794,7 @@ def test_analyze_template_has_optional_market_context_controls():
     assert 'name="market_symbol"' in analyze_template
     assert 'name="market_interval"' in analyze_template
     assert 'name="market_context_json"' in analyze_template
-    assert "只在勾选后请求 market adapter" in analyze_template
+    assert "默认不请求；开启后请求 market adapter" in analyze_template
 
 
 def test_provider_and_market_boundaries_are_inert_without_config(monkeypatch):
@@ -846,6 +926,11 @@ def test_analyze_templates_expose_provider_run_controls():
     assert "/analyze/{{ run_id }}/run-provider" in analyze_template
     assert "/analyze/{{ run.id }}/run-provider" in run_template
     assert "provider_error" in run_template
+    assert "run.provider_error" in run_template
+    assert "run.provider_error_at" in run_template
+    assert "待调用 / 待回填" in run_template
+    assert "copyDraftPrompt" in run_template
+    assert "draft-prompt-text" in run_template
     assert "调用中..." in analyze_template
     assert "调用中..." in run_template
 
@@ -858,12 +943,29 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
 
     assert "assetToSymbol" in analyze_template
     assert "ETHUSDT" in analyze_template
+    assert 'id="market-enabled" type="checkbox" name="market_enabled" value="1"{{ \' checked\' if market_default_enabled }}' in analyze_template
+    assert "market-toggle-card" in analyze_template
+    assert "market-switch" in analyze_template
+    assert "加入行情摘要" in analyze_template
+    assert "未启用，不请求行情数据" in analyze_template
+    assert "updateMarketToggleCopy" in analyze_template
+    assert "默认不请求，勾选后才请求 market adapter" in analyze_template
+    assert "aria-label=\"分析步骤\"" in analyze_template
+    assert "aria-disabled=\"true\"" in analyze_template
+    assert "history.back()" in analyze_template
+    assert "href=\"#answer-section\"" in analyze_template
+    assert "id=\"answer-section\"" in analyze_template
     assert "本地相关度分数，不是模型置信度" in analyze_template
     assert "建议 5-10 条" in analyze_template
     assert "最多展示 40 条" in analyze_template
-    assert "loop.index <= 10" in analyze_template
+    assert "Provider 更容易超时或触发长度限制" in analyze_template
+    assert "减少到 8-10 条高分且不重复的证据" in analyze_template
+    assert "' checked' if ev.selected" in analyze_template
+    assert "v3 默认只选高相关且不重复的证据" in analyze_template
+    assert "选择策略：" in analyze_template
     assert "Prompt 约" in analyze_template
     assert "model_label" in history_template
+    assert "待调用 / 待回填" in history_template
     assert "compare-top-btn" in history_template
     assert "topButton.disabled = ids.length !== 2" in history_template
     assert "model_label" in compare_template

@@ -101,7 +101,7 @@
               {{ '已完成' if run.status == 'done' else '草稿' }}
             </span>
           </td>
-          <td class="muted">{{ run.model_label or 'manual_chatgpt_business' }}</td>
+          <td class="muted">{{ run.model_label if run.status == 'done' else '待调用 / 待回填' }}</td>
           <td class="muted">{{ run.judgement or '—' }}</td>
           <td>{% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}</td>
           <td class="muted">{{ run.selected_count }}/{{ run.evidence_count }}</td>

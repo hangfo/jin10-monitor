@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from datetime import timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode
@@ -24,6 +25,7 @@ from .analysis_db import (
     init_analysis_db,
     list_runs,
     save_answer,
+    save_provider_error,
     save_screenshot,
 )
 from .db import (
@@ -116,19 +118,39 @@ def callable_provider_statuses() -> list[dict[str, object]]:
     ]
 
 
+def market_context_default_enabled() -> bool:
+    """Default to no external market request unless explicitly enabled."""
+    flag = str(os.getenv("MARKET_CONTEXT_DEFAULT_ENABLED", "") or "").strip().lower()
+    if flag not in {"1", "true", "yes", "on"}:
+        return False
+    adapter_name = configured_market_adapter_name()
+    return bool(adapter_name and get_market_adapter(adapter_name))
+
+
 def provider_error_redirect(run_id: str, message: str) -> RedirectResponse:
     error = urlencode({"e": str(message or "provider error")[:180]})[2:]
     return RedirectResponse(f"/analyze/{run_id}?provider_error={error}", status_code=303)
+
+
+def save_and_redirect_provider_error(run_id: str, message: str) -> RedirectResponse:
+    save_provider_error(run_id, message)
+    return provider_error_redirect(run_id, message)
 
 
 def format_provider_error(message: str) -> str:
     text = str(message or "").strip()
     if not text:
         return "Provider 调用失败，请稍后重试。"
+    if "finishReason=MAX_TOKENS" in text:
+        return "Provider 调用失败：Gemini 输出被 MAX_TOKENS 截断，已保留草稿；请减少证据数量，或调高 GEMINI_MAX_TOKENS 后重试。"
     if "finishReason=" in text:
         return f"Provider 调用失败：{text}"
     if "invalid JSON" in text or "parse" in text.lower():
         return "模型返回了不可解析 JSON，已保留草稿，请减少证据数量或重新调用。"
+    if "manual prompt is empty" in text:
+        return "Provider 调用失败：Prompt 为空，请重新生成 Prompt。"
+    if "analysis run is already done" in text:
+        return "Provider 调用失败：这条分析已经完成，请使用重新分析创建新草稿。"
     if "not configured" in text or "API_KEY" in text:
         return "Provider 调用失败：API Key 未配置或不可用。"
     if "not available" in text:
@@ -491,6 +513,7 @@ def create_app() -> FastAPI:
                 "health": history_health(),
                 "prefill": prefill,
                 "known_assets": known_assets(),
+                "market_default_enabled": market_context_default_enabled(),
                 "step": "input",
                 "nav": query_nav_summary(),
             },
@@ -538,6 +561,7 @@ def create_app() -> FastAPI:
                 "evidence": evidence,
                 "boundary": boundary,
                 "known_assets": known_assets(),
+                "market_default_enabled": market_context_default_enabled(),
                 "prefill": {},
                 "nav": query_nav_summary(),
             },
@@ -612,6 +636,7 @@ def create_app() -> FastAPI:
                 "selected_count": selected_count,
                 "provider_statuses": callable_provider_statuses(),
                 "known_assets": known_assets(),
+                "market_default_enabled": market_context_default_enabled(),
                 "prefill": {},
                 "nav": query_nav_summary(),
             },
@@ -701,13 +726,13 @@ def create_app() -> FastAPI:
         if not run:
             raise HTTPException(status_code=404, detail="analysis run not found")
         if str(run.get("status") or "") != "draft":
-            return provider_error_redirect(run_id, "analysis run is already done")
+            return provider_error_redirect(run_id, format_provider_error("analysis run is already done"))
         manual_prompt = str(run.get("manual_prompt") or "").strip()
         if not manual_prompt:
-            return provider_error_redirect(run_id, "manual prompt is empty")
+            return save_and_redirect_provider_error(run_id, format_provider_error("manual prompt is empty"))
         provider = get_provider(provider_name)
         if not provider:
-            return provider_error_redirect(run_id, "provider is not available")
+            return save_and_redirect_provider_error(run_id, format_provider_error("provider is not available"))
         try:
             result = await asyncio.to_thread(
                 provider.complete,
@@ -716,7 +741,7 @@ def create_app() -> FastAPI:
             )
             parsed = parse_answer(result.text)
             if parsed.get("parse_error"):
-                return provider_error_redirect(
+                return save_and_redirect_provider_error(
                     run_id,
                     format_provider_error(f"{result.model_label} returned invalid JSON; draft was kept"),
                 )
@@ -730,7 +755,7 @@ def create_app() -> FastAPI:
                 overall_confidence=float(parsed.get("overall_confidence") or 0),
             )
         except ProviderError as exc:
-            return provider_error_redirect(run_id, format_provider_error(str(exc)))
+            return save_and_redirect_provider_error(run_id, format_provider_error(str(exc)))
         return RedirectResponse(
             f"/analyze/{run_id}?provider_success={urlencode({'e': provider.name})[2:]}",
             status_code=303,

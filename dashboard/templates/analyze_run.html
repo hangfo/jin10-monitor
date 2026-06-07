@@ -107,7 +107,7 @@
       状态：<span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">{{ '已完成' if run.status == 'done' else '草稿' }}</span>
     </span>
     <span>证据：{{ run.selected_count }} / {{ run.evidence_count }}</span>
-    <span>模型：<strong>{{ run.model_label or 'manual_chatgpt_business' }}</strong></span>
+    <span>模型：<strong>{{ run.model_label if run.status == 'done' else '待调用 / 待回填' }}</strong></span>
     {% if run.judgement %}<span>类型：{{ run.judgement }}</span>{% endif %}
     {% if run.overall_confidence %}
     <span title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。≥75% 较可信；50-75% 仅供参考；<50% 证据不足。">置信度：{{ "%.0f%%"|format(run.overall_confidence * 100) }}</span>
@@ -129,9 +129,13 @@
   </div>
   {% endif %}
 
-  {% if provider_error %}
+  {% set visible_provider_error = provider_error or run.provider_error %}
+  {% if visible_provider_error %}
   <div class="panel" style="background:var(--fail-bg);margin-bottom:12px;color:var(--fail-fg)">
-    Provider 调用失败：{{ provider_error }}
+    {{ visible_provider_error }}
+    {% if run.provider_error_at and not provider_error %}
+    <span class="muted"> · {{ run.provider_error_at }}</span>
+    {% endif %}
   </div>
   {% endif %}
   {% if provider_success %}
@@ -149,7 +153,14 @@
       </div>
       {% elif run.status == 'draft' %}
       <div class="card card-body" style="margin-bottom:16px">
-        <h2 style="margin-top:0">草稿记录：粘贴回答</h2>
+        <h2 style="margin-top:0">草稿记录：调用 Provider 或粘贴回答</h2>
+        {% if run.manual_prompt %}
+        <div style="align-items:center;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+          <button type="button" onclick="copyDraftPrompt()">复制 Prompt</button>
+          <span id="draft-copy-ok" class="muted" style="display:none">已复制</span>
+          <span class="muted">复制后可在 ChatGPT Plus 手动分析，再把 JSON 回答粘贴到下方。</span>
+        </div>
+        {% endif %}
         {% set available_providers = provider_statuses | selectattr('available') | list %}
         {% if available_providers and run.manual_prompt %}
         <form class="provider-form" method="post" action="/analyze/{{ run.id }}/run-provider" style="align-items:center;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
@@ -204,14 +215,26 @@
 
       {% if run.manual_prompt %}
       <details style="margin-top:10px">
-        <summary>查看发送的 Prompt</summary>
-        <pre>{{ run.manual_prompt[:5000] }}</pre>
+        <summary>查看 / 复制发送的 Prompt</summary>
+        <textarea id="draft-prompt-text" readonly style="width:100%;min-height:260px;padding:10px;border:1px solid var(--border);border-radius:6px;font:13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;resize:vertical">{{ run.manual_prompt }}</textarea>
       </details>
       {% endif %}
     </aside>
   </div>
   {% endif %}
   <script>
+    function copyDraftPrompt() {
+      const prompt = document.getElementById("draft-prompt-text");
+      if (!prompt) return;
+      navigator.clipboard.writeText(prompt.value).then(() => {
+        const item = document.getElementById("draft-copy-ok");
+        if (item) {
+          item.style.display = "inline";
+          setTimeout(() => { item.style.display = "none"; }, 1600);
+        }
+      });
+    }
+
     document.querySelectorAll(".provider-form").forEach((form) => {
       form.addEventListener("submit", () => {
         form.classList.add("submitting");

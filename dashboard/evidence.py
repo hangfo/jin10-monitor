@@ -133,6 +133,7 @@ SUMMARY_PATTERNS = [
     "预告",
     "日程",
     "DeepTalk",
+    "大师复盘",
 ]
 
 LIGHT_SUMMARY_PATTERNS = ["整理"]
@@ -156,6 +157,11 @@ PRIORITY_WEIGHT = {
 MAX_EVIDENCE = 40
 CONTEXT_PADDING_MINUTES = 30
 SCORE_SCALE = 120
+DEFAULT_SELECTED_MAX = 10
+DEFAULT_SELECTED_MIN = 4
+DEFAULT_SELECT_SCORE = 0.35
+DEFAULT_FALLBACK_SCORE = 0.25
+SUMMARY_SELECT_SCORE = 0.7
 
 
 def known_assets() -> list[str]:
@@ -222,7 +228,9 @@ def build_evidence_packet(
         ),
         reverse=True,
     )
-    return filtered[:MAX_EVIDENCE]
+    packet = filtered[:MAX_EVIDENCE]
+    apply_default_selection(packet)
+    return packet
 
 
 def fetch_window(query_start: str, query_end: str) -> list[dict[str, Any]]:
@@ -330,8 +338,52 @@ def score_row(
         "matched_keywords": matched_keywords,
         "score_components": score_components,
         "score_reasons": score_reasons,
-        "selected": True,
+        "selected": False,
     }
+
+
+def apply_default_selection(rows: list[dict[str, Any]]) -> None:
+    selected: set[int] = set()
+    for index, row in enumerate(rows):
+        score = float(row.get("relevance_score") or 0)
+        summary_like = is_summary_like(row)
+        if score >= DEFAULT_SELECT_SCORE and (not summary_like or score >= SUMMARY_SELECT_SCORE):
+            selected.add(index)
+        if len(selected) >= DEFAULT_SELECTED_MAX:
+            break
+
+    if len(selected) < DEFAULT_SELECTED_MIN:
+        for index, row in enumerate(rows):
+            if index in selected:
+                continue
+            score = float(row.get("relevance_score") or 0)
+            if score >= DEFAULT_FALLBACK_SCORE and not is_noise_like(row) and not is_summary_like(row):
+                selected.add(index)
+            if len(selected) >= DEFAULT_SELECTED_MIN:
+                break
+
+    for index, row in enumerate(rows):
+        score = float(row.get("relevance_score") or 0)
+        summary_like = is_summary_like(row)
+        row["selected"] = index in selected
+        if row["selected"]:
+            row["selection_note"] = "默认选中"
+        elif summary_like:
+            row["selection_note"] = "汇总/预告默认不选"
+        elif score < DEFAULT_FALLBACK_SCORE:
+            row["selection_note"] = "低相关默认不选"
+        else:
+            row["selection_note"] = "候选未选，可手动加入"
+
+
+def is_summary_like(row: dict[str, Any]) -> bool:
+    reasons = {str(reason) for reason in row.get("score_reasons") or []}
+    return bool({"汇总/预告降权", "整理类内容降权"} & reasons)
+
+
+def is_noise_like(row: dict[str, Any]) -> bool:
+    reasons = {str(reason) for reason in row.get("score_reasons") or []}
+    return bool({"噪声降权", "信息量不足降权"} & reasons)
 
 
 def contains_any(text: str, patterns: list[str]) -> bool:
