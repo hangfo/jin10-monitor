@@ -18,6 +18,7 @@ from dashboard.app import (
     summarize_klines,
 )
 from dashboard.market.base import Kline
+from scripts.export_provider_ab_packet import export_run_packet
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "dashboard" / "templates"
 
@@ -343,6 +344,74 @@ def test_list_runs_includes_model_label(tmp_path):
     runs = analysis_db.list_runs(path=db_path)
 
     assert runs[0]["model_label"] == "gemini:gemini-2.5-flash"
+
+
+def test_export_provider_ab_packet_writes_fixed_inputs(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    output_dir = tmp_path / "export"
+    analysis_db.init_analysis_db(db_path)
+    run_id = analysis_db.create_run(
+        "BTC 为何上涨？",
+        "BTC",
+        "2026-06-07 10:00:00",
+        "2026-06-07 11:00:00",
+        [
+            {
+                "news_id": "n1",
+                "published_at": "2026-06-07 10:15:00",
+                "title": "BTC news",
+                "relevance_score": 0.91,
+                "selected": True,
+            },
+            {
+                "news_id": "n2",
+                "published_at": "2026-06-07 10:20:00",
+                "title": "Noise",
+                "relevance_score": 0.12,
+                "selected": False,
+            },
+        ],
+        manual_prompt="Prompt\n\n【结构化行情上下文】\nBinance Spot BTCUSDT",
+        prompt_version="v3",
+        path=db_path,
+    )
+
+    files = export_run_packet(run_id, db_path=db_path, output_dir=output_dir)
+
+    assert set(files) == {"prompt", "evidence_packet", "scorecard", "metadata"}
+    assert (output_dir / "prompt.md").read_text(encoding="utf-8").startswith("Prompt")
+    packet = json.loads((output_dir / "evidence_packet.json").read_text(encoding="utf-8"))
+    metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    scorecard = (output_dir / "ab_scorecard.md").read_text(encoding="utf-8")
+
+    assert [item["news_id"] for item in packet] == ["n1", "n2"]
+    assert packet[0]["selected"] is True
+    assert packet[1]["selected"] is False
+    assert metadata["run_id"] == run_id
+    assert metadata["prompt_version"] == "v3"
+    assert metadata["selected_count"] == 1
+    assert metadata["market_context_state"] == "included"
+    assert "Gemini" in scorecard
+    assert "ChatGPT Plus" in scorecard
+    assert "GLM Flash" in scorecard
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0] == 1
+
+
+def test_export_provider_ab_packet_missing_run_fails_without_output(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    output_dir = tmp_path / "export"
+    analysis_db.init_analysis_db(db_path)
+
+    try:
+        export_run_packet("missing", db_path=db_path, output_dir=output_dir)
+    except ValueError as exc:
+        assert "analysis run not found" in str(exc)
+    else:
+        raise AssertionError("missing run should fail")
+
+    assert not output_dir.exists()
 
 
 def test_evidence_builder_scores_and_labels_news_id(tmp_path, monkeypatch):

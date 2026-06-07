@@ -1,4 +1,4 @@
-更新时间：2026-06-07 11:36（Asia/Shanghai）
+更新时间：2026-06-07 12:55（Asia/Shanghai）
 
 # Changelog
 
@@ -6,6 +6,7 @@
 
 ## 2026-06-07
 
+- 新增 Provider 同窗 A/B 评测计划和只读导出脚本：可将指定 `analysis_runs.id` 导出为固定实验包，包含 `prompt.md`、`evidence_packet.json`、`ab_scorecard.md` 和 `metadata.json`，便于用同一 evidence packet 对比 Gemini、ChatGPT Plus 与 GLM Flash；脚本只读独立分析库，不请求模型 API、不请求金十 REST、不写业务历史库、不触发 Telegram。
 - 将 `/analyze` 证据默认选择升级为 v3：候选仍最多展示 40 条，但默认只选高相关、低重复、非汇总预告的证据；低相关、汇总、预告和噪声消息仍可见并可手动勾选，减少 Gemini 因 Prompt 过长而超时或压缩结论。
 - 持久化 Provider 调用失败原因：Gemini `MAX_TOKENS`、不可解析 JSON、Provider 不可用等错误会写入独立分析库草稿并在详情页展示；成功保存后自动清空错误，避免失败草稿看起来像已完成分析。
 - 优化 `/analyze` Provider 与手动回填体验：草稿记录在详情页和历史页显示为“待调用 / 待回填”，详情页提供复制完整 Prompt、重试 Provider 或粘贴 ChatGPT JSON 的入口；Provider 提交按钮仍会立即显示“调用中”并禁用。
