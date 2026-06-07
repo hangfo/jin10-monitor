@@ -10,9 +10,24 @@
     grid-template-columns: 1fr 320px;
   }
   .answer-summary {
-    font-size: 15px;
-    font-weight: 650;
-    line-height: 1.5;
+    background: var(--sent-bg);
+    border-left: 4px solid var(--sent-fg);
+    border-radius: 6px;
+    color: var(--sent-fg);
+    font-size: 16px;
+    font-weight: 750;
+    line-height: 1.55;
+    margin: 0 0 16px;
+    padding: 12px 14px;
+  }
+  .answer-summary::before {
+    content: "结论";
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .answer-card h2 {
     margin: 0 0 12px;
   }
   .answer-catalysts ol {
@@ -74,6 +89,38 @@
   .provider-form.submitting button[type="submit"] {
     opacity: 0.72;
   }
+  .run-overview {
+    display: grid;
+    gap: 10px;
+  }
+  .run-overview-line {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+  }
+  .run-overview .metric {
+    align-items: baseline;
+    display: inline-flex;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .run-overview .metric.wide {
+    white-space: normal;
+  }
+  .run-overview .metric-label {
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 650;
+  }
+  .run-overview .metric-value {
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+  .run-id-chip {
+    color: var(--muted);
+    font-size: 12px;
+  }
   @media (max-width: 900px) {
     .run-grid {
       grid-template-columns: 1fr;
@@ -100,19 +147,20 @@
     </div>
   </div>
 
-  <div class="panel" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px">
-    <span>标的：<strong>{{ run.asset }}</strong></span>
-    <span>窗口：{{ run.window_start }} - {{ run.window_end }}</span>
-    <span>
-      状态：<span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">{{ '已完成' if run.status == 'done' else '草稿' }}</span>
-    </span>
-    <span>证据：{{ run.selected_count }} / {{ run.evidence_count }}</span>
-    <span>模型：<strong>{{ run.model_label if run.status == 'done' else '待调用 / 待回填' }}</strong></span>
-    {% if run.judgement %}<span>类型：{{ run.judgement }}</span>{% endif %}
-    {% if run.overall_confidence %}
-    <span title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。≥75% 较可信；50-75% 仅供参考；<50% 证据不足。">置信度：{{ "%.0f%%"|format(run.overall_confidence * 100) }}</span>
-    {% endif %}
-    <span class="mono">{{ run.id }}</span>
+  <div class="panel run-overview" style="margin-bottom:14px">
+    <div class="run-overview-line">
+      <span class="metric"><span class="metric-label">标的</span><span class="metric-value">{{ run.asset }}</span></span>
+      <span class="metric wide"><span class="metric-label">窗口</span><span class="metric-value">{{ run.window_start }} - {{ run.window_end }}</span></span>
+      <span class="metric"><span class="metric-label">状态</span><span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">{{ '已完成' if run.status == 'done' else '草稿' }}</span></span>
+      <span class="metric"><span class="metric-label">证据</span><span class="metric-value">{{ run.selected_count }} / {{ run.evidence_count }}</span></span>
+      <span class="metric wide"><span class="metric-label">模型</span><span class="metric-value">{{ run.model_label if run.status == 'done' else '待调用 / 待回填' }}</span></span>
+    </div>
+    <div class="run-overview-line">
+      <span class="metric"><span class="metric-label">耗时</span><span class="metric-value">{% if run.provider_elapsed_ms %}{{ "%.1fs"|format(run.provider_elapsed_ms / 1000) }}{% else %}—{% endif %}</span></span>
+      <span class="metric"><span class="metric-label">类型</span><span class="metric-value">{{ judgement_label(run.judgement) if run.judgement else '—' }}</span></span>
+      <span class="metric"><span class="metric-label">置信度</span><span class="metric-value" title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。≥75% 较可信；50-75% 仅供参考；<50% 证据不足。">{% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}</span></span>
+      <span class="run-id-chip">分析 ID <span class="mono">{{ run.id }}</span></span>
+    </div>
   </div>
 
   {% if run.from_item_id %}
@@ -143,12 +191,17 @@
     Provider 已保存：{{ provider_success }}
   </div>
   {% endif %}
+  {% if provider_review_warning %}
+  <div class="panel" style="background:var(--warn-bg);margin-bottom:12px;color:var(--warn-fg)">
+    {{ provider_review_warning }}
+  </div>
+  {% endif %}
 
   <div class="run-grid">
     <div>
       {% if run.status == 'done' and answer_html %}
-      <div class="card card-body" style="margin-bottom:16px">
-        <h2 style="margin-top:0">AI 分析结论</h2>
+      <div class="card card-body answer-card" style="margin-bottom:16px">
+        <h2>AI 分析结论</h2>
         {{ answer_html | safe }}
       </div>
       {% elif run.status == 'draft' %}
@@ -166,7 +219,7 @@
         <form class="provider-form" method="post" action="/analyze/{{ run.id }}/run-provider" style="align-items:center;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
           <select name="provider">
             {% for provider in available_providers %}
-            <option value="{{ provider.key }}">{{ provider.label }}</option>
+            <option value="{{ provider.key }}"{{ ' selected' if selected_provider == provider.key else '' }}>{{ provider.label }}</option>
             {% endfor %}
           </select>
           <button type="submit">调用并保存</button>

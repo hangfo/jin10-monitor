@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     model_label TEXT NOT NULL DEFAULT 'manual_chatgpt_business',
     provider_error TEXT NOT NULL DEFAULT '',
     provider_error_at TEXT NOT NULL DEFAULT '',
+    provider_elapsed_ms INTEGER NOT NULL DEFAULT 0,
     prompt_version TEXT NOT NULL DEFAULT 'v1',
     evidence_count INTEGER NOT NULL DEFAULT 0,
     selected_count INTEGER NOT NULL DEFAULT 0,
@@ -118,6 +119,8 @@ def ensure_analysis_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE analysis_runs ADD COLUMN provider_error TEXT NOT NULL DEFAULT ''")
     if "provider_error_at" not in columns:
         conn.execute("ALTER TABLE analysis_runs ADD COLUMN provider_error_at TEXT NOT NULL DEFAULT ''")
+    if "provider_elapsed_ms" not in columns:
+        conn.execute("ALTER TABLE analysis_runs ADD COLUMN provider_elapsed_ms INTEGER NOT NULL DEFAULT 0")
 
 
 def now_text() -> str:
@@ -207,6 +210,7 @@ def save_provider_error(
     run_id: str,
     message: str,
     *,
+    provider_elapsed_ms: int = 0,
     path: Optional[Path] = None,
 ) -> None:
     updated_at = now_text()
@@ -214,10 +218,10 @@ def save_provider_error(
         conn.execute(
             """
             UPDATE analysis_runs
-            SET provider_error = ?, provider_error_at = ?, updated_at = ?
+            SET provider_error = ?, provider_error_at = ?, provider_elapsed_ms = ?, updated_at = ?
             WHERE id = ? AND status = 'draft'
             """,
-            (str(message or "")[:500], updated_at, updated_at, run_id),
+            (str(message or "")[:1200], updated_at, max(0, int(provider_elapsed_ms or 0)), updated_at, run_id),
         )
         conn.commit()
 
@@ -232,6 +236,7 @@ def save_answer(
     judgement: str = "",
     overall_confidence: float = 0,
     evidence_selections: Optional[dict[str, bool]] = None,
+    provider_elapsed_ms: int = 0,
     path: Optional[Path] = None,
 ) -> None:
     answer_json = answer_json or {}
@@ -284,6 +289,7 @@ def save_answer(
             "model_label = ?",
             "provider_error = ?",
             "provider_error_at = ?",
+            "provider_elapsed_ms = ?",
             "judgement = ?",
             "overall_confidence = ?",
             "status = ?",
@@ -296,6 +302,7 @@ def save_answer(
             model_label or "manual_chatgpt_business",
             "",
             "",
+            max(0, int(provider_elapsed_ms or 0)),
             judgement,
             float(overall_confidence or 0),
             "done",
@@ -371,7 +378,8 @@ def list_runs(
             f"""
             SELECT id, question, asset, window_start, window_end, judgement,
                    overall_confidence, status, evidence_count, selected_count,
-                   model_label, provider_error, provider_error_at, created_at, updated_at
+                   model_label, provider_error, provider_error_at, provider_elapsed_ms,
+                   created_at, updated_at
             FROM analysis_runs
             {where}
             ORDER BY created_at DESC

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode
@@ -50,7 +51,7 @@ from .db import (
 )
 from .evidence import build_evidence_for_preview, known_assets
 from .market.base import MarketAdapterError, configured_market_adapter_name, get_market_adapter
-from .manual_ai import PROMPT_VERSION, generate_prompt, parse_answer, render_answer_with_links
+from .manual_ai import PROMPT_VERSION, generate_prompt, judgement_label, parse_answer, render_answer_with_links
 from .providers.base import ProviderError, get_provider, provider_statuses
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
@@ -127,14 +128,63 @@ def market_context_default_enabled() -> bool:
     return bool(adapter_name and get_market_adapter(adapter_name))
 
 
-def provider_error_redirect(run_id: str, message: str) -> RedirectResponse:
-    error = urlencode({"e": str(message or "provider error")[:180]})[2:]
-    return RedirectResponse(f"/analyze/{run_id}?provider_error={error}", status_code=303)
+def provider_error_redirect(run_id: str, message: str, *, provider_name: str = "") -> RedirectResponse:
+    params = {"provider_error": str(message or "provider error")[:180]}
+    if provider_name:
+        params["provider"] = provider_name
+    return RedirectResponse(f"/analyze/{run_id}?{urlencode(params)}", status_code=303)
 
 
-def save_and_redirect_provider_error(run_id: str, message: str) -> RedirectResponse:
-    save_provider_error(run_id, message)
-    return provider_error_redirect(run_id, message)
+def save_and_redirect_provider_error(
+    run_id: str,
+    message: str,
+    *,
+    provider_name: str = "",
+    provider_elapsed_ms: int = 0,
+) -> RedirectResponse:
+    save_provider_error(run_id, message, provider_elapsed_ms=provider_elapsed_ms)
+    return provider_error_redirect(run_id, message, provider_name=provider_name)
+
+
+def provider_raw_preview(raw_text: str, *, limit: int = 700) -> str:
+    text = " ".join(str(raw_text or "").strip().split())
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
+def provider_system_prompt(provider_name: str, provider_label: str = "") -> str:
+    base_prompt = "请严格执行用户 Prompt 中的系统指令，输出严格 JSON，不要添加前言或 Markdown 代码块。"
+    provider_key = str(provider_name or "").strip().lower()
+    label = str(provider_label or "").strip().lower()
+    if provider_key in {"compatible", "glm"} and "glm" in label:
+        return (
+            base_prompt
+            + "\n\nGLM 专用补充约束："
+            + "除 judgement 字段的枚举值外，summary、headline、impact_path、missing_evidence 和 caveat 必须使用中文；"
+            + "如果唯一高相关证据不是标的直接新闻，或证据方向与价格方向不一致，judgement 必须优先为 unclear；"
+            + "如果缺少成交量、订单流、清算、资金费率、BTC 联动或同步市场数据，不得写“资金流入”“导致上涨/下跌”等确定性因果；"
+            + "单条 indirect/mixed 证据不得给出 news_driven，overall_confidence 不得高于 0.5。"
+        )
+    return base_prompt
+
+
+def provider_review_warning(run: dict[str, object]) -> str:
+    model_label = str(run.get("model_label") or "").lower()
+    if "glm:" not in model_label:
+        return ""
+    judgement = str(run.get("judgement") or "")
+    confidence = float(run.get("overall_confidence") or 0)
+    selected_count = int(run.get("selected_count") or 0)
+    parsed = run.get("answer_parsed") if isinstance(run.get("answer_parsed"), dict) else {}
+    catalysts = parsed.get("catalysts") if isinstance(parsed, dict) else []
+    has_mixed = any(
+        isinstance(item, dict) and str(item.get("direction") or "").lower() == "mixed"
+        for item in (catalysts or [])
+    )
+    if judgement == "news_driven" and selected_count <= 1 and (confidence >= 0.65 or has_mixed):
+        return "GLM 可能过度归因：单条或 mixed 证据不足以支撑 news_driven 高置信判断，建议用 Gemini 或 ChatGPT Plus 复核。"
+    return ""
 
 
 def format_provider_error(message: str) -> str:
@@ -146,6 +196,10 @@ def format_provider_error(message: str) -> str:
     if "finishReason=" in text:
         return f"Provider 调用失败：{text}"
     if "invalid JSON" in text or "parse" in text.lower():
+        detail = text.replace("returned invalid JSON; draft was kept", "").strip(" ：:;；。")
+        detail = detail.replace(" ;", ";")
+        if detail:
+            return f"模型返回了不可解析 JSON，已保留草稿，请减少证据数量或重新调用。详情：{detail}"
         return "模型返回了不可解析 JSON，已保留草稿，请减少证据数量或重新调用。"
     if "manual prompt is empty" in text:
         return "Provider 调用失败：Prompt 为空，请重新生成 Prompt。"
@@ -364,6 +418,7 @@ def create_app() -> FastAPI:
     templates.env.globals["datetime_local_value"] = datetime_local_value
     templates.env.globals["confidence_help"] = CONFIDENCE_HELP
     templates.env.globals["normalize_news_text"] = normalize_news_text
+    templates.env.globals["judgement_label"] = judgement_label
 
     @app.get("/")
     async def index(request: Request):
@@ -702,6 +757,7 @@ def create_app() -> FastAPI:
         answer_html = ""
         if run and run.get("answer_parsed"):
             answer_html = render_answer_with_links(run["answer_parsed"])
+        review_warning = provider_review_warning(run) if run else ""
         return templates.TemplateResponse(
             request,
             "analyze_run.html",
@@ -710,9 +766,11 @@ def create_app() -> FastAPI:
                 "run": run,
                 "run_id": run_id,
                 "answer_html": answer_html,
+                "provider_review_warning": review_warning,
                 "provider_statuses": callable_provider_statuses(),
                 "provider_error": str(request.query_params.get("provider_error", "") or ""),
                 "provider_success": str(request.query_params.get("provider_success", "") or ""),
+                "selected_provider": str(request.query_params.get("provider", "") or ""),
                 "nav": query_nav_summary(),
             },
         )
@@ -726,24 +784,43 @@ def create_app() -> FastAPI:
         if not run:
             raise HTTPException(status_code=404, detail="analysis run not found")
         if str(run.get("status") or "") != "draft":
-            return provider_error_redirect(run_id, format_provider_error("analysis run is already done"))
+            return provider_error_redirect(
+                run_id,
+                format_provider_error("analysis run is already done"),
+                provider_name=provider_name,
+            )
         manual_prompt = str(run.get("manual_prompt") or "").strip()
         if not manual_prompt:
-            return save_and_redirect_provider_error(run_id, format_provider_error("manual prompt is empty"))
+            return save_and_redirect_provider_error(
+                run_id,
+                format_provider_error("manual prompt is empty"),
+                provider_name=provider_name,
+            )
         provider = get_provider(provider_name)
         if not provider:
-            return save_and_redirect_provider_error(run_id, format_provider_error("provider is not available"))
+            return save_and_redirect_provider_error(
+                run_id,
+                format_provider_error("provider is not available"),
+                provider_name=provider_name,
+            )
         try:
+            start_time = time.monotonic()
             result = await asyncio.to_thread(
                 provider.complete,
-                "请严格执行用户 Prompt 中的系统指令，输出严格 JSON，不要添加前言或 Markdown 代码块。",
+                provider_system_prompt(provider_name, provider.name),
                 manual_prompt,
             )
+            provider_elapsed_ms = int((time.monotonic() - start_time) * 1000)
             parsed = parse_answer(result.text)
             if parsed.get("parse_error"):
+                preview = provider_raw_preview(result.text)
                 return save_and_redirect_provider_error(
                     run_id,
-                    format_provider_error(f"{result.model_label} returned invalid JSON; draft was kept"),
+                    format_provider_error(
+                        f"{result.model_label} returned invalid JSON; draft was kept; elapsed={provider_elapsed_ms / 1000:.1f}s; raw preview: {preview}"
+                    ),
+                    provider_name=provider_name,
+                    provider_elapsed_ms=provider_elapsed_ms,
                 )
             save_answer(
                 run_id=run_id,
@@ -753,11 +830,18 @@ def create_app() -> FastAPI:
                 answer_json=parsed,
                 judgement=str(parsed.get("judgement") or "unclear"),
                 overall_confidence=float(parsed.get("overall_confidence") or 0),
+                provider_elapsed_ms=provider_elapsed_ms,
             )
         except ProviderError as exc:
-            return save_and_redirect_provider_error(run_id, format_provider_error(str(exc)))
+            provider_elapsed_ms = int((time.monotonic() - start_time) * 1000) if "start_time" in locals() else 0
+            return save_and_redirect_provider_error(
+                run_id,
+                format_provider_error(f"{provider.name}: {exc}; elapsed={provider_elapsed_ms / 1000:.1f}s"),
+                provider_name=provider_name,
+                provider_elapsed_ms=provider_elapsed_ms,
+            )
         return RedirectResponse(
-            f"/analyze/{run_id}?provider_success={urlencode({'e': provider.name})[2:]}",
+            f"/analyze/{run_id}?{urlencode({'provider_success': provider.name, 'provider': provider_name})}",
             status_code=303,
         )
 

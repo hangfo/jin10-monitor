@@ -94,13 +94,16 @@
 
   <div class="summary-diff {{ 'same' if same_judgement else 'diff' }}">
     {% if same_judgement %}
-    两次判断类型相同：<strong>{{ first.judgement or '未分类' }}</strong>。
+    两次判断类型相同：<strong>{{ judgement_label(first.judgement) }}</strong>。
     {% else %}
-    两次判断类型不同：<strong>{{ first.judgement or '未分类' }}</strong> vs <strong>{{ second.judgement or '未分类' }}</strong>。
+    两次判断类型不同：<strong>{{ judgement_label(first.judgement) }}</strong> vs <strong>{{ judgement_label(second.judgement) }}</strong>。
     {% endif %}
     {% if confidence_diff > 0.1 %}
     置信度相差 {{ "%.0f%%"|format(confidence_diff * 100) }}。
     {% endif %}
+    <div class="meta" style="margin-top:6px">
+      缺失证据来自各次模型原始输出；同一 Prompt 下出现差异，表示模型复盘侧重点不同，不代表本地证据包变化。
+    </div>
   </div>
 
   <div class="compare-grid">
@@ -114,7 +117,7 @@
         {{ (run.created_at or '')[:16] }} ·
         <span class="pill {{ 'sent' if run.status == 'done' else 'none' }}">{{ '已完成' if run.status == 'done' else '草稿' }}</span>
         · {{ run.model_label or 'manual_chatgpt_business' }}
-        · {{ run.judgement or '未分类' }}
+        · {{ judgement_label(run.judgement) }}
       </div>
 
       <p style="line-height:1.5">{{ run.question }}</p>

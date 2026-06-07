@@ -1,11 +1,16 @@
-更新时间：2026-06-07 12:55（Asia/Shanghai）
+更新时间：2026-06-08 00:18（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
+## 2026-06-08
+
+- 增强 GLM Provider 弱证据保护与耗时可见性：仅对 GLM/OpenAI-compatible 调用追加专用 system 约束，要求正文使用中文、单条 indirect/mixed 证据优先判为 `unclear` 且不得高置信强行归因；Provider 成功或失败都会记录耗时，分析详情页和历史页可直接看到本次调用耗时；GLM 对单条 mixed 证据给出高置信 `news_driven` 时，详情页显示本地复核提示；详情、历史和对比页将 judgement 枚举展示为中文。
+
 ## 2026-06-07
 
+- 增强 `/analyze` Provider 失败诊断：Provider 调用重定向会保留本次选择的 provider，下次回到草稿页时对应下拉项仍被选中；模型返回不可解析 JSON 时，错误详情会记录实际模型标签和原始返回短预览，便于区分 GLM/Gemini 解析失败、超时和模型输出格式问题。
 - 新增 Provider 同窗 A/B 评测计划和只读导出脚本：可将指定 `analysis_runs.id` 导出为固定实验包，包含 `prompt.md`、`evidence_packet.json`、`ab_scorecard.md` 和 `metadata.json`，便于用同一 evidence packet 对比 Gemini、ChatGPT Plus 与 GLM Flash；脚本只读独立分析库，不请求模型 API、不请求金十 REST、不写业务历史库、不触发 Telegram。
 - 将 `/analyze` 证据默认选择升级为 v3：候选仍最多展示 40 条，但默认只选高相关、低重复、非汇总预告的证据；低相关、汇总、预告和噪声消息仍可见并可手动勾选，减少 Gemini 因 Prompt 过长而超时或压缩结论。
 - 持久化 Provider 调用失败原因：Gemini `MAX_TOKENS`、不可解析 JSON、Provider 不可用等错误会写入独立分析库草稿并在详情页展示；成功保存后自动清空错误，避免失败草稿看起来像已完成分析。

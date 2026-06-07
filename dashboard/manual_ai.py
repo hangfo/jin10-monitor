@@ -15,6 +15,21 @@ CONFIDENCE_HELP = (
 )
 JUDGEMENT_VALUES = {"news_driven", "macro_sentiment", "technical_breakout", "unclear"}
 DIRECTION_VALUES = {"bullish", "bearish", "mixed"}
+JUDGEMENT_LABELS = {
+    "news_driven": "新闻驱动",
+    "macro_sentiment": "宏观情绪",
+    "technical_breakout": "技术突破",
+    "unclear": "无法确认",
+}
+KNOWN_ENGLISH_PHRASES = {
+    "Judgement unclear:": "判断无法确认：",
+    "Judgment unclear:": "判断无法确认：",
+    "news_driven:": "新闻驱动：",
+    "macro_sentiment:": "宏观情绪：",
+    "technical_breakout:": "技术突破：",
+    "unclear:": "无法确认：",
+    "Evidence direction conflicts with price action.": "证据方向与价格走势冲突。",
+}
 
 
 SYSTEM_INSTRUCTION = """\
@@ -196,12 +211,12 @@ def extract_news_ids_from_answer(answer_parsed: dict[str, Any]) -> list[str]:
 
 
 def render_answer_with_links(answer_parsed: dict[str, Any]) -> str:
-    summary = str(answer_parsed.get("summary") or "")
+    summary = localize_known_answer_text(str(answer_parsed.get("summary") or ""))
     catalysts = answer_parsed.get("catalysts") or []
     missing = answer_parsed.get("missing_evidence") or []
     judgement = str(answer_parsed.get("judgement") or "")
     confidence = clamp_float(answer_parsed.get("overall_confidence"), 0, 1)
-    caveat = str(answer_parsed.get("caveat") or "")
+    caveat = localize_known_answer_text(str(answer_parsed.get("caveat") or ""))
     ref_labels = {
         str(item.get("news_id") or ""): display_time_label(item.get("time") or "") or short_news_id(item.get("news_id") or "")
         for item in catalysts
@@ -253,15 +268,9 @@ def render_answer_with_links(answer_parsed: dict[str, Any]) -> str:
         )
 
     if judgement or confidence:
-        labels = {
-            "news_driven": "新闻驱动",
-            "macro_sentiment": "宏观情绪",
-            "technical_breakout": "技术突破",
-            "unclear": "无法确认",
-        }
         parts.append(
             '<div class="answer-meta">'
-            f'判断类型：<strong>{html.escape(labels.get(judgement, judgement))}</strong> '
+            f'判断类型：<strong>{html.escape(judgement_label(judgement))}</strong> '
             f'综合置信度：<strong>{confidence:.0%}</strong>'
             "</div>"
         )
@@ -269,6 +278,19 @@ def render_answer_with_links(answer_parsed: dict[str, Any]) -> str:
     if caveat:
         parts.append(f'<div class="answer-caveat">{html.escape(caveat)}</div>')
     return "\n".join(parts) if parts else "<p>（无结构化内容）</p>"
+
+
+def judgement_label(value: object) -> str:
+    text = str(value or "")
+    return JUDGEMENT_LABELS.get(text, text or "未分类")
+
+
+def localize_known_answer_text(text: str) -> str:
+    localized = str(text or "")
+    for source, target in KNOWN_ENGLISH_PHRASES.items():
+        localized = localized.replace(source, target)
+    localized = localized.replace("： ", "：")
+    return localized
 
 
 def linkify_news_refs(text: str, labels: dict[str, str] | None = None) -> str:

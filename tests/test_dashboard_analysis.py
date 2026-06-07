@@ -12,6 +12,9 @@ from dashboard.app import (
     format_provider_error,
     market_context_default_enabled,
     provider_error_redirect,
+    provider_raw_preview,
+    provider_review_warning,
+    provider_system_prompt,
     parse_market_context_json,
     normalize_news_text,
     parse_multipart_upload,
@@ -277,6 +280,7 @@ def test_save_answer_transitions_to_done(tmp_path):
         answer_json={"judgement": "news_driven", "overall_confidence": 0.75},
         judgement="news_driven",
         overall_confidence=0.75,
+        provider_elapsed_ms=12345,
         path=db_path,
     )
     run = analysis_db.get_run(run_id, path=db_path)
@@ -285,6 +289,7 @@ def test_save_answer_transitions_to_done(tmp_path):
     assert run["answer_text"] == "raw answer text"
     assert run["judgement"] == "news_driven"
     assert run["overall_confidence"] == 0.75
+    assert run["provider_elapsed_ms"] == 12345
 
 
 def test_provider_error_is_persisted_until_success(tmp_path):
@@ -299,12 +304,18 @@ def test_provider_error_is_persisted_until_success(tmp_path):
         path=db_path,
     )
 
-    analysis_db.save_provider_error(run_id, "Provider 调用失败：Gemini stopped with finishReason=MAX_TOKENS", path=db_path)
+    analysis_db.save_provider_error(
+        run_id,
+        "Provider 调用失败：Gemini stopped with finishReason=MAX_TOKENS",
+        provider_elapsed_ms=9000,
+        path=db_path,
+    )
     run = analysis_db.get_run(run_id, path=db_path)
 
     assert run["status"] == "draft"
     assert "MAX_TOKENS" in run["provider_error"]
     assert run["provider_error_at"]
+    assert run["provider_elapsed_ms"] == 9000
 
     analysis_db.save_answer(
         run_id,
@@ -733,6 +744,7 @@ def test_manual_answer_parse_and_render_links():
     assert "05-23 09:30" in rendered
     assert "[↗ 05-23 09:30]" in rendered
     assert "▲ 偏利多" in rendered
+    assert "新闻驱动" in rendered
     assert escape(manual_ai.CONFIDENCE_HELP) in rendered
 
 
@@ -745,6 +757,23 @@ def test_parse_answer_valid_json():
     assert parsed["parse_error"] is False
     assert parsed["judgement"] == "news_driven"
     assert parsed["overall_confidence"] == 0.72
+
+
+def test_render_answer_localizes_known_english_summary():
+    rendered = manual_ai.render_answer_with_links(
+        {
+            "summary": "Judgement unclear: Evidence direction conflicts with price action.",
+            "catalysts": [],
+            "missing_evidence": [],
+            "judgement": "unclear",
+            "overall_confidence": 0.3,
+            "caveat": "",
+        }
+    )
+
+    assert "判断无法确认：证据方向与价格走势冲突。" in rendered
+    assert "无法确认" in rendered
+    assert "Judgement unclear" not in rendered
 
 
 def test_parse_answer_unparseable_stores_raw_text():
@@ -760,15 +789,57 @@ def test_provider_error_redirect_quotes_message():
     assert response.status_code == 303
     assert response.headers["location"] == "/analyze/run-1?provider_error=bad+json"
 
+    response = provider_error_redirect("run-1", "bad json", provider_name="compatible")
+
+    assert response.headers["location"] == "/analyze/run-1?provider_error=bad+json&provider=compatible"
+
 
 def test_format_provider_error_uses_chinese_actionable_copy():
     assert format_provider_error("gemini:gemini-2.5-flash returned invalid JSON; draft was kept") == (
+        "模型返回了不可解析 JSON，已保留草稿，请减少证据数量或重新调用。详情：gemini:gemini-2.5-flash"
+    )
+    assert format_provider_error(
+        "GLM:glm-4.7-flash returned invalid JSON; draft was kept; raw preview: ```json bad"
+    ) == (
         "模型返回了不可解析 JSON，已保留草稿，请减少证据数量或重新调用。"
+        "详情：GLM:glm-4.7-flash; raw preview: ```json bad"
     )
     assert (
         format_provider_error("Gemini stopped with finishReason=MAX_TOKENS")
         == "Provider 调用失败：Gemini 输出被 MAX_TOKENS 截断，已保留草稿；请减少证据数量，或调高 GEMINI_MAX_TOKENS 后重试。"
     )
+
+
+def test_provider_raw_preview_compacts_and_truncates_text():
+    raw = "  hello\n\nworld  " + ("x" * 800)
+
+    preview = provider_raw_preview(raw, limit=20)
+
+    assert preview == "hello world xxxxxxxx..."
+
+
+def test_provider_system_prompt_adds_glm_only_constraints():
+    gemini_prompt = provider_system_prompt("gemini", "gemini-gemini-2.5-flash")
+    glm_prompt = provider_system_prompt("compatible", "compatible-glm-4.7-flash")
+
+    assert "GLM 专用补充约束" not in gemini_prompt
+    assert "GLM 专用补充约束" in glm_prompt
+    assert "必须使用中文" in glm_prompt
+    assert "单条 indirect/mixed 证据不得给出 news_driven" in glm_prompt
+
+
+def test_provider_review_warning_flags_glm_over_attribution_only():
+    run = {
+        "model_label": "GLM:glm-4.7-flash",
+        "judgement": "news_driven",
+        "overall_confidence": 0.75,
+        "selected_count": 1,
+        "answer_parsed": {"catalysts": [{"direction": "mixed"}]},
+    }
+
+    assert "GLM 可能过度归因" in provider_review_warning(run)
+    run["model_label"] = "gemini:gemini-2.5-flash"
+    assert provider_review_warning(run) == ""
 
 
 def test_analysis_routes_are_registered_before_dynamic_detail():
@@ -899,6 +970,7 @@ def test_provider_adapters_report_configured_keys_without_network(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
     monkeypatch.setenv("COMPAT_LLM_API_KEY", "test-compatible-key")
+    monkeypatch.setenv("COMPAT_LLM_LABEL", "compatible")
 
     from dashboard.providers.base import get_provider
 
@@ -912,6 +984,7 @@ def test_provider_adapters_parse_successful_responses(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
     monkeypatch.setenv("COMPAT_LLM_API_KEY", "test-compatible-key")
+    monkeypatch.setenv("COMPAT_LLM_LABEL", "compatible")
 
     from dashboard.providers.anthropic_provider import AnthropicProvider
     from dashboard.providers.compatible_provider import OpenAICompatibleProvider
@@ -990,6 +1063,7 @@ def test_gemini_provider_rejects_non_stop_finish_reason(monkeypatch):
 
 def test_analyze_templates_expose_provider_run_controls():
     analyze_template = (TEMPLATE_DIR / "analyze.html").read_text()
+    history_template = (TEMPLATE_DIR / "analyze_history.html").read_text()
     run_template = (TEMPLATE_DIR / "analyze_run.html").read_text()
 
     assert "/analyze/{{ run_id }}/run-provider" in analyze_template
@@ -997,6 +1071,14 @@ def test_analyze_templates_expose_provider_run_controls():
     assert "provider_error" in run_template
     assert "run.provider_error" in run_template
     assert "run.provider_error_at" in run_template
+    assert "selected_provider == provider.key" in run_template
+    assert "provider_review_warning" in run_template
+    assert "provider_elapsed_ms" in run_template
+    assert "provider_elapsed_ms" in history_template
+    assert "judgement_label(run.judgement)" in run_template
+    assert "judgement_label(run.judgement)" in history_template
+    assert "分析 ID" in run_template
+    assert "run-id-chip" in run_template
     assert "待调用 / 待回填" in run_template
     assert "copyDraftPrompt" in run_template
     assert "draft-prompt-text" in run_template
@@ -1038,7 +1120,10 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "compare-top-btn" in history_template
     assert "topButton.disabled = ids.length !== 2" in history_template
     assert "model_label" in compare_template
-    assert "模型：" in run_template
+    assert "缺失证据来自各次模型原始输出" in compare_template
+    assert "run-overview" in run_template
+    assert "answer-summary::before" in run_template
+    assert 'content: "结论"' in run_template
 
 
 def test_item_template_shows_published_at_to_second():
