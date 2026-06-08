@@ -59,7 +59,7 @@ class OpenAICompatibleProvider(BaseProvider):
         message = choices[0].get("message") if isinstance(choices[0].get("message"), dict) else {}
         text = str(message.get("content") or "").strip()
         if not text:
-            raise ProviderError("compatible provider returned an empty response")
+            raise ProviderError(f"compatible provider returned an empty response; {_response_brief(response, choices[0])}")
         usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
         return CompletionResult(
             text=text,
@@ -85,3 +85,19 @@ def _optional_int(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _response_brief(response: dict[str, Any], choice: dict[str, Any]) -> str:
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+    parts = [
+        f"model={response.get('model') or ''}",
+        f"finish_reason={choice.get('finish_reason') or choice.get('finishReason') or ''}",
+        f"message_keys={','.join(str(key) for key in message.keys())}",
+    ]
+    if usage:
+        parts.append(
+            "usage="
+            + ",".join(f"{key}={value}" for key, value in usage.items() if key in {"prompt_tokens", "completion_tokens", "total_tokens"})
+        )
+    return "; ".join(part for part in parts if part and not part.endswith("="))

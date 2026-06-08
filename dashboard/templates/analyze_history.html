@@ -103,7 +103,7 @@
               {{ analysis_status_label(run.status) }}
             </span>
           </td>
-          <td class="muted">{% if run.status == 'done' %}{{ run.model_label }}{% elif run.provider_name %}{{ run.provider_name }}{% else %}待调用 / 待回填{% endif %}</td>
+          <td class="muted">{{ provider_display_label(run) }}</td>
           <td class="muted">{{ (run.provider_started_at or '')[:16] if run.provider_started_at else '—' }}</td>
           <td class="muted">{% if run.provider_elapsed_ms %}{{ "%.1fs"|format(run.provider_elapsed_ms / 1000) }}{% elif run.status == 'running' %}进行中{% else %}—{% endif %}</td>
           <td class="muted">{{ judgement_label(run.judgement) if run.judgement else '—' }}</td>

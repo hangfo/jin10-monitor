@@ -153,7 +153,7 @@
       <span class="metric wide"><span class="metric-label">窗口</span><span class="metric-value">{{ run.window_start }} - {{ run.window_end }}</span></span>
       <span class="metric"><span class="metric-label">状态</span><span class="pill {{ analysis_status_class(run.status) }}">{{ analysis_status_label(run.status) }}</span></span>
       <span class="metric"><span class="metric-label">证据</span><span class="metric-value">{{ run.selected_count }} / {{ run.evidence_count }}</span></span>
-      <span class="metric wide"><span class="metric-label">Provider</span><span class="metric-value">{% if run.status == 'done' %}{{ run.model_label }}{% elif run.provider_name %}{{ run.provider_name }}{% else %}待调用 / 待回填{% endif %}</span></span>
+      <span class="metric wide"><span class="metric-label">Provider</span><span class="metric-value">{{ provider_display_label(run) }}</span></span>
     </div>
     <div class="run-overview-line">
       <span class="metric"><span class="metric-label">开始</span><span class="metric-value">{{ (run.provider_started_at or '')[:16] if run.provider_started_at else '—' }}</span></span>
@@ -214,7 +214,7 @@
       <div class="card card-body" style="margin-bottom:16px">
         <h2 style="margin-top:0">{{ 'Provider 调用中' if run.status == 'running' else '草稿记录：调用 Provider 或粘贴回答' }}</h2>
         {% if run.status == 'running' %}
-        <p class="muted">后台任务正在执行，开始时间 {{ (run.provider_started_at or '')[:16] }}，Provider：{{ run.provider_name or run.model_label }}。</p>
+        <p class="muted">后台任务正在执行，开始时间 {{ (run.provider_started_at or '')[:16] }}，Provider：{{ provider_display_label(run) }}。</p>
         <a class="button-link secondary" href="/analyze/{{ run.id }}?provider={{ selected_provider }}">刷新状态</a>
         {% else %}
         {% if run.manual_prompt %}

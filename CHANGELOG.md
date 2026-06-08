@@ -6,6 +6,7 @@
 
 ## 2026-06-08
 
+- 增强 `/analyze` Provider 结果复核与失败体验：对单条低相关、非标的直接证据的高置信 `news_driven` 输出进行本地降级，避免 GLM/Gemini 把弱证据保存成 70% 高置信结论；手动回填空回答不再保存为已完成；失败草稿优先显示实际模型名；OpenAI-compatible 空响应错误增加模型、finish reason、message keys 和 token usage 摘要。
 - 将 `/analyze` Provider 调用改为后台执行：点击“调用并保存”后立即回到详情页，草稿进入 `调用中` 状态并记录 Provider、开始时间和耗时占位；后台完成后保存结果，失败则回到草稿并保留错误与实际耗时。该状态只写独立分析库，不触碰业务历史库、采集链路或 Telegram。
 - 增强 GLM Provider 弱证据保护与耗时可见性：仅对 GLM/OpenAI-compatible 调用追加专用 system 约束，要求正文使用中文、单条 indirect/mixed 证据优先判为 `unclear` 且不得高置信强行归因；Provider 成功或失败都会记录耗时，分析详情页和历史页可直接看到本次调用耗时；GLM 对单条 mixed 证据给出高置信 `news_driven` 时，详情页显示本地复核提示；详情、历史和对比页将 judgement 枚举展示为中文。
 

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -171,6 +172,9 @@ def provider_system_prompt(provider_name: str, provider_label: str = "") -> str:
 
 
 def provider_review_warning(run: dict[str, object]) -> str:
+    parsed = run.get("answer_parsed") if isinstance(run.get("answer_parsed"), dict) else {}
+    if isinstance(parsed, dict) and parsed.get("local_review_applied"):
+        return "本地复核已调整：单条低相关、非标的直接证据不足以支撑 news_driven 高置信判断。"
     model_label = str(run.get("model_label") or "").lower()
     if "glm:" not in model_label:
         return ""
@@ -186,6 +190,67 @@ def provider_review_warning(run: dict[str, object]) -> str:
     if judgement == "news_driven" and selected_count <= 1 and (confidence >= 0.65 or has_mixed):
         return "GLM 可能过度归因：单条或 mixed 证据不足以支撑 news_driven 高置信判断，建议用 Gemini 或 ChatGPT Plus 复核。"
     return ""
+
+
+def apply_local_evidence_guard(parsed: dict[str, object], run: dict[str, object]) -> dict[str, object]:
+    """Keep weak single-evidence provider outputs from becoming high-confidence conclusions."""
+    if not isinstance(parsed, dict) or parsed.get("parse_error"):
+        return parsed
+    selected_rows = [
+        row
+        for row in (run.get("evidence_rows") or [])
+        if isinstance(row, dict) and int(row.get("selected") or 0) == 1
+    ]
+    if len(selected_rows) != 1:
+        return parsed
+    evidence = selected_rows[0]
+    relevance = float(evidence.get("relevance_score") or 0)
+    asset = str(run.get("asset") or "").strip().upper()
+    evidence_text = " ".join(
+        str(evidence.get(key) or "")
+        for key in ("title", "content", "matched_keywords", "news_source")
+    ).upper()
+    judgement = str(parsed.get("judgement") or "")
+    confidence = float(parsed.get("overall_confidence") or 0)
+    catalysts = parsed.get("catalysts") if isinstance(parsed.get("catalysts"), list) else []
+    catalyst_confidence = max(
+        [float(item.get("confidence") or 0) for item in catalysts if isinstance(item, dict)] or [0]
+    )
+    if relevance >= 0.5 or (asset and asset in evidence_text):
+        return parsed
+    if judgement != "news_driven" and confidence <= 0.4 and catalyst_confidence <= 0.4:
+        return parsed
+
+    guarded = dict(parsed)
+    guarded["judgement"] = "unclear"
+    guarded["overall_confidence"] = min(confidence or 0.4, 0.4)
+    guarded["summary"] = f"无法确认：仅有单条低相关、非{asset or '标的'}直接证据，不能高置信归因。"
+    guarded["local_review_applied"] = True
+    caveat = str(guarded.get("caveat") or "").strip()
+    review_caveat = (
+        f"本地复核：当前只有 1 条相关度 {relevance:.2f} 的非{asset or '标的'}直接证据，"
+        "缺少成交量、BTC 联动、资金费率或订单流验证，已将判断降为 unclear。"
+    )
+    guarded["caveat"] = f"{review_caveat} {caveat}".strip()
+    missing = guarded.get("missing_evidence") if isinstance(guarded.get("missing_evidence"), list) else []
+    additions = [
+        f"{asset or '标的'}/USDT 1分钟成交量",
+        "BTC/USDT 同步行情",
+        "资金费率",
+        "订单流或大额成交",
+    ]
+    guarded["missing_evidence"] = list(dict.fromkeys([str(item) for item in missing + additions if str(item)]))
+    guarded_catalysts = []
+    for item in catalysts:
+        if not isinstance(item, dict):
+            continue
+        adjusted = dict(item)
+        adjusted["confidence"] = min(float(adjusted.get("confidence") or 0), 0.4)
+        if str(adjusted.get("direction") or "").lower() == "bullish":
+            adjusted["direction"] = "mixed"
+        guarded_catalysts.append(adjusted)
+    guarded["catalysts"] = guarded_catalysts
+    return guarded
 
 
 def format_provider_error(message: str) -> str:
@@ -204,6 +269,8 @@ def format_provider_error(message: str) -> str:
         return "模型返回了不可解析 JSON，已保留草稿，请减少证据数量或重新调用。"
     if "manual prompt is empty" in text:
         return "Provider 调用失败：Prompt 为空，请重新生成 Prompt。"
+    if "manual answer is empty" in text:
+        return "手动回填为空：请粘贴 AI 返回的 JSON 后再保存。"
     if "analysis run is already done" in text:
         return "Provider 调用失败：这条分析已经完成，请使用重新分析创建新草稿。"
     if "provider is already running" in text:
@@ -231,6 +298,23 @@ def analysis_status_class(status: object) -> str:
     }.get(str(status or ""), "none")
 
 
+def provider_display_label(run: dict[str, object]) -> str:
+    status = str(run.get("status") or "")
+    model_label = str(run.get("model_label") or "").strip()
+    provider_name = str(run.get("provider_name") or "").strip()
+    if status == "done" and model_label:
+        return model_label
+    if model_label and model_label != "manual_chatgpt_business":
+        return model_label
+    error = str(run.get("provider_error") or "")
+    match = re.search(r"Provider 调用失败：([^:：]+):", error)
+    if match:
+        return match.group(1)
+    if provider_name:
+        return provider_name
+    return "待调用 / 待回填"
+
+
 async def execute_provider_run(run_id: str, provider_name: str, manual_prompt: str) -> None:
     provider = get_provider(provider_name)
     if not provider:
@@ -255,6 +339,8 @@ async def execute_provider_run(run_id: str, provider_name: str, manual_prompt: s
                 provider_elapsed_ms=provider_elapsed_ms,
             )
             return
+        run = get_run(run_id) or {}
+        parsed = apply_local_evidence_guard(parsed, run)
         save_answer(
             run_id=run_id,
             answer_text=result.text,
@@ -491,6 +577,7 @@ def create_app() -> FastAPI:
     templates.env.globals["judgement_label"] = judgement_label
     templates.env.globals["analysis_status_label"] = analysis_status_label
     templates.env.globals["analysis_status_class"] = analysis_status_class
+    templates.env.globals["provider_display_label"] = provider_display_label
 
     @app.get("/")
     async def index(request: Request):
@@ -776,7 +863,12 @@ def create_app() -> FastAPI:
         run_id = form.get("run_id", "").strip()
         answer_text = form.get("answer_text", "")
         manual_prompt = form.get("manual_prompt", "")
+        if not answer_text.strip():
+            save_provider_error(run_id, format_provider_error("manual answer is empty"))
+            return provider_error_redirect(run_id, format_provider_error("manual answer is empty"))
         parsed = parse_answer(answer_text)
+        run = get_run(run_id) or {}
+        parsed = apply_local_evidence_guard(parsed, run)
         save_answer(
             run_id=run_id,
             answer_text=answer_text,

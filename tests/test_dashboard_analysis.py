@@ -9,12 +9,14 @@ from dashboard.app import (
     ALLOWED_SCREENSHOT_MIME_TYPES,
     app,
     append_screenshot_context,
+    apply_local_evidence_guard,
     analysis_status_label,
     format_provider_error,
     market_context_default_enabled,
     provider_error_redirect,
     provider_raw_preview,
     provider_review_warning,
+    provider_display_label,
     provider_system_prompt,
     parse_market_context_json,
     normalize_news_text,
@@ -868,6 +870,7 @@ def test_format_provider_error_uses_chinese_actionable_copy():
         format_provider_error("Gemini stopped with finishReason=MAX_TOKENS")
         == "Provider 调用失败：Gemini 输出被 MAX_TOKENS 截断，已保留草稿；请减少证据数量，或调高 GEMINI_MAX_TOKENS 后重试。"
     )
+    assert format_provider_error("manual answer is empty") == "手动回填为空：请粘贴 AI 返回的 JSON 后再保存。"
 
 
 def test_provider_raw_preview_compacts_and_truncates_text():
@@ -900,6 +903,78 @@ def test_provider_review_warning_flags_glm_over_attribution_only():
     assert "GLM 可能过度归因" in provider_review_warning(run)
     run["model_label"] = "gemini:gemini-2.5-flash"
     assert provider_review_warning(run) == ""
+
+
+def test_local_evidence_guard_caps_single_weak_indirect_news():
+    parsed = {
+        "summary": "ETH 上涨由地缘消息推动。",
+        "catalysts": [
+            {
+                "news_id": "n1",
+                "confidence": 0.7,
+                "direction": "bullish",
+                "impact_path": "地缘紧张推动资金流入 ETH [#n1]",
+            }
+        ],
+        "missing_evidence": [],
+        "judgement": "news_driven",
+        "overall_confidence": 0.7,
+        "caveat": "",
+    }
+    run = {
+        "asset": "ETH",
+        "evidence_rows": [
+            {
+                "selected": 1,
+                "relevance_score": 0.375,
+                "title": "美国军方：美军在霍尔木兹海峡击落两架伊朗无人机",
+                "content": "",
+                "matched_keywords": "伊朗,霍尔木兹,美国",
+            }
+        ],
+    }
+
+    guarded = apply_local_evidence_guard(parsed, run)
+
+    assert guarded["judgement"] == "unclear"
+    assert guarded["overall_confidence"] == 0.4
+    assert guarded["local_review_applied"] is True
+    assert guarded["catalysts"][0]["confidence"] == 0.4
+    assert guarded["catalysts"][0]["direction"] == "mixed"
+    assert "BTC/USDT 同步行情" in guarded["missing_evidence"]
+    assert "本地复核" in guarded["caveat"]
+
+
+def test_local_evidence_guard_leaves_direct_asset_news_alone():
+    parsed = {
+        "catalysts": [{"news_id": "n1", "confidence": 0.72, "direction": "bullish"}],
+        "judgement": "news_driven",
+        "overall_confidence": 0.72,
+    }
+    run = {
+        "asset": "ETH",
+        "evidence_rows": [{"selected": 1, "relevance_score": 0.42, "title": "ETH ETF 出现资金流入"}],
+    }
+
+    assert apply_local_evidence_guard(parsed, run) == parsed
+
+
+def test_provider_display_label_uses_failed_model_before_provider_key():
+    run = {
+        "status": "draft",
+        "model_label": "compatible-glm-4.7-flash",
+        "provider_name": "compatible",
+        "provider_error": "",
+    }
+    assert provider_display_label(run) == "compatible-glm-4.7-flash"
+
+    old_run = {
+        "status": "draft",
+        "model_label": "manual_chatgpt_business",
+        "provider_name": "",
+        "provider_error": "Provider 调用失败：compatible-glm-4.7-flash: compatible provider returned an empty response",
+    }
+    assert provider_display_label(old_run) == "compatible-glm-4.7-flash"
 
 
 def test_analysis_routes_are_registered_before_dynamic_detail():
@@ -1095,6 +1170,38 @@ def test_provider_adapters_parse_successful_responses(monkeypatch):
     assert compatible.input_tokens == 17
 
 
+def test_compatible_provider_empty_response_reports_shape(monkeypatch):
+    monkeypatch.setenv("COMPAT_LLM_API_KEY", "test-compatible-key")
+    monkeypatch.setenv("COMPAT_LLM_MODEL", "glm-4.7-flash")
+
+    from dashboard.providers.base import ProviderError
+    from dashboard.providers.compatible_provider import OpenAICompatibleProvider
+
+    class FakeCompatible(OpenAICompatibleProvider):
+        def _post_json(self, payload, *, api_key):
+            return {
+                "model": "glm-4.7-flash",
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": ""},
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 0, "total_tokens": 100},
+            }
+
+    try:
+        FakeCompatible().complete("system", "user")
+    except ProviderError as exc:
+        message = str(exc)
+        assert "empty response" in message
+        assert "model=glm-4.7-flash" in message
+        assert "finish_reason=stop" in message
+        assert "completion_tokens=0" in message
+    else:
+        raise AssertionError("ProviderError was not raised")
+
+
 def test_gemini_provider_rejects_non_stop_finish_reason(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
 
@@ -1135,17 +1242,19 @@ def test_analyze_templates_expose_provider_run_controls():
     assert "provider_review_warning" in run_template
     assert "provider_elapsed_ms" in run_template
     assert "provider_started_at" in run_template
+    assert "provider_display_label(run)" in run_template
     assert "analysis_status_label(run.status)" in run_template
     assert "Provider 调用中" in run_template
     assert "后台调用" in run_template
     assert "provider_elapsed_ms" in history_template
     assert "provider_started_at" in history_template
+    assert "provider_display_label(run)" in history_template
     assert "analysis_status_label(run.status)" in history_template
     assert "judgement_label(run.judgement)" in run_template
     assert "judgement_label(run.judgement)" in history_template
     assert "分析 ID" in run_template
     assert "run-id-chip" in run_template
-    assert "待调用 / 待回填" in run_template
+    assert "provider_display_label(run)" in run_template
     assert "copyDraftPrompt" in run_template
     assert "draft-prompt-text" in run_template
     assert "提交中..." in analyze_template
@@ -1181,8 +1290,7 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "v3 默认只选高相关且不重复的证据" in analyze_template
     assert "选择策略：" in analyze_template
     assert "Prompt 约" in analyze_template
-    assert "model_label" in history_template
-    assert "待调用 / 待回填" in history_template
+    assert "provider_display_label(run)" in history_template
     assert "compare-top-btn" in history_template
     assert "topButton.disabled = ids.length !== 2" in history_template
     assert "model_label" in compare_template
