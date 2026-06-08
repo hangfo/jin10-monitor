@@ -1,4 +1,4 @@
-更新时间：2026-06-08 21:15（Asia/Shanghai）
+更新时间：2026-06-08 21:31（Asia/Shanghai）
 
 # Changelog
 
@@ -6,6 +6,7 @@
 
 ## 2026-06-08
 
+- 接纳 `043` 运维驾驶舱 review 的只读诊断修复：`/system` 现在区分 Telegram `unknown_timeout` 已在 `delivery_log` 确认和仍需人工核对的数量，只有未确认 timeout 或 failed 才触发降级；REST 泳道 headline 改为中文状态，Initial History 明确“最近快照新增”口径并显示快照时间；ws_initial 下钻优先展示晚于游标记录；Hero 区增加状态参考起点和持续时长。
 - 接纳 `047-049` 深度 review 的稳定性修复：Dashboard 启动时自动恢复因服务重启遗留的 `running` 分析草稿；Provider 后台完成只能从 `running` 写入，手动回填只能从 `draft` 写入，避免后台结果覆写人工结果；running 详情页显示已等待秒数和同 Provider 历史 P50 预计耗时并自动刷新；统一 GLM Provider 检测、过滤 Gemini thinking part、修复 `/system` 中 `info` 状态 pill 颜色，并将 Binance K 线时间链路固定为北京墙上时间与 UTC epoch 的显式转换。
 - 改进 Provider 失败后的草稿续跑体验：失败详情页不再继续显示“已开始后台调用”，会明确提示草稿已保留、可切换 Gemini/GLM 重新调用或手动粘贴严格 JSON；手工回答文本框固定浅色可输入样式并说明用途；历史草稿缺失 Prompt 时，重试 Provider 会尝试用已保存的问题、窗口和证据列表重新生成并写回 Prompt。
 - 增强 `/analyze` Provider 结果复核与失败体验：对单条低相关、非标的直接证据的高置信 `news_driven` 输出进行本地降级，避免 GLM/Gemini 把弱证据保存成 70% 高置信结论；手动回填空回答不再保存为已完成；失败草稿优先显示实际模型名；OpenAI-compatible 空响应错误增加模型、finish reason、message keys 和 token usage 摘要。

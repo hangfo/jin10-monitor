@@ -1436,6 +1436,9 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "topButton.disabled = ids.length !== 2" in history_template
     assert "model_label" in compare_template
     assert "lane.status in ['ok', 'info']" in system_template
+    assert "状态参考起点" in system_template
+    assert "unknown_timeout_confirmed" in system_template
+    assert "unknown_timeout_unconfirmed" in system_template
     assert "parts.hour - 8" in item_template
     assert "Number(time) + 8 * 3600" in item_template
     assert "缺失证据来自各次模型原始输出" in compare_template

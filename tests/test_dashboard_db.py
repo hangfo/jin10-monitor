@@ -321,7 +321,13 @@ def test_query_system_health_includes_realtime_pipeline_diagnostics(dashboard_hi
     assert health["delivery_latest"]["unknown_timeout"]["message_id"] == "timeout-1"
     assert health["delivery_latest"]["failed"]["message_id"] == "failed-1"
     assert health["catchup_summary_latest"]["message_id"] == "catchup_summary:gap:start:end"
-    assert health["telegram_counts"] == {"sent": 3, "unknown_timeout": 1, "failed": 1}
+    assert health["telegram_counts"] == {
+        "sent": 3,
+        "unknown_timeout": 1,
+        "unknown_timeout_confirmed": 0,
+        "unknown_timeout_unconfirmed": 1,
+        "failed": 1,
+    }
     assert health["ws_initial_state"]["last_at"]
     assert health["ws_initial_state"]["count"] == "40"
     assert health["ws_initial_state"]["saved_count"] == "3"
@@ -331,14 +337,54 @@ def test_query_system_health_includes_realtime_pipeline_diagnostics(dashboard_hi
     assert health["ops_overview"]["summary"]["label"] == "降级运行"
     lanes = {lane["key"]: lane for lane in health["ops_overview"]["lanes"]}
     assert lanes["ws"]["badge"] == "可信主路"
-    assert lanes["ws_initial"]["headline"] == "新入库 3 条"
+    assert lanes["ws_initial"]["headline"] == "最近快照新增 3 条"
+    assert "非 24h 累计" in lanes["ws_initial"]["detail"]
     assert lanes["telegram"]["status"] == "warn"
+    assert "待确认 1" in lanes["telegram"]["headline"]
     assert any("核对最近 Telegram unknown_timeout" in action for action in health["ops_overview"]["actions"])
     notice_text = "\n".join(notice["text"] for notice in health["system_notices"])
     assert "WebSocket 初始历史最近快照新入库 3 条" in notice_text
     assert "可能覆盖了实时短缺口" in notice_text
-    assert "Telegram unknown_timeout 1 条" in notice_text
+    assert "仍需人工核对 1 条" in notice_text
     assert "不会自动重发" in notice_text
+
+
+def test_query_system_health_ignores_confirmed_unknown_timeout_for_degraded(dashboard_history_db):
+    conn = sqlite3.connect(dashboard_history_db)
+    conn.executemany(
+        "INSERT INTO runtime_state (key, value) VALUES (?, ?)",
+        [
+            ("last_ingested_at", history_ts(-1)),
+            ("last_ingested_id", "dash-1"),
+        ],
+    )
+    conn.execute(
+        """
+        INSERT INTO telegram_delivery_status (
+            message_id, channel, mode, status, detail, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("timeout-confirmed", "telegram", "realtime", "unknown_timeout", "timeout", history_ts(-2)),
+    )
+    conn.execute(
+        "INSERT INTO delivery_log (message_id, sent_at) VALUES (?, ?)",
+        ("timeout-confirmed", history_ts(-2)),
+    )
+    conn.commit()
+    conn.close()
+
+    health = db.query_system_health()
+    lanes = {lane["key"]: lane for lane in health["ops_overview"]["lanes"]}
+
+    assert health["telegram_counts"]["unknown_timeout"] == 1
+    assert health["telegram_counts"]["unknown_timeout_confirmed"] == 1
+    assert health["telegram_counts"]["unknown_timeout_unconfirmed"] == 0
+    assert health["ops_overview"]["summary"]["status"] == "ok"
+    assert lanes["telegram"]["status"] == "ok"
+    assert "待确认 0" in lanes["telegram"]["headline"]
+    assert not any("核对最近 Telegram unknown_timeout" in action for action in health["ops_overview"]["actions"])
+    assert any("均已在 delivery_log 确认" in notice["text"] for notice in health["system_notices"])
 
 
 def test_query_system_health_reads_persisted_rest_backoff_state(dashboard_history_db):
@@ -367,8 +413,11 @@ def test_query_system_health_reads_persisted_rest_backoff_state(dashboard_histor
     assert health["rest_state"]["backoff_remaining_seconds"] > 0
     assert "HTTP 403" in health["rest_state"]["last_error"]
     assert health["ops_overview"]["summary"]["status"] == "degraded"
+    assert health["ops_overview"]["summary"]["state_since"]
+    assert health["ops_overview"]["summary"]["state_duration"]
     rest_lane = next(lane for lane in health["ops_overview"]["lanes"] if lane["key"] == "rest")
     assert rest_lane["badge"] == "当前退避"
+    assert rest_lane["headline"] == "403 退避中"
     assert any("观察 REST 退避截止时间" in action for action in health["ops_overview"]["actions"])
     assert any("REST 曾间歇恢复后当前再次退避" in notice["text"] for notice in health["system_notices"])
 

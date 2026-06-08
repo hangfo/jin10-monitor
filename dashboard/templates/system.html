@@ -175,6 +175,9 @@
       <div class="ops-title">{{ ops.summary.label }}</div>
       <div class="ops-copy">{{ ops.summary.text }}</div>
       <div class="meta" style="margin-top:10px">主路新鲜度：{{ ops.summary.freshness }}</div>
+      {% if ops.summary.state_since %}
+      <div class="meta">状态参考起点：{{ ops.summary.state_since }}{% if ops.summary.state_duration %}（持续 {{ ops.summary.state_duration }}）{% endif %}</div>
+      {% endif %}
     </div>
     <div class="ops-actions">
       {% for action in ops.actions %}
@@ -229,7 +232,9 @@
         </div>
         {% endfor %}
       </div>
-      <div class="meta" style="margin-top:10px">unknown_timeout 是未拿到确认，不等于失败；本页不会自动重发。</div>
+      <div class="meta" style="margin-top:10px">
+        unknown_timeout 是未拿到确认，不等于失败；已确认 {{ system_health.telegram_counts.get('unknown_timeout_confirmed', 0) }} · 仍需核对 {{ system_health.telegram_counts.get('unknown_timeout_unconfirmed', 0) }}；本页不会自动重发。
+      </div>
     </div>
   </section>
 

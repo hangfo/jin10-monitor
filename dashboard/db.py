@@ -24,6 +24,13 @@ REQUIRED_TABLES = {
 
 HOURS_OPTIONS = [1, 6, 24, 72]
 DEFAULT_HOURS = 24
+REST_HEADLINE_LABELS = {
+    "forbidden_backoff": "403 退避中",
+    "ok": "正常",
+    "error": "请求失败",
+    "recent": "最近成功",
+    "no_recent_success": "暂无成功记录",
+}
 
 
 def history_db_path() -> Path:
@@ -508,6 +515,15 @@ def query_ws_initial_review(*, limit: int = 80) -> dict[str, Any]:
         if is_newer:
             newer_than_cursor += 1
         items.append(item)
+    def ws_initial_sort_key(item: dict[str, Any]) -> tuple[int, float, str]:
+        published_dt = parse_history_datetime(str(item.get("published_at") or ""))
+        return (
+            0 if item.get("newer_than_cursor") else 1,
+            -published_dt.timestamp() if published_dt else 0,
+            str(item.get("id") or ""),
+        )
+
+    items.sort(key=ws_initial_sort_key)
     return {
         "state": {
             "last_ingested_at": state.get("last_ingested_at", ""),
@@ -601,6 +617,21 @@ def query_tg_summary(*, hours: int = DEFAULT_HOURS) -> dict[str, Any]:
     }
 
 
+def format_duration_since(value: str) -> str:
+    dt = parse_history_datetime(value)
+    if not dt:
+        return ""
+    total_seconds = max(0, int((datetime.now() - dt).total_seconds()))
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes = remainder // 60
+    if days:
+        return f"{days} 天 {hours} 小时"
+    if hours:
+        return f"{hours} 小时 {minutes} 分钟"
+    return f"{minutes} 分钟"
+
+
 def build_ops_overview(
     *,
     monitor_status: str,
@@ -616,20 +647,26 @@ def build_ops_overview(
     ws_initial_saved = safe_int(ws_initial_state.get("saved_count"))
     sent_count = delivery_counts.get("sent", 0)
     unknown_timeout_count = delivery_counts.get("unknown_timeout", 0)
+    unknown_confirmed_count = delivery_counts.get("unknown_timeout_confirmed", 0)
+    unknown_unconfirmed_count = delivery_counts.get("unknown_timeout_unconfirmed", unknown_timeout_count)
     failed_count = delivery_counts.get("failed", 0)
+    state_since = ""
 
     if monitor_status == "error":
         summary_status = "error"
         summary_label = "需要立即排查"
         summary_text = "主路入库已明显变旧，先确认 WebSocket 进程、launchd 状态和历史库写入。"
+        state_since = rest_state.get("last_ingested_at", "")
     elif monitor_status == "warn":
         summary_status = "warn"
         summary_label = "需要关注"
         summary_text = "主路仍有记录但新鲜度下降，建议观察 WebSocket 与补拉链路是否继续推进。"
-    elif rest_status == "forbidden_backoff" or unknown_timeout_count or failed_count:
+        state_since = rest_state.get("last_ingested_at", "")
+    elif rest_status == "forbidden_backoff" or unknown_unconfirmed_count or failed_count:
         summary_status = "degraded"
         summary_label = "降级运行"
         summary_text = "WebSocket 主路仍可观察，但 REST 或 Telegram 存在降级信号，需要人工看一眼。"
+        state_since = rest_state.get("last_ok_at", "") if rest_status == "forbidden_backoff" else ""
     elif monitor_status == "ok":
         summary_status = "ok"
         summary_label = "运行正常"
@@ -659,7 +696,7 @@ def build_ops_overview(
             "label": "REST 轮询",
             "status": "degraded" if rest_status == "forbidden_backoff" else ("ok" if rest_status in {"ok", "recent"} else "warn"),
             "badge": "当前退避" if rest_status == "forbidden_backoff" else ("可用" if rest_status in {"ok", "recent"} else "仅观察"),
-            "headline": rest_state.get("status") or rest_status,
+            "headline": REST_HEADLINE_LABELS.get(rest_state.get("status") or rest_status, rest_state.get("status") or rest_status),
             "detail": "辅助补拉信号，不代表整体采集是否中断。",
             "latest": source_map.get("rest", {}).get("latest_published_at", ""),
             "count_24h": safe_int(source_map.get("rest", {}).get("count_24h")),
@@ -669,18 +706,18 @@ def build_ops_overview(
             "label": "Initial History",
             "status": "info" if ws_initial_saved else "idle",
             "badge": "补到新消息" if ws_initial_saved else "等待快照",
-            "headline": f"新入库 {ws_initial_saved} 条",
-            "detail": "重连快照可辅助人工判断短缺口。",
+            "headline": f"最近快照新增 {ws_initial_saved} 条",
+            "detail": f"最近快照：{ws_initial_state.get('last_at') or '无'}；重连快照新增计数非 24h 累计。",
             "latest": ws_initial_state.get("newest_published_at", ""),
             "count_24h": safe_int(source_map.get("ws_initial", {}).get("count_24h")),
         },
         {
             "key": "telegram",
             "label": "Telegram 投递",
-            "status": "warn" if unknown_timeout_count or failed_count else "ok",
-            "badge": "需人工核对" if unknown_timeout_count or failed_count else "确认正常",
-            "headline": f"sent {sent_count} / timeout {unknown_timeout_count} / failed {failed_count}",
-            "detail": "unknown_timeout 不自动重发，成功去重仍看 delivery_log。",
+            "status": "warn" if unknown_unconfirmed_count or failed_count else "ok",
+            "badge": "需人工核对" if unknown_unconfirmed_count or failed_count else "确认正常",
+            "headline": f"sent {sent_count} / 待确认 {unknown_unconfirmed_count} / failed {failed_count}",
+            "detail": f"unknown_timeout {unknown_timeout_count} 条，其中 delivery_log 已确认 {unknown_confirmed_count} 条；不自动重发。",
             "latest": "",
             "count_24h": sent_count + unknown_timeout_count + failed_count,
         },
@@ -693,7 +730,7 @@ def build_ops_overview(
         ops_actions.append("观察 REST 退避截止时间和最近恢复时间，不把 403 退避误判为整体停采。")
     if ws_initial_saved:
         ops_actions.append("查看 WebSocket initial history 新入库记录，人工判断是否覆盖短缺口。")
-    if unknown_timeout_count:
+    if unknown_unconfirmed_count:
         ops_actions.append("核对最近 Telegram unknown_timeout 项；不要自动重发，避免破坏 delivery_log 去重语义。")
     if failed_count:
         ops_actions.append("检查最近 Telegram failed 明细，区分配置错误和单条消息异常。")
@@ -708,6 +745,8 @@ def build_ops_overview(
             "label": summary_label,
             "text": summary_text,
             "freshness": freshness,
+            "state_since": state_since,
+            "state_duration": format_duration_since(state_since),
         },
         "lanes": ops_lanes,
         "actions": ops_actions,
@@ -770,6 +809,16 @@ def query_system_health() -> dict[str, Any]:
             """,
             (since,),
         ).fetchall()
+        unknown_confirmed_row = conn.execute(
+            """
+            SELECT COUNT(*) AS confirmed_count
+            FROM telegram_delivery_status t
+            WHERE t.status = 'unknown_timeout'
+              AND t.updated_at >= ?
+              AND EXISTS (SELECT 1 FROM delivery_log dl WHERE dl.message_id = t.message_id)
+            """,
+            (since,),
+        ).fetchone()
         catchup_summary_row = conn.execute(
             """
             SELECT status, mode, message_id, detail, datetime(updated_at, 'localtime') AS updated_at
@@ -814,6 +863,7 @@ def query_system_health() -> dict[str, Any]:
         "last_error": state.get("rest_last_error", ""),
         "last_error_at": state.get("rest_last_error_at", ""),
         "last_ok_at": state.get("rest_last_ok_at", ""),
+        "last_ingested_at": last_ingested_at,
     }
     ws_initial_state = {
         "last_at": state.get("last_ws_initial_at", ""),
@@ -860,14 +910,23 @@ def query_system_health() -> dict[str, Any]:
             "text": "WebSocket 初始历史最新时间晚于最后入库游标，可能覆盖了实时短缺口；当前仅提示，不推进游标、不补发 Telegram。",
         })
     unknown_timeout_24h = delivery_counts.get("unknown_timeout", 0)
-    if unknown_timeout_24h > 0:
+    unknown_confirmed_24h = int(unknown_confirmed_row["confirmed_count"] or 0) if unknown_confirmed_row else 0
+    unknown_unconfirmed_24h = max(0, int(unknown_timeout_24h) - unknown_confirmed_24h)
+    if unknown_unconfirmed_24h > 0:
         system_notices.append({
             "level": "warn",
-            "text": f"24h 内 Telegram unknown_timeout {unknown_timeout_24h} 条，建议人工核对投递状态；当前不会自动重发，成功去重仍以 delivery_log 为准。",
+            "text": f"24h 内 Telegram unknown_timeout {unknown_timeout_24h} 条，其中仍需人工核对 {unknown_unconfirmed_24h} 条；当前不会自动重发，成功去重仍以 delivery_log 为准。",
+        })
+    elif unknown_timeout_24h > 0:
+        system_notices.append({
+            "level": "info",
+            "text": f"24h 内 Telegram unknown_timeout {unknown_timeout_24h} 条均已在 delivery_log 确认；当前不按超时降级，也不会自动重发。",
         })
     telegram_counts = {
         "sent": delivery_counts.get("sent", 0),
         "unknown_timeout": unknown_timeout_24h,
+        "unknown_timeout_confirmed": unknown_confirmed_24h,
+        "unknown_timeout_unconfirmed": unknown_unconfirmed_24h,
         "failed": delivery_counts.get("failed", 0),
     }
     ops_overview = build_ops_overview(
