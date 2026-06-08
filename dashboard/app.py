@@ -29,6 +29,7 @@ from .analysis_db import (
     list_runs,
     mark_provider_running,
     estimate_provider_completion_seconds,
+    query_provider_call_stats,
     reset_stale_running_runs,
     save_answer,
     save_manual_prompt,
@@ -78,6 +79,14 @@ STATUS_OPTIONS = [
     ("skipped", "skipped"),
 ]
 ALLOWED_STATUSES = {value for value, _label in STATUS_OPTIONS}
+ANALYSIS_STATUS_OPTIONS = [
+    ("all", "全部"),
+    ("running", "调用中"),
+    ("draft", "草稿"),
+    ("done", "已完成"),
+    ("recent_failed", "最近失败"),
+]
+ALLOWED_ANALYSIS_STATUSES = {value for value, _label in ANALYSIS_STATUS_OPTIONS}
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 log = logging.getLogger(__name__)
@@ -727,6 +736,7 @@ def create_app() -> FastAPI:
     async def system(request: Request):
         health = history_health()
         system_health = query_system_health() if health["status"] == "ok" else {}
+        provider_call_stats = query_provider_call_stats() if health["status"] == "ok" else {}
         return templates.TemplateResponse(
             request,
             "system.html",
@@ -734,6 +744,7 @@ def create_app() -> FastAPI:
                 "health": health,
                 "system_health": system_health,
                 "provider_statuses": provider_statuses(),
+                "provider_call_stats": provider_call_stats,
                 "nav": query_nav_summary(),
             },
         )
@@ -948,8 +959,12 @@ def create_app() -> FastAPI:
     @app.get("/analyze/history")
     async def analyze_history(request: Request):
         asset_filter = str(request.query_params.get("asset", "") or "")
+        status_filter = str(request.query_params.get("status", "all") or "all")
+        if status_filter not in ALLOWED_ANALYSIS_STATUSES:
+            status_filter = "all"
+        status_filter_label = dict(ANALYSIS_STATUS_OPTIONS).get(status_filter, status_filter)
         init_analysis_db()
-        runs = list_runs(asset=asset_filter, limit=50)
+        runs = list_runs(asset=asset_filter, status_filter=status_filter, limit=50)
         return templates.TemplateResponse(
             request,
             "analyze_history.html",
@@ -957,6 +972,9 @@ def create_app() -> FastAPI:
                 "health": history_health(),
                 "runs": runs,
                 "asset_filter": asset_filter,
+                "status_filter": status_filter,
+                "status_filter_label": status_filter_label,
+                "analysis_status_options": ANALYSIS_STATUS_OPTIONS,
                 "known_assets": known_assets(),
                 "nav": query_nav_summary(),
             },
@@ -988,6 +1006,7 @@ def create_app() -> FastAPI:
                 "provider_error": str(request.query_params.get("provider_error", "") or ""),
                 "provider_success": str(request.query_params.get("provider_success", "") or ""),
                 "provider_started": str(request.query_params.get("provider_started", "") or ""),
+                "delete_error": str(request.query_params.get("delete_error", "") or ""),
                 "provider_estimate_seconds": provider_estimate_seconds,
                 "selected_provider": str(request.query_params.get("provider", "") or ""),
                 "nav": query_nav_summary(),
@@ -1040,8 +1059,13 @@ def create_app() -> FastAPI:
     @app.post("/analyze/{run_id}/delete")
     async def analyze_delete_run(run_id: str):
         init_analysis_db()
-        delete_run(run_id)
-        return RedirectResponse("/analyze/history", status_code=303)
+        deleted = delete_run(run_id, allowed_statuses=("draft",))
+        if not deleted:
+            return RedirectResponse(
+                f"/analyze/{run_id}?{urlencode({'delete_error': '只能删除草稿记录；已完成或调用中的分析请保留用于复盘。'})}",
+                status_code=303,
+            )
+        return RedirectResponse("/analyze/history?status=draft", status_code=303)
 
     @app.post("/api/screenshots/upload")
     async def api_screenshot_upload(request: Request):

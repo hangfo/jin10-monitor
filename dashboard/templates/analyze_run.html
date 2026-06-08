@@ -171,9 +171,11 @@
     <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
       <a class="button-link secondary" href="/analyze?asset={{ (run.asset or '')|urlencode }}&window_start={{ (run.window_start or '')|urlencode }}&window_end={{ (run.window_end or '')|urlencode }}&question={{ (run.question or '')|urlencode }}">重新分析</a>
       <a class="button-link secondary" href="/analyze/compare?ids={{ run.id }}">对比</a>
-      <form method="post" action="/analyze/{{ run.id }}/delete" onsubmit="return confirm('确认删除本条分析记录？')">
+      {% if run.status == 'draft' %}
+      <form method="post" action="/analyze/{{ run.id }}/delete" onsubmit="return confirm('只删除草稿记录；已完成分析会保留用于复盘。确认删除这个草稿？')">
         <button type="submit" class="button-link secondary" style="color:var(--fail-fg)">删除</button>
       </form>
+      {% endif %}
     </div>
   </div>
 
@@ -220,6 +222,11 @@
   {% if provider_success %}
   <div class="panel" style="background:var(--sent-bg);margin-bottom:12px;color:var(--sent-fg)">
     Provider 已保存：{{ provider_success }}
+  </div>
+  {% endif %}
+  {% if delete_error %}
+  <div class="panel" style="background:var(--warn-bg);margin-bottom:12px;color:var(--warn-fg)">
+    {{ delete_error }}
   </div>
   {% endif %}
   {% if provider_started and run.status == 'running' %}

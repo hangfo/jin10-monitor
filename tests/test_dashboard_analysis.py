@@ -158,6 +158,100 @@ def test_analysis_db_roundtrip_and_cascade_delete(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM analysis_evidence").fetchone()[0] == 0
 
 
+def test_delete_run_can_be_limited_to_drafts(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    done_id = analysis_db.create_run(
+        "Done question",
+        "BTC",
+        "2026-05-23 09:00:00",
+        "2026-05-23 10:00:00",
+        [],
+        manual_prompt="prompt",
+        path=db_path,
+    )
+    draft_id = analysis_db.create_run(
+        "Draft question",
+        "BTC",
+        "2026-05-23 11:00:00",
+        "2026-05-23 12:00:00",
+        [],
+        path=db_path,
+    )
+    analysis_db.save_answer(
+        done_id,
+        "answer",
+        answer_json={"judgement": "unclear", "overall_confidence": 0.2, "catalysts": []},
+        judgement="unclear",
+        overall_confidence=0.2,
+        path=db_path,
+    )
+
+    assert analysis_db.delete_run(done_id, allowed_statuses=("draft",), path=db_path) is False
+    assert analysis_db.get_run(done_id, path=db_path)["status"] == "done"
+    assert analysis_db.delete_run(draft_id, allowed_statuses=("draft",), path=db_path) is True
+    assert analysis_db.get_run(draft_id, path=db_path) is None
+
+
+def test_list_runs_filters_status_and_recent_failed(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    done_id = analysis_db.create_run("Done", "BTC", "2026-05-23 09:00:00", "2026-05-23 10:00:00", [], path=db_path)
+    failed_id = analysis_db.create_run("Failed", "ETH", "2026-05-23 09:00:00", "2026-05-23 10:00:00", [], path=db_path)
+    running_id = analysis_db.create_run("Running", "ETH", "2026-05-23 09:00:00", "2026-05-23 10:00:00", [], path=db_path)
+    analysis_db.save_answer(
+        done_id,
+        "answer",
+        answer_json={"judgement": "unclear", "overall_confidence": 0.2, "catalysts": []},
+        judgement="unclear",
+        overall_confidence=0.2,
+        path=db_path,
+    )
+    analysis_db.mark_provider_running(failed_id, provider_name="gemini", provider_label="Gemini", path=db_path)
+    analysis_db.save_provider_error(failed_id, "Provider 调用失败：timeout", provider_elapsed_ms=12000, path=db_path)
+    analysis_db.mark_provider_running(running_id, provider_name="compatible", provider_label="GLM", path=db_path)
+
+    assert [run["id"] for run in analysis_db.list_runs(status_filter="done", path=db_path)] == [done_id]
+    assert [run["id"] for run in analysis_db.list_runs(status_filter="running", path=db_path)] == [running_id]
+    assert [run["id"] for run in analysis_db.list_runs(status_filter="recent_failed", path=db_path)] == [failed_id]
+
+
+def test_query_provider_call_stats_reads_recent_provider_activity(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    done_id = analysis_db.create_run("Done", "BTC", "2026-05-23 09:00:00", "2026-05-23 10:00:00", [], path=db_path)
+    failed_id = analysis_db.create_run("Failed", "ETH", "2026-05-23 09:00:00", "2026-05-23 10:00:00", [], path=db_path)
+    running_id = analysis_db.create_run("Running", "SOL", "2026-05-23 09:00:00", "2026-05-23 10:00:00", [], path=db_path)
+    analysis_db.mark_provider_running(done_id, provider_name="gemini", provider_label="Gemini:gemini-2.5-flash", path=db_path)
+    analysis_db.save_answer(
+        done_id,
+        "answer",
+        answer_json={"judgement": "unclear", "overall_confidence": 0.2, "catalysts": []},
+        judgement="unclear",
+        overall_confidence=0.2,
+        provider_elapsed_ms=10000,
+        expected_status="running",
+        path=db_path,
+    )
+    analysis_db.mark_provider_running(failed_id, provider_name="compatible", provider_label="GLM:glm-4.7-flash", path=db_path)
+    analysis_db.save_provider_error(failed_id, "Provider 调用失败：timeout", provider_elapsed_ms=60000, path=db_path)
+    analysis_db.mark_provider_running(running_id, provider_name="compatible", provider_label="GLM:glm-4.7-flash", path=db_path)
+
+    stats = analysis_db.query_provider_call_stats(path=db_path)
+    providers = {row["provider_name"]: row for row in stats["providers"]}
+
+    assert stats["total_calls"] == 3
+    assert stats["success_count"] == 1
+    assert stats["failure_count"] == 1
+    assert stats["running_count"] == 1
+    assert providers["gemini"]["success_count"] == 1
+    assert providers["gemini"]["p50_elapsed_seconds"] == 10.0
+    assert providers["compatible"]["calls"] == 2
+    assert providers["compatible"]["failure_count"] == 1
+    assert providers["compatible"]["running_count"] == 1
+    assert "timeout" in providers["compatible"]["recent_error"]
+
+
 def test_analysis_db_init_creates_tables(tmp_path):
     db_path = tmp_path / "analysis.sqlite3"
 
@@ -1384,7 +1478,11 @@ def test_analyze_templates_expose_provider_run_controls():
     assert "这里不是 Prompt 输入框" in run_template
     assert "provider_estimate_seconds" in run_template
     assert "running-elapsed" in run_template
+    assert "delete_error" in run_template
+    assert "run.status == 'draft'" in run_template
     assert "window.location.reload" in run_template
+    assert 'select name="status"' in history_template
+    assert "analysis_status_options" in history_template
     assert "provider_elapsed_ms" in history_template
     assert "provider_started_at" in history_template
     assert "provider_display_label(run)" in history_template
@@ -1439,6 +1537,8 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "状态参考起点" in system_template
     assert "unknown_timeout_confirmed" in system_template
     assert "unknown_timeout_unconfirmed" in system_template
+    assert "Provider 调用统计" in system_template
+    assert "provider_call_stats" in system_template
     assert "parts.hour - 8" in item_template
     assert "Number(time) + 8 * 3600" in item_template
     assert "缺失证据来自各次模型原始输出" in compare_template

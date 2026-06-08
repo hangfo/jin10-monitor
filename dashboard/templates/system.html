@@ -431,4 +431,50 @@
       </tbody>
     </table>
   </div>
+
+  <div class="panel system-detail" style="margin-top:14px">
+    <h2 style="margin-top:0">Provider 调用统计</h2>
+    <div class="meta" style="margin-bottom:10px">
+      最近 {{ provider_call_stats.hours or 24 }}h：调用 {{ provider_call_stats.total_calls or 0 }} · 成功 {{ provider_call_stats.success_count or 0 }} · 失败 {{ provider_call_stats.failure_count or 0 }} · 调用中 {{ provider_call_stats.running_count or 0 }}。仅统计独立分析库，不代表官方账单。
+    </div>
+    {% if provider_call_stats.providers %}
+    <table style="min-width:0">
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>调用</th>
+          <th>成功 / 失败 / 调用中</th>
+          <th>P50 / 平均 / 最大</th>
+          <th>最近错误</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for provider in provider_call_stats.providers %}
+        <tr>
+          <th>{{ provider.model_label or provider.provider_name }}</th>
+          <td>{{ provider.calls }}</td>
+          <td>{{ provider.success_count }} / {{ provider.failure_count }} / {{ provider.running_count }}</td>
+          <td>
+            {% if provider.p50_elapsed_seconds %}
+            {{ provider.p50_elapsed_seconds }}s / {{ provider.avg_elapsed_seconds }}s / {{ provider.max_elapsed_seconds }}s
+            {% else %}
+            —
+            {% endif %}
+          </td>
+          <td class="meta">
+            {% if provider.recent_error %}
+            {{ provider.recent_error[:120] }}{% if provider.recent_error|length > 120 %}...{% endif %}
+            {% if provider.recent_error_at %}<span class="mono"> · {{ provider.recent_error_at[:16] }}</span>{% endif %}
+            {% else %}
+            —
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">最近没有 Provider 调用记录。</div>
+    {% endif %}
+  </div>
 {% endblock %}

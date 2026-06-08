@@ -66,6 +66,14 @@
         {% endfor %}
       </select>
     </div>
+    <div class="filter-group">
+      <span class="filter-label">状态筛选</span>
+      <select name="status">
+        {% for value, label in analysis_status_options %}
+        <option value="{{ value }}"{{ ' selected' if value == status_filter }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
     <button type="submit">筛选</button>
     <a class="button-link secondary" href="/analyze/history">重置</a>
   </form>
@@ -163,6 +171,6 @@
     }
   </script>
   {% else %}
-  <div class="card"><div class="empty">暂无分析记录{% if asset_filter %}（标的：{{ asset_filter }}）{% endif %}。</div></div>
+  <div class="card"><div class="empty">暂无分析记录{% if asset_filter %}（标的：{{ asset_filter }}）{% endif %}{% if status_filter and status_filter != 'all' %}（状态：{{ status_filter_label }}）{% endif %}。</div></div>
   {% endif %}
 {% endblock %}

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -477,6 +477,7 @@ def get_run(run_id: str, path: Optional[Path] = None) -> Optional[dict[str, Any]
 def list_runs(
     *,
     asset: str = "",
+    status_filter: str = "all",
     limit: int = 50,
     path: Optional[Path] = None,
 ) -> list[dict[str, Any]]:
@@ -486,6 +487,14 @@ def list_runs(
     if asset:
         clauses.append("asset = ?")
         params.append(asset)
+    order_by = "created_at DESC"
+    if status_filter in {"draft", "running", "done"}:
+        clauses.append("status = ?")
+        params.append(status_filter)
+    elif status_filter == "recent_failed":
+        clauses.append("status = 'draft'")
+        clauses.append("provider_error <> ''")
+        order_by = "COALESCE(NULLIF(provider_error_at, ''), updated_at, created_at) DESC"
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     params.append(safe_limit)
     with open_analysis_db(path) as conn:
@@ -498,7 +507,7 @@ def list_runs(
                    created_at, updated_at
             FROM analysis_runs
             {where}
-            ORDER BY created_at DESC
+            ORDER BY {order_by}
             LIMIT ?
             """,
             params,
@@ -529,10 +538,143 @@ def get_runs_for_compare(run_ids: list[str], path: Optional[Path] = None) -> lis
     return [runs_by_id[run_id] for run_id in clean_ids if run_id in runs_by_id]
 
 
-def delete_run(run_id: str, path: Optional[Path] = None) -> None:
+def delete_run(
+    run_id: str,
+    *,
+    allowed_statuses: Optional[tuple[str, ...]] = None,
+    path: Optional[Path] = None,
+) -> bool:
     with open_analysis_db(path) as conn:
-        conn.execute("DELETE FROM analysis_runs WHERE id = ?", (run_id,))
+        params: list[Any] = [run_id]
+        status_clause = ""
+        if allowed_statuses is not None:
+            clean_statuses = tuple(str(status or "").strip() for status in allowed_statuses if str(status or "").strip())
+            if not clean_statuses:
+                return False
+            placeholders = ",".join("?" for _ in clean_statuses)
+            status_clause = f" AND status IN ({placeholders})"
+            params.extend(clean_statuses)
+        cursor = conn.execute(f"DELETE FROM analysis_runs WHERE id = ?{status_clause}", params)
         conn.commit()
+    return cursor.rowcount == 1
+
+
+def _empty_provider_call_stats(hours: int) -> dict[str, Any]:
+    return {
+        "hours": hours,
+        "total_calls": 0,
+        "success_count": 0,
+        "failure_count": 0,
+        "running_count": 0,
+        "providers": [],
+    }
+
+
+def _seconds(value: int) -> float:
+    return round(max(0, int(value or 0)) / 1000, 1)
+
+
+def query_provider_call_stats(*, hours: int = 24, path: Optional[Path] = None) -> dict[str, Any]:
+    safe_hours = max(1, min(int(hours or 24), 168))
+    db_path = analysis_db_path(path)
+    if not db_path.exists():
+        return _empty_provider_call_stats(safe_hours)
+    since = (datetime.now() - timedelta(hours=safe_hours)).strftime("%Y-%m-%d %H:%M:%S")
+    conn: Optional[sqlite3.Connection] = None
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, status, provider_name, model_label, provider_started_at,
+                   provider_error, provider_error_at, provider_elapsed_ms,
+                   created_at, updated_at
+            FROM analysis_runs
+            WHERE provider_name <> ''
+              AND (
+                provider_started_at >= ?
+                OR provider_error_at >= ?
+                OR updated_at >= ?
+              )
+            ORDER BY COALESCE(NULLIF(provider_error_at, ''), NULLIF(updated_at, ''), NULLIF(provider_started_at, ''), created_at) DESC
+            """,
+            (since, since, since),
+        ).fetchall()
+    except sqlite3.Error:
+        return _empty_provider_call_stats(safe_hours)
+    finally:
+        if conn is not None:
+            conn.close()
+
+    providers: dict[str, dict[str, Any]] = {}
+    total_calls = 0
+    success_count = 0
+    failure_count = 0
+    running_count = 0
+    for row in rows:
+        provider_name = str(row["provider_name"] or "").strip()
+        if not provider_name:
+            continue
+        total_calls += 1
+        status = str(row["status"] or "")
+        provider = providers.setdefault(
+            provider_name,
+            {
+                "provider_name": provider_name,
+                "model_label": str(row["model_label"] or provider_name),
+                "calls": 0,
+                "success_count": 0,
+                "failure_count": 0,
+                "running_count": 0,
+                "elapsed_values": [],
+                "last_started_at": "",
+                "recent_error": "",
+                "recent_error_at": "",
+            },
+        )
+        provider["calls"] += 1
+        if row["model_label"]:
+            provider["model_label"] = str(row["model_label"])
+        if row["provider_started_at"] and not provider["last_started_at"]:
+            provider["last_started_at"] = str(row["provider_started_at"])
+        if status == "done":
+            success_count += 1
+            provider["success_count"] += 1
+        elif status == "running":
+            running_count += 1
+            provider["running_count"] += 1
+        elif row["provider_error"]:
+            failure_count += 1
+            provider["failure_count"] += 1
+            if not provider["recent_error"]:
+                provider["recent_error"] = str(row["provider_error"])
+                provider["recent_error_at"] = str(row["provider_error_at"] or row["updated_at"] or "")
+        elapsed = int(row["provider_elapsed_ms"] or 0)
+        if elapsed > 0:
+            provider["elapsed_values"].append(elapsed)
+
+    provider_rows = []
+    for provider in providers.values():
+        elapsed_values = sorted(provider.pop("elapsed_values"))
+        if elapsed_values:
+            provider["avg_elapsed_seconds"] = _seconds(sum(elapsed_values) // len(elapsed_values))
+            provider["p50_elapsed_seconds"] = _seconds(elapsed_values[len(elapsed_values) // 2])
+            provider["max_elapsed_seconds"] = _seconds(max(elapsed_values))
+        else:
+            provider["avg_elapsed_seconds"] = 0
+            provider["p50_elapsed_seconds"] = 0
+            provider["max_elapsed_seconds"] = 0
+        provider_rows.append(provider)
+
+    provider_rows.sort(key=lambda item: (-int(item["calls"]), str(item["provider_name"])))
+    return {
+        "hours": safe_hours,
+        "total_calls": total_calls,
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "running_count": running_count,
+        "providers": provider_rows,
+    }
 
 
 def save_screenshot(
