@@ -97,6 +97,7 @@ def test_binance_adapter_fetches_and_normalizes_klines(monkeypatch):
     )
 
     assert len(klines) == 1
+    assert klines[0].open_time == "2024-06-01 20:00:00"
     assert klines[0].open == 67000.1
     assert klines[0].close == 67050.4
     assert captured[0][1] == 2.5
@@ -252,6 +253,7 @@ def test_parse_binance_klines_rejects_malformed_payload():
 def test_parse_market_datetime_accepts_iso_and_local_forms():
     assert parse_market_datetime("2024-06-01 20:00:00", label="start") == datetime(2024, 6, 1, 20, 0, 0)
     assert parse_market_datetime("2024-06-01T20:00:00", label="start") == datetime(2024, 6, 1, 20, 0, 0)
+    assert parse_market_datetime("2024-06-01T12:00:00+00:00", label="start") == datetime(2024, 6, 1, 20, 0, 0)
 
 
 def test_market_klines_api_degrades_when_unconfigured(monkeypatch):

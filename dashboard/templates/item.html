@@ -392,17 +392,17 @@
     function parseMarketTime(value) {
       const parts = parseBeijingParts(value);
       if (!parts) return null;
-      return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) / 1000);
+      return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour - 8, parts.minute, parts.second) / 1000);
     }
 
     function formatBeijingChartTime(time) {
-      const date = new Date(Number(time) * 1000);
+      const date = new Date((Number(time) + 8 * 3600) * 1000);
       const pad = (value) => String(value).padStart(2, "0");
       return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
     }
 
     function formatBeijingTickTime(time) {
-      const date = new Date(Number(time) * 1000);
+      const date = new Date((Number(time) + 8 * 3600) * 1000);
       const pad = (value) => String(value).padStart(2, "0");
       return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
     }

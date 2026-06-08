@@ -89,6 +89,36 @@
   .provider-form.submitting button[type="submit"] {
     opacity: 0.72;
   }
+  .draft-actions {
+    background: var(--bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    color: var(--text);
+    line-height: 1.6;
+    margin: 0 0 12px;
+    padding: 10px 12px;
+  }
+  .draft-actions strong {
+    color: var(--fail-fg);
+  }
+  .manual-answer-box,
+  .prompt-preview-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+    padding: 10px;
+    resize: vertical;
+    width: 100%;
+  }
+  .manual-answer-box::placeholder {
+    color: var(--dim);
+  }
+  .prompt-preview-box {
+    font: 13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    min-height: 260px;
+  }
   .run-overview {
     display: grid;
     gap: 10px;
@@ -192,7 +222,7 @@
     Provider 已保存：{{ provider_success }}
   </div>
   {% endif %}
-  {% if provider_started %}
+  {% if provider_started and run.status == 'running' %}
   <div class="panel" style="background:var(--warn-bg);margin-bottom:12px;color:var(--warn-fg)">
     Provider 已开始后台调用：{{ provider_started }}。可刷新本页或回到历史页查看完成/失败状态。
   </div>
@@ -214,32 +244,51 @@
       <div class="card card-body" style="margin-bottom:16px">
         <h2 style="margin-top:0">{{ 'Provider 调用中' if run.status == 'running' else '草稿记录：调用 Provider 或粘贴回答' }}</h2>
         {% if run.status == 'running' %}
-        <p class="muted">后台任务正在执行，开始时间 {{ (run.provider_started_at or '')[:16] }}，Provider：{{ provider_display_label(run) }}。</p>
+        {% set wait_seconds = running_wait_seconds(run) %}
+        <p id="running-notice" class="muted">
+          后台任务正在执行，开始时间 {{ (run.provider_started_at or '')[:16] }}，Provider：{{ provider_display_label(run) }}。
+          已等待 <span id="running-elapsed">{{ wait_seconds }}</span>s。
+          {% if provider_estimate_seconds %}
+          预计约 {{ "%.0f"|format(provider_estimate_seconds) }}s 完成（基于最近同 Provider 记录）。
+          {% else %}
+          暂无历史耗时估算，GLM 可能需要 30-120s。
+          {% endif %}
+        </p>
         <a class="button-link secondary" href="/analyze/{{ run.id }}?provider={{ selected_provider }}">刷新状态</a>
         {% else %}
+        {% if visible_provider_error %}
+        <div class="draft-actions">
+          <strong>上次 Provider 调用失败，草稿已保留。</strong>
+          这通常是供应商限流、超时或返回为空；不需要回退浏览器。可以在下方切换到 Gemini 后重新调用并保存，也可以复制 Prompt 到外部模型分析后，把严格 JSON 回答粘贴到文本框再保存。
+        </div>
+        {% endif %}
         {% if run.manual_prompt %}
         <div style="align-items:center;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
           <button type="button" onclick="copyDraftPrompt()">复制 Prompt</button>
           <span id="draft-copy-ok" class="muted" style="display:none">已复制</span>
           <span class="muted">复制后可在 ChatGPT Plus 手动分析，再把 JSON 回答粘贴到下方。</span>
         </div>
+        {% else %}
+        <div class="draft-actions">
+          未找到已保存 Prompt；点击 Provider 重试时会尝试用当前问题、时间窗口和证据列表重新生成 Prompt。若仍失败，请使用右上角“重新分析”重建草稿。
+        </div>
         {% endif %}
         {% set available_providers = provider_statuses | selectattr('available') | list %}
-        {% if available_providers and run.manual_prompt %}
+        {% if available_providers and (run.manual_prompt or run.evidence_packet) %}
         <form class="provider-form" method="post" action="/analyze/{{ run.id }}/run-provider" style="align-items:center;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
           <select name="provider">
             {% for provider in available_providers %}
             <option value="{{ provider.key }}"{{ ' selected' if selected_provider == provider.key else '' }}>{{ provider.label }}</option>
             {% endfor %}
           </select>
-          <button type="submit">调用并保存</button>
+          <button type="submit">{{ '换 Provider 重试并保存' if visible_provider_error else '调用并保存' }}</button>
           <span class="call-status" aria-live="polite"></span>
         </form>
         {% endif %}
         <form method="post" action="/analyze/save-answer">
           <input type="hidden" name="run_id" value="{{ run.id }}">
           <input type="hidden" name="manual_prompt" value="{{ run.manual_prompt }}">
-          <textarea name="answer_text" rows="9" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font:inherit;resize:vertical">{{ run.answer_text }}</textarea>
+          <textarea class="manual-answer-box" name="answer_text" rows="9" placeholder="这里不是 Prompt 输入框。请粘贴模型返回的严格 JSON 回答；如果要直接换 Gemini/GLM 跑，请使用上方 Provider 下拉框和按钮。">{{ run.answer_text }}</textarea>
           <button type="submit" style="margin-top:10px">保存分析记录</button>
         </form>
         {% endif %}
@@ -280,7 +329,7 @@
       {% if run.manual_prompt %}
       <details style="margin-top:10px">
         <summary>查看 / 复制发送的 Prompt</summary>
-        <textarea id="draft-prompt-text" readonly style="width:100%;min-height:260px;padding:10px;border:1px solid var(--border);border-radius:6px;font:13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;resize:vertical">{{ run.manual_prompt }}</textarea>
+        <textarea id="draft-prompt-text" class="prompt-preview-box" readonly>{{ run.manual_prompt }}</textarea>
       </details>
       {% endif %}
     </aside>
@@ -313,5 +362,28 @@
         }
       });
     });
+
+    {% if run and run.status == 'running' %}
+    (function () {
+      const startedAt = "{{ run.provider_started_at }}";
+      const startedMs = startedAt ? new Date(startedAt.replace(" ", "T")).getTime() : 0;
+      const elapsedNode = document.getElementById("running-elapsed");
+      const noticeNode = document.getElementById("running-notice");
+      function elapsedSeconds() {
+        return startedMs ? Math.max(0, Math.floor((Date.now() - startedMs) / 1000)) : 0;
+      }
+      function updateElapsed() {
+        const elapsed = elapsedSeconds();
+        if (elapsedNode) elapsedNode.textContent = String(elapsed);
+        if (noticeNode && elapsed > 180 && !noticeNode.dataset.longWait) {
+          noticeNode.dataset.longWait = "1";
+          noticeNode.textContent += " 调用已超过 180s，可能是 Provider 排队或服务重启中断；可手动刷新确认状态。";
+        }
+      }
+      updateElapsed();
+      setInterval(updateElapsed, 1000);
+      setTimeout(() => { window.location.reload(); }, 6000);
+    })();
+    {% endif %}
   </script>
 {% endblock %}

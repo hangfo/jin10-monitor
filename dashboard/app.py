@@ -8,7 +8,8 @@ import logging
 import os
 import re
 import time
-from datetime import timedelta
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode
 
@@ -27,7 +28,10 @@ from .analysis_db import (
     init_analysis_db,
     list_runs,
     mark_provider_running,
+    estimate_provider_completion_seconds,
+    reset_stale_running_runs,
     save_answer,
+    save_manual_prompt,
     save_provider_error,
     save_screenshot,
 )
@@ -155,11 +159,27 @@ def provider_raw_preview(raw_text: str, *, limit: int = 700) -> str:
     return f"{text[:limit]}..."
 
 
+def ensure_run_manual_prompt(run: dict[str, object]) -> str:
+    prompt = str(run.get("manual_prompt") or "").strip()
+    if prompt:
+        return prompt
+    rebuilt = generate_prompt(
+        question=str(run.get("question") or ""),
+        asset=str(run.get("asset") or ""),
+        window_start=str(run.get("window_start") or ""),
+        window_end=str(run.get("window_end") or ""),
+        evidence=[item for item in (run.get("evidence_packet") or []) if isinstance(item, dict)],
+        user_context=str(run.get("user_context") or ""),
+    ).strip()
+    if rebuilt:
+        save_manual_prompt(str(run.get("id") or ""), rebuilt)
+    return rebuilt
+
+
 def provider_system_prompt(provider_name: str, provider_label: str = "") -> str:
     base_prompt = "请严格执行用户 Prompt 中的系统指令，输出严格 JSON，不要添加前言或 Markdown 代码块。"
     provider_key = str(provider_name or "").strip().lower()
-    label = str(provider_label or "").strip().lower()
-    if provider_key in {"compatible", "glm"} and "glm" in label:
+    if provider_key in {"compatible", "glm"} and is_glm_provider(provider_label):
         return (
             base_prompt
             + "\n\nGLM 专用补充约束："
@@ -171,12 +191,17 @@ def provider_system_prompt(provider_name: str, provider_label: str = "") -> str:
     return base_prompt
 
 
+def is_glm_provider(model_label: object) -> bool:
+    label = str(model_label or "").strip().lower()
+    return "glm" in label or "zhipu" in label
+
+
 def provider_review_warning(run: dict[str, object]) -> str:
     parsed = run.get("answer_parsed") if isinstance(run.get("answer_parsed"), dict) else {}
     if isinstance(parsed, dict) and parsed.get("local_review_applied"):
         return "本地复核已调整：单条低相关、非标的直接证据不足以支撑 news_driven 高置信判断。"
     model_label = str(run.get("model_label") or "").lower()
-    if "glm:" not in model_label:
+    if not is_glm_provider(model_label):
         return ""
     judgement = str(run.get("judgement") or "")
     confidence = float(run.get("overall_confidence") or 0)
@@ -315,6 +340,13 @@ def provider_display_label(run: dict[str, object]) -> str:
     return "待调用 / 待回填"
 
 
+def running_wait_seconds(run: dict[str, object]) -> int:
+    started = parse_history_datetime(str(run.get("provider_started_at") or ""))
+    if not started:
+        return 0
+    return max(0, int((datetime.now() - started).total_seconds()))
+
+
 async def execute_provider_run(run_id: str, provider_name: str, manual_prompt: str) -> None:
     provider = get_provider(provider_name)
     if not provider:
@@ -341,7 +373,7 @@ async def execute_provider_run(run_id: str, provider_name: str, manual_prompt: s
             return
         run = get_run(run_id) or {}
         parsed = apply_local_evidence_guard(parsed, run)
-        save_answer(
+        saved = save_answer(
             run_id=run_id,
             answer_text=result.text,
             manual_prompt=manual_prompt,
@@ -350,7 +382,10 @@ async def execute_provider_run(run_id: str, provider_name: str, manual_prompt: s
             judgement=str(parsed.get("judgement") or "unclear"),
             overall_confidence=float(parsed.get("overall_confidence") or 0),
             provider_elapsed_ms=provider_elapsed_ms,
+            expected_status="running",
         )
+        if not saved:
+            log.warning("Provider result skipped for %s because status changed before completion", run_id)
     except ProviderError as exc:
         provider_elapsed_ms = int((time.monotonic() - start_time) * 1000)
         save_provider_error(
@@ -566,7 +601,15 @@ def build_market_context_for_prompt(
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Jin10 Monitor Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        init_analysis_db()
+        stale_count = reset_stale_running_runs()
+        if stale_count:
+            log.warning("重置了 %d 个 running 孤儿记录为 draft（服务重启中断）", stale_count)
+        yield
+
+    app = FastAPI(title="Jin10 Monitor Dashboard", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     templates.env.globals["compact_text"] = compact_text
     templates.env.globals["priority_class"] = priority_class
@@ -578,6 +621,7 @@ def create_app() -> FastAPI:
     templates.env.globals["analysis_status_label"] = analysis_status_label
     templates.env.globals["analysis_status_class"] = analysis_status_class
     templates.env.globals["provider_display_label"] = provider_display_label
+    templates.env.globals["running_wait_seconds"] = running_wait_seconds
 
     @app.get("/")
     async def index(request: Request):
@@ -869,7 +913,7 @@ def create_app() -> FastAPI:
         parsed = parse_answer(answer_text)
         run = get_run(run_id) or {}
         parsed = apply_local_evidence_guard(parsed, run)
-        save_answer(
+        saved = save_answer(
             run_id=run_id,
             answer_text=answer_text,
             manual_prompt=manual_prompt,
@@ -877,7 +921,11 @@ def create_app() -> FastAPI:
             answer_json=parsed,
             judgement=str(parsed.get("judgement") or "unclear"),
             overall_confidence=float(parsed.get("overall_confidence") or 0),
+            provider_name="",
+            expected_status="draft",
         )
+        if not saved:
+            return provider_error_redirect(run_id, "保存失败：这条分析不是草稿状态，可能正在调用或已经完成。")
         return RedirectResponse(f"/analyze/{run_id}", status_code=303)
 
     @app.get("/analyze/compare")
@@ -922,6 +970,11 @@ def create_app() -> FastAPI:
         if run and run.get("answer_parsed"):
             answer_html = render_answer_with_links(run["answer_parsed"])
         review_warning = provider_review_warning(run) if run else ""
+        provider_estimate_seconds = (
+            estimate_provider_completion_seconds(str(run.get("provider_name") or ""))
+            if run and str(run.get("status") or "") == "running"
+            else None
+        )
         return templates.TemplateResponse(
             request,
             "analyze_run.html",
@@ -935,6 +988,7 @@ def create_app() -> FastAPI:
                 "provider_error": str(request.query_params.get("provider_error", "") or ""),
                 "provider_success": str(request.query_params.get("provider_success", "") or ""),
                 "provider_started": str(request.query_params.get("provider_started", "") or ""),
+                "provider_estimate_seconds": provider_estimate_seconds,
                 "selected_provider": str(request.query_params.get("provider", "") or ""),
                 "nav": query_nav_summary(),
             },
@@ -956,11 +1010,11 @@ def create_app() -> FastAPI:
                 ),
                 provider_name=provider_name,
             )
-        manual_prompt = str(run.get("manual_prompt") or "").strip()
+        manual_prompt = ensure_run_manual_prompt(run)
         if not manual_prompt:
             return save_and_redirect_provider_error(
                 run_id,
-                format_provider_error("manual prompt is empty"),
+                format_provider_error("manual prompt is empty; please recreate the analysis draft"),
                 provider_name=provider_name,
             )
         provider = get_provider(provider_name)

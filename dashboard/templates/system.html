@@ -188,7 +188,7 @@
     <div class="ops-lane {{ lane.status }}">
       <div class="ops-lane-head">
         <div class="ops-lane-title">{{ lane.label }}</div>
-        <span class="pill {{ 'sent' if lane.status == 'ok' else ('failed' if lane.status == 'error' else ('none' if lane.status == 'idle' else 'unknown_timeout')) }}">{{ lane.badge }}</span>
+        <span class="pill {{ 'sent' if lane.status in ['ok', 'info'] else ('failed' if lane.status == 'error' else ('none' if lane.status == 'idle' else 'unknown_timeout')) }}">{{ lane.badge }}</span>
       </div>
       <div class="ops-lane-main">{{ lane.headline }}</div>
       <div class="ops-lane-detail">{{ lane.detail }}</div>

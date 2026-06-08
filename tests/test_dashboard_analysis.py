@@ -12,6 +12,7 @@ from dashboard.app import (
     apply_local_evidence_guard,
     analysis_status_label,
     format_provider_error,
+    is_glm_provider,
     market_context_default_enabled,
     provider_error_redirect,
     provider_raw_preview,
@@ -387,6 +388,126 @@ def test_provider_error_returns_running_run_to_draft(tmp_path):
     assert run["status"] == "draft"
     assert "timeout" in run["provider_error"]
     assert run["provider_elapsed_ms"] == 42000
+
+
+def test_reset_stale_running_runs_recovers_interrupted_background_task(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    run_id = analysis_db.create_run(
+        "Question",
+        "ETH",
+        "2026-05-23 09:00:00",
+        "2026-05-23 10:00:00",
+        [],
+        path=db_path,
+    )
+    analysis_db.mark_provider_running(run_id, provider_name="compatible", path=db_path)
+
+    count = analysis_db.reset_stale_running_runs(path=db_path)
+    run = analysis_db.get_run(run_id, path=db_path)
+
+    assert count == 1
+    assert run["status"] == "draft"
+    assert "服务重启" in run["provider_error"]
+    assert run["provider_error_at"]
+
+
+def test_save_manual_prompt_only_updates_draft_runs(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    run_id = analysis_db.create_run(
+        "Question",
+        "ETH",
+        "2026-05-23 09:00:00",
+        "2026-05-23 10:00:00",
+        [],
+        path=db_path,
+    )
+
+    assert analysis_db.save_manual_prompt(run_id, "rebuilt prompt", path=db_path) is True
+    assert analysis_db.get_run(run_id, path=db_path)["manual_prompt"] == "rebuilt prompt"
+
+    analysis_db.mark_provider_running(run_id, provider_name="compatible", path=db_path)
+    analysis_db.save_answer(
+        run_id,
+        "provider answer",
+        manual_prompt="rebuilt prompt",
+        answer_json={"judgement": "unclear"},
+        judgement="unclear",
+        expected_status="running",
+        path=db_path,
+    )
+
+    assert analysis_db.save_manual_prompt(run_id, "late prompt", path=db_path) is False
+    assert analysis_db.get_run(run_id, path=db_path)["manual_prompt"] == "rebuilt prompt"
+
+
+def test_save_answer_respects_expected_status(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    run_id = analysis_db.create_run(
+        "Question",
+        "ETH",
+        "2026-05-23 09:00:00",
+        "2026-05-23 10:00:00",
+        [],
+        path=db_path,
+    )
+    analysis_db.mark_provider_running(run_id, provider_name="compatible", path=db_path)
+
+    assert (
+        analysis_db.save_answer(
+            run_id,
+            "manual answer",
+            answer_json={"judgement": "unclear"},
+            judgement="unclear",
+            expected_status="draft",
+            path=db_path,
+        )
+        is False
+    )
+    assert analysis_db.get_run(run_id, path=db_path)["status"] == "running"
+
+    assert (
+        analysis_db.save_answer(
+            run_id,
+            "provider answer",
+            answer_json={"judgement": "unclear"},
+            judgement="unclear",
+            expected_status="running",
+            path=db_path,
+        )
+        is True
+    )
+    run = analysis_db.get_run(run_id, path=db_path)
+    assert run["status"] == "done"
+    assert run["answer_text"] == "provider answer"
+
+
+def test_estimate_provider_completion_seconds_uses_recent_p50(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    for elapsed in [74000, 15000, 58000]:
+        run_id = analysis_db.create_run(
+            "Question",
+            "ETH",
+            "2026-05-23 09:00:00",
+            "2026-05-23 10:00:00",
+            [],
+            path=db_path,
+        )
+        analysis_db.mark_provider_running(run_id, provider_name="compatible", path=db_path)
+        analysis_db.save_answer(
+            run_id,
+            "answer",
+            answer_json={"judgement": "unclear"},
+            judgement="unclear",
+            provider_elapsed_ms=elapsed,
+            expected_status="running",
+            path=db_path,
+        )
+
+    assert analysis_db.estimate_provider_completion_seconds("compatible", path=db_path) == 58.0
 
 
 def test_list_runs_includes_model_label(tmp_path):
@@ -889,6 +1010,9 @@ def test_provider_system_prompt_adds_glm_only_constraints():
     assert "GLM 专用补充约束" in glm_prompt
     assert "必须使用中文" in glm_prompt
     assert "单条 indirect/mixed 证据不得给出 news_driven" in glm_prompt
+    assert is_glm_provider("glm-4.7-flash") is True
+    assert is_glm_provider("zhipu-compatible") is True
+    assert is_glm_provider("gemini:gemini-2.5-flash") is False
 
 
 def test_provider_review_warning_flags_glm_over_attribution_only():
@@ -1142,7 +1266,12 @@ def test_provider_adapters_parse_successful_responses(monkeypatch):
                 "candidates": [
                     {
                         "finishReason": "STOP",
-                        "content": {"parts": [{"text": '{"judgement":"macro_sentiment"}'}]},
+                        "content": {
+                            "parts": [
+                                {"thought": True, "text": '{"judgement":"news_driven"}'},
+                                {"text": '{"judgement":"macro_sentiment"}'},
+                            ]
+                        },
                     }
                 ],
                 "usageMetadata": {"promptTokenCount": 13, "candidatesTokenCount": 5},
@@ -1164,6 +1293,7 @@ def test_provider_adapters_parse_successful_responses(monkeypatch):
     assert anthropic.text == '{"judgement":"news_driven"}'
     assert anthropic.model_label == "anthropic:claude-test"
     assert anthropic.input_tokens == 11
+    assert gemini.text == '{"judgement":"macro_sentiment"}'
     assert gemini.model_label == "gemini:gemini-2.5-flash"
     assert gemini.output_tokens == 5
     assert compatible.model_label == "compatible:deepseek-test"
@@ -1244,8 +1374,17 @@ def test_analyze_templates_expose_provider_run_controls():
     assert "provider_started_at" in run_template
     assert "provider_display_label(run)" in run_template
     assert "analysis_status_label(run.status)" in run_template
+    assert "provider_started and run.status == 'running'" in run_template
     assert "Provider 调用中" in run_template
     assert "后台调用" in run_template
+    assert "上次 Provider 调用失败，草稿已保留。" in run_template
+    assert "换 Provider 重试并保存" in run_template
+    assert "未找到已保存 Prompt" in run_template
+    assert "manual-answer-box" in run_template
+    assert "这里不是 Prompt 输入框" in run_template
+    assert "provider_estimate_seconds" in run_template
+    assert "running-elapsed" in run_template
+    assert "window.location.reload" in run_template
     assert "provider_elapsed_ms" in history_template
     assert "provider_started_at" in history_template
     assert "provider_display_label(run)" in history_template
@@ -1266,6 +1405,8 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     history_template = (TEMPLATE_DIR / "analyze_history.html").read_text()
     compare_template = (TEMPLATE_DIR / "analyze_compare.html").read_text()
     run_template = (TEMPLATE_DIR / "analyze_run.html").read_text()
+    system_template = (TEMPLATE_DIR / "system.html").read_text()
+    item_template = (TEMPLATE_DIR / "item.html").read_text()
 
     assert "assetToSymbol" in analyze_template
     assert "ETHUSDT" in analyze_template
@@ -1294,6 +1435,9 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "compare-top-btn" in history_template
     assert "topButton.disabled = ids.length !== 2" in history_template
     assert "model_label" in compare_template
+    assert "lane.status in ['ok', 'info']" in system_template
+    assert "parts.hour - 8" in item_template
+    assert "Number(time) + 8 * 3600" in item_template
     assert "缺失证据来自各次模型原始输出" in compare_template
     assert "run-overview" in run_template
     assert "answer-summary::before" in run_template

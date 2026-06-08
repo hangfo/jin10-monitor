@@ -232,6 +232,24 @@ def save_provider_error(
         conn.commit()
 
 
+def save_manual_prompt(run_id: str, manual_prompt: str, *, path: Optional[Path] = None) -> bool:
+    prompt = str(manual_prompt or "").strip()
+    if not prompt:
+        return False
+    updated_at = now_text()
+    with open_analysis_db(path) as conn:
+        cursor = conn.execute(
+            """
+            UPDATE analysis_runs
+            SET manual_prompt = ?, updated_at = ?
+            WHERE id = ? AND status = 'draft'
+            """,
+            (prompt, updated_at, run_id),
+        )
+        conn.commit()
+    return cursor.rowcount == 1
+
+
 def mark_provider_running(
     run_id: str,
     *,
@@ -266,6 +284,47 @@ def mark_provider_running(
     return cursor.rowcount == 1
 
 
+def reset_stale_running_runs(path: Optional[Path] = None) -> int:
+    updated_at = now_text()
+    with open_analysis_db(path) as conn:
+        cursor = conn.execute(
+            """
+            UPDATE analysis_runs
+            SET status = 'draft',
+                provider_error = ?,
+                provider_error_at = ?,
+                updated_at = ?
+            WHERE status = 'running'
+            """,
+            ("服务重启，后台任务已中断，可重新调用。", updated_at, updated_at),
+        )
+        conn.commit()
+    return cursor.rowcount
+
+
+def estimate_provider_completion_seconds(provider_name: str, *, path: Optional[Path] = None) -> Optional[float]:
+    provider = str(provider_name or "").strip()
+    if not provider:
+        return None
+    with open_analysis_db(path) as conn:
+        rows = conn.execute(
+            """
+            SELECT provider_elapsed_ms
+            FROM analysis_runs
+            WHERE provider_name = ?
+              AND status = 'done'
+              AND provider_elapsed_ms > 0
+            ORDER BY created_at DESC
+            LIMIT 10
+            """,
+            (provider,),
+        ).fetchall()
+    if not rows:
+        return None
+    values = sorted(int(row["provider_elapsed_ms"] or 0) for row in rows)
+    return values[len(values) // 2] / 1000
+
+
 def save_answer(
     run_id: str,
     answer_text: str,
@@ -277,12 +336,20 @@ def save_answer(
     overall_confidence: float = 0,
     evidence_selections: Optional[dict[str, bool]] = None,
     provider_elapsed_ms: int = 0,
+    provider_name: Optional[str] = None,
+    expected_status: str = "draft",
     path: Optional[Path] = None,
-) -> None:
+) -> bool:
     answer_json = answer_json or {}
     updated_at = now_text()
     selected_count: Optional[int] = None
     with open_analysis_db(path) as conn:
+        expected = str(expected_status or "").strip()
+        if expected:
+            row = conn.execute("SELECT status FROM analysis_runs WHERE id = ?", (run_id,)).fetchone()
+            if not row or str(row["status"] or "") != expected:
+                return False
+
         if evidence_selections is not None:
             for news_id, selected in evidence_selections.items():
                 conn.execute(
@@ -327,7 +394,6 @@ def save_answer(
             "answer_json = ?",
             "manual_prompt = ?",
             "model_label = ?",
-            "provider_name = ?",
             "provider_error = ?",
             "provider_error_at = ?",
             "provider_elapsed_ms = ?",
@@ -341,7 +407,6 @@ def save_answer(
             json.dumps(answer_json, ensure_ascii=False),
             manual_prompt,
             model_label or "manual_chatgpt_business",
-            model_label or "",
             "",
             "",
             max(0, int(provider_elapsed_ms or 0)),
@@ -350,15 +415,23 @@ def save_answer(
             "done",
             updated_at,
         ]
+        if provider_name is not None:
+            assignments.append("provider_name = ?")
+            params.append(str(provider_name or "")[:120])
         if selected_count is not None:
             assignments.append("selected_count = ?")
             params.append(selected_count)
         params.append(run_id)
-        conn.execute(
-            f"UPDATE analysis_runs SET {', '.join(assignments)} WHERE id = ?",
+        where = "WHERE id = ?"
+        if expected:
+            where += " AND status = ?"
+            params.append(expected)
+        cursor = conn.execute(
+            f"UPDATE analysis_runs SET {', '.join(assignments)} {where}",
             params,
         )
         conn.commit()
+    return cursor.rowcount == 1
 
 
 def get_run(run_id: str, path: Optional[Path] = None) -> Optional[dict[str, Any]]:

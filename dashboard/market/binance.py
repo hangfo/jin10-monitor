@@ -9,13 +9,14 @@ import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .base import BaseMarketAdapter, Kline, MarketAdapterError
 
 
 DEFAULT_BASE_URL = "https://api.binance.com"
+BEIJING_TZ = timezone(timedelta(hours=8))
 ALLOWED_SYMBOLS = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"}
 ALLOWED_INTERVALS = {"1m": 60, "5m": 300}
 DEFAULT_TIMEOUT_SECONDS = 3.0
@@ -177,7 +178,7 @@ def parse_market_datetime(value: str, *, label: str) -> datetime:
     except ValueError as exc:
         raise MarketAdapterError(f"{label} must be YYYY-MM-DD HH:MM[:SS]") from exc
     if parsed.tzinfo:
-        return datetime.fromtimestamp(parsed.timestamp())
+        return datetime.fromtimestamp(parsed.timestamp(), tz=BEIJING_TZ).replace(tzinfo=None)
     return parsed.replace(tzinfo=None)
 
 
@@ -186,20 +187,26 @@ def format_market_datetime(value: datetime) -> str:
 
 
 def floor_market_datetime(value: datetime, interval_seconds: int) -> datetime:
-    timestamp = int(value.timestamp())
+    timestamp = int(to_utc_timestamp(value))
     floored = timestamp - (timestamp % interval_seconds)
-    return datetime.fromtimestamp(floored).replace(microsecond=0)
+    return datetime.fromtimestamp(floored, tz=BEIJING_TZ).replace(tzinfo=None, microsecond=0)
 
 
 def ceil_market_datetime(value: datetime, interval_seconds: int) -> datetime:
-    timestamp = int(value.timestamp())
+    timestamp = int(to_utc_timestamp(value))
     remainder = timestamp % interval_seconds
     ceiled = timestamp if remainder == 0 else timestamp + (interval_seconds - remainder)
-    return datetime.fromtimestamp(ceiled).replace(microsecond=0)
+    return datetime.fromtimestamp(ceiled, tz=BEIJING_TZ).replace(tzinfo=None, microsecond=0)
+
+
+def to_utc_timestamp(value: datetime) -> float:
+    if value.tzinfo:
+        return value.timestamp()
+    return value.replace(tzinfo=BEIJING_TZ).timestamp()
 
 
 def to_epoch_ms(value: datetime) -> int:
-    return int(value.timestamp() * 1000)
+    return int(to_utc_timestamp(value) * 1000)
 
 
 def parse_binance_klines(payload: Any) -> list[Kline]:
@@ -212,7 +219,7 @@ def parse_binance_klines(payload: Any) -> list[Kline]:
         try:
             open_time_ms = int(row[0])
             kline = Kline(
-                open_time=datetime.fromtimestamp(open_time_ms / 1000).strftime("%Y-%m-%d %H:%M:%S"),
+                open_time=datetime.fromtimestamp(open_time_ms / 1000, tz=BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S"),
                 open=float(row[1]),
                 high=float(row[2]),
                 low=float(row[3]),

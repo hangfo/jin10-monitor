@@ -61,7 +61,11 @@ class GeminiProvider(BaseProvider):
         finish_reason = str(candidates[0].get("finishReason") or "")
         content = candidates[0].get("content") if isinstance(candidates[0].get("content"), dict) else {}
         parts = content.get("parts") if isinstance(content, dict) else []
-        text = "\n".join(str(part.get("text") or "") for part in parts or [] if isinstance(part, dict)).strip()
+        text = "\n".join(
+            str(part.get("text") or "")
+            for part in parts or []
+            if isinstance(part, dict) and part.get("thought") is not True
+        ).strip()
         if finish_reason and finish_reason != "STOP":
             detail = str(candidates[0].get("finishMessage") or "").strip()
             suffix = f": {detail}" if detail else ""
