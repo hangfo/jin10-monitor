@@ -1,4 +1,4 @@
-更新时间：2026-06-09 02:45（Asia/Shanghai）
+更新时间：2026-06-09 02:55（Asia/Shanghai）
 
 # 052 - 历史管理与 Provider 统计收口交接
 
@@ -10,6 +10,9 @@
 - push：已推送到 `origin/main`
 
 随后收口 `047-050` 中仍适合本轮一次性完成的低风险遗留项。
+
+- commit：`d616cd6 feat(dashboard): close analysis history management`
+- push：已推送到 `origin/main`
 
 已完成：
 
@@ -79,6 +82,7 @@ git log --oneline -8
 .venv/bin/python -m pytest -q
 git diff --check
 临时 `127.0.0.1:8766` 浏览器烟测
+正式 `127.0.0.1:8765` reload 后浏览器烟测
 ```
 
 当前结果：
@@ -93,6 +97,10 @@ git diff --check
 - 临时 `127.0.0.1:8766` 浏览器烟测：
   - `/analyze/history?status=recent_failed`：200，状态筛选存在并选中 `recent_failed`。
   - `/system`：200，Provider 调用统计和“不代表官方账单”说明可见。
+- 正式 `127.0.0.1:8765`：
+  - 先终止旧孤儿 `run_dashboard.py --port 8765` 进程，再执行 `launchctl kickstart -k gui/$(id -u)/com.rich.jin10-dashboard`。
+  - `/analyze/history?status=recent_failed`：200，浏览器确认状态筛选存在并选中 `recent_failed`。
+  - `/system`：200，浏览器确认 Provider 调用统计和“不代表官方账单”说明可见。
 
 ## 下一步建议
 
