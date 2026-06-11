@@ -1,4 +1,4 @@
-更新时间：2026-06-11 20:02（Asia/Shanghai）
+更新时间：2026-06-11 20:04（Asia/Shanghai）
 
 # 053 - 052 Review 跟进与下一阶段路线交接
 
@@ -31,6 +31,9 @@
   - 成功、失败、调用中、未归类分别用不同颜色。
   - 点击可跳到对应 `/analyze/{run_id}`。
   - 仍只读独立分析库，不请求模型 API，不写业务库。
+
+- commit：`b5c7536 fix(dashboard): address provider stats review`
+- push：已推送到 `origin/main`
 
 ## 未立即实现与理由
 
@@ -65,6 +68,39 @@
 - 不自动调用 Provider。
 - 不引入新外部源。
 - `/system` Provider 统计继续只读 `data/dashboard_analysis.sqlite3`。
+
+## 验证
+
+已执行：
+
+```bash
+git branch --show-current
+git status --short --branch
+git pull --rebase
+git log --oneline -8
+.venv/bin/python -m py_compile dashboard/analysis_db.py dashboard/app.py
+.venv/bin/python -m pytest tests/test_dashboard_analysis.py -q
+.venv/bin/python -m pytest -q
+git diff --check
+临时 `127.0.0.1:8766` curl 烟测
+正式 `127.0.0.1:8765` reload 后 curl 烟测
+```
+
+当前结果：
+
+- 分支：`main`
+- `git pull --rebase`：`Current branch main is up to date.`
+- `py_compile`：通过
+- `tests/test_dashboard_analysis.py`：67 passed
+- 全量 pytest：209 passed
+- `git diff --check`：通过
+- 临时 `127.0.0.1:8766`：
+  - `/system`：200，Provider 调用统计和最近调用时间线可见。
+  - `/analyze/history?status=recent_failed`：200，状态筛选正常。
+- 正式 `127.0.0.1:8765`：
+  - 已执行 `launchctl kickstart -k gui/$(id -u)/com.rich.jin10-dashboard`。
+  - `/system`：200，Provider 调用统计和最近调用时间线可见。
+  - `/analyze/history?status=recent_failed`：200，状态筛选正常。
 
 ## 推荐下一阶段
 
