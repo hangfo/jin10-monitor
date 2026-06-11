@@ -435,8 +435,20 @@
   <div class="panel system-detail" style="margin-top:14px">
     <h2 style="margin-top:0">Provider 调用统计</h2>
     <div class="meta" style="margin-bottom:10px">
-      最近 {{ provider_call_stats.hours or 24 }}h：调用 {{ provider_call_stats.total_calls or 0 }} · 成功 {{ provider_call_stats.success_count or 0 }} · 失败 {{ provider_call_stats.failure_count or 0 }} · 调用中 {{ provider_call_stats.running_count or 0 }}。仅统计独立分析库，不代表官方账单。
+      最近 {{ provider_call_stats.hours or 24 }}h：调用 {{ provider_call_stats.total_calls or 0 }} · 成功 {{ provider_call_stats.success_count or 0 }} · 失败 {{ provider_call_stats.failure_count or 0 }} · 调用中 {{ provider_call_stats.running_count or 0 }}{% if provider_call_stats.uncounted_count %} · 未归类 {{ provider_call_stats.uncounted_count }}{% endif %}。仅统计独立分析库，不代表官方账单。
     </div>
+    {% if provider_call_stats.recent_timeline %}
+    <div class="provider-timeline" aria-label="Provider 最近调用时间线" style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px">
+      {% for call in provider_call_stats.recent_timeline %}
+      <a
+        class="timeline-dot {{ call.status }}"
+        href="/analyze/{{ call.run_id }}"
+        title="{{ call.model_label }} · {{ call.status }} · {{ call.started_at[:16] or call.updated_at[:16] }}{% if call.elapsed_seconds %} · {{ call.elapsed_seconds }}s{% endif %}"
+        style="background:{% if call.status == 'done' %}var(--sent-fg){% elif call.status == 'running' %}var(--warn-fg){% elif call.status == 'failed' %}var(--fail-fg){% else %}var(--muted){% endif %};border-radius:50%;display:inline-block;height:9px;width:9px"
+      ></a>
+      {% endfor %}
+    </div>
+    {% endif %}
     {% if provider_call_stats.providers %}
     <table style="min-width:0">
       <thead>
@@ -453,7 +465,7 @@
         <tr>
           <th>{{ provider.model_label or provider.provider_name }}</th>
           <td>{{ provider.calls }}</td>
-          <td>{{ provider.success_count }} / {{ provider.failure_count }} / {{ provider.running_count }}</td>
+          <td>{{ provider.success_count }} / {{ provider.failure_count }} / {{ provider.running_count }}{% if provider.uncounted_count %} / 未归类 {{ provider.uncounted_count }}{% endif %}</td>
           <td>
             {% if provider.p50_elapsed_seconds %}
             {{ provider.p50_elapsed_seconds }}s / {{ provider.avg_elapsed_seconds }}s / {{ provider.max_elapsed_seconds }}s

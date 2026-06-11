@@ -222,6 +222,8 @@ def test_query_provider_call_stats_reads_recent_provider_activity(tmp_path):
     done_id = analysis_db.create_run("Done", "BTC", "2026-05-23 09:00:00", "2026-05-23 10:00:00", [], path=db_path)
     failed_id = analysis_db.create_run("Failed", "ETH", "2026-05-23 09:00:00", "2026-05-23 10:00:00", [], path=db_path)
     running_id = analysis_db.create_run("Running", "SOL", "2026-05-23 09:00:00", "2026-05-23 10:00:00", [], path=db_path)
+    old_model_id = analysis_db.create_run("Old model", "ETH", "2026-05-23 09:00:00", "2026-05-23 10:00:00", [], path=db_path)
+    uncounted_id = analysis_db.create_run("Uncounted", "ETH", "2026-05-23 09:00:00", "2026-05-23 10:00:00", [], path=db_path)
     analysis_db.mark_provider_running(done_id, provider_name="gemini", provider_label="Gemini:gemini-2.5-flash", path=db_path)
     analysis_db.save_answer(
         done_id,
@@ -236,19 +238,69 @@ def test_query_provider_call_stats_reads_recent_provider_activity(tmp_path):
     analysis_db.mark_provider_running(failed_id, provider_name="compatible", provider_label="GLM:glm-4.7-flash", path=db_path)
     analysis_db.save_provider_error(failed_id, "Provider 调用失败：timeout", provider_elapsed_ms=60000, path=db_path)
     analysis_db.mark_provider_running(running_id, provider_name="compatible", provider_label="GLM:glm-4.7-flash", path=db_path)
+    analysis_db.mark_provider_running(old_model_id, provider_name="compatible", provider_label="GLM:glm-4.0-flash", path=db_path)
+    analysis_db.save_answer(
+        old_model_id,
+        "old answer",
+        answer_json={"judgement": "unclear", "overall_confidence": 0.2, "catalysts": []},
+        judgement="unclear",
+        overall_confidence=0.2,
+        provider_elapsed_ms=30000,
+        expected_status="running",
+        path=db_path,
+    )
+    with analysis_db.open_analysis_db(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE analysis_runs
+            SET updated_at = ?, provider_started_at = ?, provider_error_at = ?
+            WHERE id = ?
+            """,
+            (history_ts(-2), history_ts(-3), history_ts(-2), failed_id),
+        )
+        conn.execute(
+            """
+            UPDATE analysis_runs
+            SET updated_at = ?, provider_started_at = ?
+            WHERE id = ?
+            """,
+            (history_ts(-1), history_ts(-1), running_id),
+        )
+        conn.execute(
+            """
+            UPDATE analysis_runs
+            SET provider_name = ?, model_label = ?, updated_at = ?, provider_started_at = ?
+            WHERE id = ?
+            """,
+            ("compatible", "GLM:glm-4.0-flash", history_ts(-90), history_ts(-91), old_model_id),
+        )
+        conn.execute(
+            """
+            UPDATE analysis_runs
+            SET provider_name = ?, model_label = ?, updated_at = ?, provider_started_at = ?
+            WHERE id = ?
+            """,
+            ("compatible", "GLM:orphan", history_ts(-10), history_ts(-10), uncounted_id),
+        )
+        conn.commit()
 
     stats = analysis_db.query_provider_call_stats(path=db_path)
     providers = {row["provider_name"]: row for row in stats["providers"]}
 
-    assert stats["total_calls"] == 3
-    assert stats["success_count"] == 1
+    assert stats["total_calls"] == 5
+    assert stats["success_count"] == 2
     assert stats["failure_count"] == 1
     assert stats["running_count"] == 1
+    assert stats["uncounted_count"] == 1
+    assert stats["recent_timeline"]
     assert providers["gemini"]["success_count"] == 1
     assert providers["gemini"]["p50_elapsed_seconds"] == 10.0
-    assert providers["compatible"]["calls"] == 2
+    assert providers["compatible"]["calls"] == 4
+    assert providers["compatible"]["model_label"] == "GLM:glm-4.7-flash"
+    assert providers["compatible"]["success_count"] == 1
     assert providers["compatible"]["failure_count"] == 1
     assert providers["compatible"]["running_count"] == 1
+    assert providers["compatible"]["uncounted_count"] == 1
     assert "timeout" in providers["compatible"]["recent_error"]
 
 
@@ -1481,6 +1533,9 @@ def test_analyze_templates_expose_provider_run_controls():
     assert "delete_error" in run_template
     assert "run.status == 'draft'" in run_template
     assert "window.location.reload" in run_template
+    assert 'startedAt.replace(" ", "T") + "+08:00"' in run_template
+    assert "document.visibilityState !== \"hidden\"" in run_template
+    assert "window.getSelection" in run_template
     assert 'select name="status"' in history_template
     assert "analysis_status_options" in history_template
     assert "provider_elapsed_ms" in history_template
@@ -1539,6 +1594,8 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "unknown_timeout_unconfirmed" in system_template
     assert "Provider 调用统计" in system_template
     assert "provider_call_stats" in system_template
+    assert "provider_call_stats.recent_timeline" in system_template
+    assert "uncounted_count" in system_template
     assert "parts.hour - 8" in item_template
     assert "Number(time) + 8 * 3600" in item_template
     assert "缺失证据来自各次模型原始输出" in compare_template

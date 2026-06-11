@@ -373,7 +373,7 @@
     {% if run and run.status == 'running' %}
     (function () {
       const startedAt = "{{ run.provider_started_at }}";
-      const startedMs = startedAt ? new Date(startedAt.replace(" ", "T")).getTime() : 0;
+      const startedMs = startedAt ? new Date(startedAt.replace(" ", "T") + "+08:00").getTime() : 0;
       const elapsedNode = document.getElementById("running-elapsed");
       const noticeNode = document.getElementById("running-notice");
       function elapsedSeconds() {
@@ -389,7 +389,18 @@
       }
       updateElapsed();
       setInterval(updateElapsed, 1000);
-      setTimeout(() => { window.location.reload(); }, 6000);
+      function shouldReload() {
+        const selectedText = window.getSelection ? window.getSelection().toString() : "";
+        return document.visibilityState !== "hidden" && !selectedText;
+      }
+      function scheduleReload() {
+        if (shouldReload()) {
+          window.location.reload();
+          return;
+        }
+        setTimeout(scheduleReload, 2000);
+      }
+      setTimeout(scheduleReload, 6000);
     })();
     {% endif %}
   </script>

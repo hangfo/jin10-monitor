@@ -566,7 +566,9 @@ def _empty_provider_call_stats(hours: int) -> dict[str, Any]:
         "success_count": 0,
         "failure_count": 0,
         "running_count": 0,
+        "uncounted_count": 0,
         "providers": [],
+        "recent_timeline": [],
     }
 
 
@@ -611,6 +613,8 @@ def query_provider_call_stats(*, hours: int = 24, path: Optional[Path] = None) -
     success_count = 0
     failure_count = 0
     running_count = 0
+    uncounted_count = 0
+    recent_timeline: list[dict[str, Any]] = []
     for row in rows:
         provider_name = str(row["provider_name"] or "").strip()
         if not provider_name:
@@ -633,28 +637,44 @@ def query_provider_call_stats(*, hours: int = 24, path: Optional[Path] = None) -
             },
         )
         provider["calls"] += 1
-        if row["model_label"]:
-            provider["model_label"] = str(row["model_label"])
         if row["provider_started_at"] and not provider["last_started_at"]:
             provider["last_started_at"] = str(row["provider_started_at"])
         if status == "done":
             success_count += 1
             provider["success_count"] += 1
+            timeline_status = "done"
         elif status == "running":
             running_count += 1
             provider["running_count"] += 1
+            timeline_status = "running"
         elif row["provider_error"]:
             failure_count += 1
             provider["failure_count"] += 1
+            timeline_status = "failed"
             if not provider["recent_error"]:
                 provider["recent_error"] = str(row["provider_error"])
                 provider["recent_error_at"] = str(row["provider_error_at"] or row["updated_at"] or "")
+        else:
+            uncounted_count += 1
+            provider["uncounted_count"] = int(provider.get("uncounted_count") or 0) + 1
+            timeline_status = "uncounted"
         elapsed = int(row["provider_elapsed_ms"] or 0)
         if elapsed > 0:
             provider["elapsed_values"].append(elapsed)
+        if len(recent_timeline) < 50:
+            recent_timeline.append({
+                "run_id": str(row["id"] or ""),
+                "provider_name": provider_name,
+                "model_label": str(row["model_label"] or provider_name),
+                "status": timeline_status,
+                "started_at": str(row["provider_started_at"] or ""),
+                "updated_at": str(row["updated_at"] or ""),
+                "elapsed_seconds": _seconds(elapsed),
+            })
 
     provider_rows = []
     for provider in providers.values():
+        provider["uncounted_count"] = int(provider.get("uncounted_count") or 0)
         elapsed_values = sorted(provider.pop("elapsed_values"))
         if elapsed_values:
             provider["avg_elapsed_seconds"] = _seconds(sum(elapsed_values) // len(elapsed_values))
@@ -673,7 +693,9 @@ def query_provider_call_stats(*, hours: int = 24, path: Optional[Path] = None) -
         "success_count": success_count,
         "failure_count": failure_count,
         "running_count": running_count,
+        "uncounted_count": uncounted_count,
         "providers": provider_rows,
+        "recent_timeline": recent_timeline,
     }
 
 
