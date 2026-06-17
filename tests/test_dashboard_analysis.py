@@ -1560,6 +1560,7 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     run_template = (TEMPLATE_DIR / "analyze_run.html").read_text()
     system_template = (TEMPLATE_DIR / "system.html").read_text()
     item_template = (TEMPLATE_DIR / "item.html").read_text()
+    ws_initial_template = (TEMPLATE_DIR / "ws_initial_review.html").read_text()
 
     assert "assetToSymbol" in analyze_template
     assert "ETHUSDT" in analyze_template
@@ -1595,7 +1596,12 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "Provider 调用统计" in system_template
     assert "provider_call_stats" in system_template
     assert "provider_call_stats.recent_timeline" in system_template
+    assert "provider_call_stats.recent_timeline | reverse" in system_template
     assert "uncounted_count" in system_template
+    assert "无需处理" in ws_initial_template
+    assert "建议逐条确认" in ws_initial_template
+    assert "建议手动补拉" in ws_initial_template
+    assert "--catch-up" in ws_initial_template
     assert "parts.hour - 8" in item_template
     assert "Number(time) + 8 * 3600" in item_template
     assert "缺失证据来自各次模型原始输出" in compare_template

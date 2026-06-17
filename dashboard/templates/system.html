@@ -439,7 +439,7 @@
     </div>
     {% if provider_call_stats.recent_timeline %}
     <div class="provider-timeline" aria-label="Provider 最近调用时间线" style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px">
-      {% for call in provider_call_stats.recent_timeline %}
+      {% for call in provider_call_stats.recent_timeline | reverse %}
       <a
         class="timeline-dot {{ call.status }}"
         href="/analyze/{{ call.run_id }}"
