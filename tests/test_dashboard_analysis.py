@@ -26,6 +26,7 @@ from dashboard.app import (
 )
 from dashboard.market.base import Kline
 from scripts.export_provider_ab_packet import export_run_packet
+from scripts.run_provider_ab import answer_metrics, is_retryable_error, render_summary, safe_dir_name
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "dashboard" / "templates"
 
@@ -749,6 +750,48 @@ def test_export_provider_ab_packet_missing_run_fails_without_output(tmp_path):
     assert not output_dir.exists()
 
 
+def test_provider_ab_runner_metrics_and_summary_helpers():
+    parsed = {
+        "judgement": "news_driven",
+        "overall_confidence": 0.82,
+        "summary": "核心通胀降温推动风险偏好修复",
+        "missing_evidence": ["ETH 成交量", "资金费率"],
+        "catalysts": [
+            {"news_id": "n1"},
+            {"news_id": "n1"},
+            {"news_id": "n2"},
+        ],
+    }
+
+    metrics = answer_metrics(parsed)
+    summary = render_summary(
+        [
+            {
+                "source_run_id": "ar_1",
+                "provider_key": "gemini",
+                "model_label": "gemini:test",
+                "ok": True,
+                "attempt": 2,
+                "elapsed_ms": 1234,
+                "metrics": metrics,
+            }
+        ]
+    )
+
+    assert metrics["judgement"] == "news_driven"
+    assert metrics["duplicate_news_id_count"] == 1
+    assert metrics["missing_evidence_count"] == 2
+    assert "| ar_1 | gemini | gemini:test | yes | 2 | 1234 | news_driven | 0.82 | 3 | 2 | 1 |" in summary
+
+
+def test_provider_ab_runner_retry_and_path_helpers():
+    assert is_retryable_error("provider returned HTTP 429")
+    assert is_retryable_error("This model is currently experiencing high demand")
+    assert is_retryable_error("该模型当前访问量过大，请您稍后再试")
+    assert not is_retryable_error("invalid JSON")
+    assert safe_dir_name("ar:bad/id with spaces") == "ar_bad_id_with_spaces"
+
+
 def test_evidence_builder_scores_and_labels_news_id(tmp_path, monkeypatch):
     history_path = tmp_path / "history.sqlite3"
     conn = create_history_db(history_path)
@@ -1348,6 +1391,8 @@ def test_provider_and_market_boundaries_are_inert_without_config(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("COMPAT_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CHATGPT_PROXY_API_KEY", raising=False)
+    monkeypatch.delenv("CHATGPT_PROXY_BASE_URL", raising=False)
     monkeypatch.delenv("MARKET_ADAPTER", raising=False)
 
     from dashboard.market.base import configured_market_adapter_name, get_market_adapter
@@ -1360,6 +1405,7 @@ def test_provider_and_market_boundaries_are_inert_without_config(monkeypatch):
     assert get_provider("anthropic") is None
     assert get_provider("gemini") is None
     assert get_provider("compatible") is None
+    assert get_provider("chatgpt_proxy") is None
     assert configured_market_adapter_name() == ""
     assert get_market_adapter() is None
     statuses = {status.key: status for status in provider_statuses()}
@@ -1368,6 +1414,7 @@ def test_provider_and_market_boundaries_are_inert_without_config(monkeypatch):
     assert statuses["anthropic"].available is False
     assert statuses["gemini"].available is False
     assert statuses["compatible"].available is False
+    assert statuses["chatgpt_proxy"].available is False
 
 
 def test_provider_adapters_report_configured_keys_without_network(monkeypatch):
@@ -1376,6 +1423,13 @@ def test_provider_adapters_report_configured_keys_without_network(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
     monkeypatch.setenv("COMPAT_LLM_API_KEY", "test-compatible-key")
     monkeypatch.setenv("COMPAT_LLM_LABEL", "compatible")
+    monkeypatch.setenv("COMPAT_LLM_MODEL", "deepseek-test")
+    monkeypatch.setenv("COMPAT_LLM_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.delenv("COMPAT_LLM_THINKING", raising=False)
+    monkeypatch.setenv("CHATGPT_PROXY_API_KEY", "test-chatgpt-proxy-key")
+    monkeypatch.setenv("CHATGPT_PROXY_BASE_URL", "http://127.0.0.1:5083/v1")
+    monkeypatch.setenv("CHATGPT_PROXY_MODEL", "gpt-4o")
+    monkeypatch.setenv("CHATGPT_PROXY_LABEL", "ChatGPT Proxy")
 
     from dashboard.providers.base import get_provider
 
@@ -1383,6 +1437,7 @@ def test_provider_adapters_report_configured_keys_without_network(monkeypatch):
     assert get_provider("anthropic").is_available() is True
     assert get_provider("gemini").is_available() is True
     assert get_provider("compatible").is_available() is True
+    assert get_provider("chatgpt_proxy").is_available() is True
 
 
 def test_provider_adapters_parse_successful_responses(monkeypatch):
@@ -1390,6 +1445,9 @@ def test_provider_adapters_parse_successful_responses(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
     monkeypatch.setenv("COMPAT_LLM_API_KEY", "test-compatible-key")
     monkeypatch.setenv("COMPAT_LLM_LABEL", "compatible")
+    monkeypatch.setenv("COMPAT_LLM_MODEL", "deepseek-test")
+    monkeypatch.setenv("COMPAT_LLM_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.delenv("COMPAT_LLM_THINKING", raising=False)
 
     from dashboard.providers.anthropic_provider import AnthropicProvider
     from dashboard.providers.compatible_provider import OpenAICompatibleProvider
@@ -1426,6 +1484,7 @@ def test_provider_adapters_parse_successful_responses(monkeypatch):
     class FakeCompatible(OpenAICompatibleProvider):
         def _post_json(self, payload, *, api_key):
             assert api_key == "test-compatible-key"
+            assert "thinking" not in payload
             return {
                 "model": "deepseek-test",
                 "choices": [{"message": {"content": '{"judgement":"unclear"}'}}],
@@ -1444,6 +1503,95 @@ def test_provider_adapters_parse_successful_responses(monkeypatch):
     assert gemini.output_tokens == 5
     assert compatible.model_label == "compatible:deepseek-test"
     assert compatible.input_tokens == 17
+
+
+def test_compatible_provider_disables_glm_thinking_by_default(monkeypatch):
+    monkeypatch.setenv("COMPAT_LLM_API_KEY", "test-compatible-key")
+    monkeypatch.setenv("COMPAT_LLM_LABEL", "GLM")
+    monkeypatch.setenv("COMPAT_LLM_MODEL", "glm-4.7-flash")
+    monkeypatch.delenv("COMPAT_LLM_THINKING", raising=False)
+
+    from dashboard.providers.compatible_provider import OpenAICompatibleProvider
+
+    class FakeCompatible(OpenAICompatibleProvider):
+        def _post_json(self, payload, *, api_key):
+            assert payload["thinking"] == {"type": "disabled"}
+            return {
+                "model": "glm-4.7-flash",
+                "choices": [{"message": {"content": '{"judgement":"unclear"}'}}],
+                "usage": {"prompt_tokens": 17, "completion_tokens": 3},
+            }
+
+    result = FakeCompatible().complete("system", "user")
+
+    assert result.text == '{"judgement":"unclear"}'
+    assert result.model_label == "GLM:glm-4.7-flash"
+
+
+def test_chatgpt_proxy_provider_uses_isolated_env(monkeypatch):
+    monkeypatch.setenv("CHATGPT_PROXY_API_KEY", "test-chatgpt-proxy-key")
+    monkeypatch.setenv("CHATGPT_PROXY_BASE_URL", "http://127.0.0.1:5083/v1")
+    monkeypatch.setenv("CHATGPT_PROXY_MODEL", "gpt-4o")
+    monkeypatch.setenv("CHATGPT_PROXY_LABEL", "ChatGPT Proxy")
+    monkeypatch.setenv("CHATGPT_PROXY_MAX_TOKENS", "1200")
+    monkeypatch.setenv("CHATGPT_PROXY_TEMPERATURE", "0.1")
+    monkeypatch.delenv("CHATGPT_PROXY_THINKING", raising=False)
+    monkeypatch.setenv("COMPAT_LLM_LABEL", "GLM")
+    monkeypatch.setenv("COMPAT_LLM_MODEL", "glm-4.7-flash")
+    monkeypatch.setenv("COMPAT_LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+
+    from dashboard.providers.compatible_provider import OpenAICompatibleProvider
+
+    class FakeProxy(OpenAICompatibleProvider):
+        def __init__(self):
+            super().__init__(
+                api_key_env="CHATGPT_PROXY_API_KEY",
+                base_url_env="CHATGPT_PROXY_BASE_URL",
+                model_env="CHATGPT_PROXY_MODEL",
+                label_env="CHATGPT_PROXY_LABEL",
+                max_tokens_env="CHATGPT_PROXY_MAX_TOKENS",
+                temperature_env="CHATGPT_PROXY_TEMPERATURE",
+                thinking_env="CHATGPT_PROXY_THINKING",
+                default_base_url="",
+                default_model="gpt-4o",
+                name_prefix="chatgpt-proxy",
+            )
+
+        def _post_json(self, payload, *, api_key):
+            assert api_key == "test-chatgpt-proxy-key"
+            assert payload["model"] == "gpt-4o"
+            assert payload["max_tokens"] == 1200
+            assert payload["temperature"] == 0.1
+            assert "thinking" not in payload
+            return {
+                "model": "gpt-4o",
+                "choices": [{"message": {"content": '{"judgement":"news_driven"}'}}],
+                "usage": {"prompt_tokens": 31, "completion_tokens": 11},
+            }
+
+    result = FakeProxy().complete("system", "user")
+
+    assert result.text == '{"judgement":"news_driven"}'
+    assert result.model_label == "ChatGPT Proxy:gpt-4o"
+    assert result.input_tokens == 31
+
+
+def test_compatible_provider_allows_thinking_override(monkeypatch):
+    monkeypatch.setenv("COMPAT_LLM_API_KEY", "test-compatible-key")
+    monkeypatch.setenv("COMPAT_LLM_MODEL", "glm-4.7-flash")
+    monkeypatch.setenv("COMPAT_LLM_THINKING", "auto")
+
+    from dashboard.providers.compatible_provider import OpenAICompatibleProvider
+
+    class FakeCompatible(OpenAICompatibleProvider):
+        def _post_json(self, payload, *, api_key):
+            assert "thinking" not in payload
+            return {
+                "model": "glm-4.7-flash",
+                "choices": [{"message": {"content": '{"judgement":"unclear"}'}}],
+            }
+
+    assert FakeCompatible().complete("system", "user").text == '{"judgement":"unclear"}'
 
 
 def test_compatible_provider_empty_response_reports_shape(monkeypatch):

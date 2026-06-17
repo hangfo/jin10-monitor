@@ -1,6 +1,7 @@
 .env
 .venv/
 data/
+.local/
 logs/*.log
 !logs/.gitkeep
 config/*.txt

@@ -1,8 +1,15 @@
-更新时间：2026-06-11 20:02（Asia/Shanghai）
+更新时间：2026-06-17 23:10（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
+
+## 2026-06-17
+
+- 在实验分支新增离线 Provider A/B runner：可从历史 `analysis_runs.id` 导出固定 packet，加载本地 `.env` 后分别调用 Gemini、GLM 或实验性 `chatgpt_proxy`，并把原始输出和 `summary.md` 写入 `exports/provider_ab_runs/`；runner 不写业务历史库、不触发采集链路、不自动重发 Telegram。
+- 修复 GLM OpenAI-compatible 调用的 thinking 默认行为：对 GLM / BigModel / Zhipu / Z.ai provider 自动添加 `thinking={"type":"disabled"}`，避免 GLM-4.7 把输出耗在 `reasoning_content` 导致 `content` 为空；保留 `COMPAT_LLM_THINKING` 覆盖开关。
+- 新增实验性 `chatgpt_proxy` Provider slot：复用 OpenAI-compatible provider，但使用独立 `CHATGPT_PROXY_*` 环境变量；只有同时配置本机 proxy base URL 和 key 才启用，默认关闭，不建议接入公共未知代理。
+- 新增 webchat2api 本机代理操作脚本与文档：可克隆到 `.local/webchat2api`、生成本机强随机密钥、用 launchd 托管 `127.0.0.1:5083`、输出 Dashboard `.env` 片段，并支持从本机文件安全导入 GPT access token；当前作为技术债/实验能力封存，不进入主线默认路径。
 
 ## 2026-06-11
 

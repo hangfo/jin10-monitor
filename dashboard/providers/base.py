@@ -64,6 +64,13 @@ def _compatible_configured() -> bool:
     return bool(os.getenv("COMPAT_LLM_API_KEY", "").strip())
 
 
+def _chatgpt_proxy_configured() -> bool:
+    return bool(
+        os.getenv("CHATGPT_PROXY_API_KEY", "").strip()
+        and os.getenv("CHATGPT_PROXY_BASE_URL", "").strip()
+    )
+
+
 def provider_statuses() -> list[ProviderStatus]:
     return [
         ProviderStatus(
@@ -101,6 +108,13 @@ def provider_statuses() -> list[ProviderStatus]:
             available=_compatible_configured(),
             note="用于 DeepSeek / GLM 等 OpenAI-compatible API；配置 base URL、model 和 key 后启用。",
         ),
+        ProviderStatus(
+            key="chatgpt_proxy",
+            label=os.getenv("CHATGPT_PROXY_LABEL", "ChatGPT Proxy（实验）"),
+            configured=_chatgpt_proxy_configured(),
+            available=_chatgpt_proxy_configured(),
+            note="实验入口，仅建议指向本机 OpenAI-compatible 代理；默认关闭，不要接入公共未知代理。",
+        ),
     ]
 
 
@@ -127,5 +141,21 @@ def get_provider(name: Optional[str]) -> Optional[BaseProvider]:
         from .compatible_provider import OpenAICompatibleProvider
 
         provider = OpenAICompatibleProvider()
+        return provider if provider.is_available() else None
+    if provider_name in {"chatgpt_proxy", "chatgpt", "webchat2api", "openai_chat_proxy"}:
+        from .compatible_provider import OpenAICompatibleProvider
+
+        provider = OpenAICompatibleProvider(
+            api_key_env="CHATGPT_PROXY_API_KEY",
+            base_url_env="CHATGPT_PROXY_BASE_URL",
+            model_env="CHATGPT_PROXY_MODEL",
+            label_env="CHATGPT_PROXY_LABEL",
+            max_tokens_env="CHATGPT_PROXY_MAX_TOKENS",
+            temperature_env="CHATGPT_PROXY_TEMPERATURE",
+            thinking_env="CHATGPT_PROXY_THINKING",
+            default_base_url="",
+            default_model="gpt-4o",
+            name_prefix="chatgpt-proxy",
+        )
         return provider if provider.is_available() else None
     return None
