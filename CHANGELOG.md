@@ -1,8 +1,13 @@
-更新时间：2026-06-17 23:35（Asia/Shanghai）
+更新时间：2026-06-18 07:18（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
+
+## 2026-06-18
+
+- 修复 launchd 采集服务启动防护：`scripts/run_monitor.sh` 不再用 shell `source .env`，改由 `scripts/run_monitor.py` 通过 `python-dotenv` 加载配置后启动 `jin10_monitor.py`，避免 `.env` 中带空格的值导致 monitor 反复以 `127` 退出。
+- 生产恢复：确认 `2026-06-12 00:51:18` 后采集主服务因本地 `.env` 解析失败停摆；手动补拉 4800+ 条历史快讯入本地业务库，未补发历史 Telegram；恢复 WebSocket 实时主路与实时 Telegram 推送。REST 仍可能因金十侧 `403` 处于退避，`2026-06-17 18:00-24:00` 仍需冷却后再补。
 
 ## 2026-06-17
 

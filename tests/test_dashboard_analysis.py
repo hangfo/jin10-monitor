@@ -1281,6 +1281,18 @@ def test_run_dashboard_loads_dotenv_before_uvicorn():
     assert "load_dotenv()" in run_dashboard
 
 
+def test_run_monitor_loads_dotenv_without_shell_source():
+    project_root = TEMPLATE_DIR.parent.parent
+    run_monitor_sh = (project_root / "scripts" / "run_monitor.sh").read_text()
+    run_monitor_py = (project_root / "scripts" / "run_monitor.py").read_text()
+
+    assert "source" not in run_monitor_sh
+    assert "run_monitor.py" in run_monitor_sh
+    assert "from dotenv import load_dotenv" in run_monitor_py
+    assert "load_dotenv(ENV_FILE, override=True)" in run_monitor_py
+    assert "os.execv" in run_monitor_py
+
+
 def test_dashboard_bugfix_routes_are_registered():
     paths = [route.path for route in app.routes if hasattr(route, "path")]
 
