@@ -1613,6 +1613,8 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "无需处理" in ws_initial_template
     assert "建议逐条确认" in ws_initial_template
     assert "建议手动补拉" in ws_initial_template
+    assert "last_ingested_at={{ last_ingested_at or '-' }}" in ws_initial_template
+    assert "晚于 last_ingested_at" in ws_initial_template
     assert "--catch-up" in ws_initial_template
     assert "parts.hour - 8" in item_template
     assert "Number(time) + 8 * 3600" in item_template

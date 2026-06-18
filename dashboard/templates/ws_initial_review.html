@@ -61,17 +61,18 @@
   {% else %}
   {% set state = review.state %}
   {% set newer_than_cursor = review.newer_than_cursor | int %}
+  {% set last_ingested_at = review.last_ingested_at or state.last_ingested_at %}
   {% if newer_than_cursor == 0 %}
   <div class="panel" style="border-color:var(--sent-fg);margin-bottom:14px">
-    <strong>无需处理：</strong>当前没有晚于游标的 ws_initial 消息，可关闭此页继续观察。
+    <strong>无需处理：</strong>当前没有晚于 <span class="mono">last_ingested_at={{ last_ingested_at or '-' }}</span> 的 ws_initial 消息，可关闭此页继续观察。
   </div>
   {% elif newer_than_cursor <= 3 %}
   <div class="panel" style="border-color:var(--warn-fg);margin-bottom:14px">
-    <strong>建议逐条确认：</strong>发现 {{ newer_than_cursor }} 条晚于游标的消息，可能覆盖短缺口；请核对详情页与 Telegram 投递状态。
+    <strong>建议逐条确认：</strong>发现 {{ newer_than_cursor }} 条晚于 <span class="mono">last_ingested_at={{ last_ingested_at or '-' }}</span> 的消息，可能覆盖短缺口；请核对详情页与 Telegram 投递状态。
   </div>
   {% else %}
   <div class="panel" style="border-color:var(--fail-fg);margin-bottom:14px">
-    <strong>建议手动补拉：</strong>发现 {{ newer_than_cursor }} 条晚于游标的消息，缺口可能较大；优先使用 <span class="mono">--catch-up</span> 补拉，不建议逐条处理。
+    <strong>建议手动补拉：</strong>发现 {{ newer_than_cursor }} 条晚于 <span class="mono">last_ingested_at={{ last_ingested_at or '-' }}</span> 的消息，缺口可能较大；优先使用 <span class="mono">--catch-up</span> 补拉，不建议逐条处理。
   </div>
   {% endif %}
 
@@ -90,7 +91,7 @@
       <div class="review-value">{{ state.last_ws_initial_count or 0 }} / {{ state.last_ws_initial_saved_count or 0 }}</div>
     </div>
     <div class="review-card">
-      <div class="review-label">晚于当前游标</div>
+      <div class="review-label">晚于 last_ingested_at</div>
       <div class="review-value">{{ review.newer_than_cursor }}</div>
     </div>
     <div class="review-card">

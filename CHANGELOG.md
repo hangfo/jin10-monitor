@@ -1,4 +1,4 @@
-更新时间：2026-06-18 07:18（Asia/Shanghai）
+更新时间：2026-06-18 09:26（Asia/Shanghai）
 
 # Changelog
 
@@ -6,6 +6,8 @@
 
 ## 2026-06-18
 
+- 清理旧内嵌 Dashboard 原型：`jin10_monitor.py --dashboard` 不再启动旧 HTTPServer 页面，改为提示使用独立 `run_dashboard.py`；同步更新 README 和测试，采集、Telegram 推送、历史查询与 Dashboard 深链保持不变。
+- 改进 `/system/ws-initial` 只读审计文案：晚于游标的统计明确展示对比基准 `last_ingested_at`，并在查询结果顶层补充该字段，方便人工判断 WebSocket initial history 是否覆盖短缺口。
 - 修复 launchd 采集服务启动防护：`scripts/run_monitor.sh` 不再用 shell `source .env`，改由 `scripts/run_monitor.py` 通过 `python-dotenv` 加载配置后启动 `jin10_monitor.py`，避免 `.env` 中带空格的值导致 monitor 反复以 `127` 退出。
 - 生产恢复：确认 `2026-06-12 00:51:18` 后采集主服务因本地 `.env` 解析失败停摆；手动补拉 4800+ 条历史快讯入本地业务库，未补发历史 Telegram；恢复 WebSocket 实时主路与实时 Telegram 推送。REST 仍可能因金十侧 `403` 处于退避，`2026-06-17 18:00-24:00` 仍需冷却后再补。
 

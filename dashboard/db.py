@@ -537,6 +537,7 @@ def query_ws_initial_review(*, limit: int = 80) -> dict[str, Any]:
         "items": items,
         "total_reviewed": len(items),
         "newer_than_cursor": newer_than_cursor,
+        "last_ingested_at": state.get("last_ingested_at", ""),
     }
 
 

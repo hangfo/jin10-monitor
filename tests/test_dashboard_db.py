@@ -217,6 +217,7 @@ def test_query_ws_initial_review_marks_cursor_and_delivery_state(dashboard_histo
     by_id = {item["id"]: item for item in review["items"]}
 
     assert review["state"]["last_ingested_id"] == "cursor-id"
+    assert review["last_ingested_at"] == history_ts(-5)
     assert review["total_reviewed"] == 2
     assert review["newer_than_cursor"] == 1
     assert by_id["ws-initial-new"]["newer_than_cursor"] is True
