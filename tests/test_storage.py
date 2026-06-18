@@ -242,6 +242,7 @@ def test_handle_item_marks_realtime_delivery_after_successful_send(temp_history_
 
     monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
     monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "telegram_skip_reason", lambda: "")
     monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
 
     asyncio.run(jm.handle_item(object(), item, source="rest"))
@@ -296,6 +297,59 @@ def test_handle_item_stores_unmatched_item_without_sending(temp_history_db, monk
     assert row["priority_level"] == jm.PRIORITY_NONE
     assert not jm.has_any_delivery(conn, "realtime-unmatched", channel="telegram")
     assert telegram_status(conn, "realtime-unmatched", mode="realtime") is None
+
+
+def test_handle_ws_initial_items_sends_one_summary_without_individual_delivery(temp_history_db, monkeypatch):
+    old_time = datetime(2026, 5, 17, 10, 0, 0)
+    sent_messages = []
+    existing = news_item("ws-initial-existing", when=old_time, content="hit already")
+    jm.save_history_item(existing, hit=True, high=False, source="ws", priority_level=jm.PRIORITY_NORMAL)
+    conn = jm.get_db()
+    jm.mark_delivery(conn, "ws-initial-existing", channel="telegram", mode="realtime")
+    conn.commit()
+
+    async def fake_send_telegram(session, text):
+        sent_messages.append(text)
+        return jm.TelegramSendResult(jm.TELEGRAM_STATUS_SENT)
+
+    monkeypatch.setattr(jm, "KEYWORDS", ["hit"])
+    monkeypatch.setattr(jm, "HIGH_PRIORITY", [])
+    monkeypatch.setattr(jm, "telegram_skip_reason", lambda: "")
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+
+    result = asyncio.run(
+        jm.handle_ws_initial_items(
+            object(),
+            [
+                {
+                    **news_item("ws-initial-new-hit", when=old_time, title="Reconnect hit", content="hit from reconnect"),
+                    "important": True,
+                },
+                news_item("ws-initial-plain", when=old_time, content="plain reconnect"),
+                existing,
+            ],
+        )
+    )
+
+    conn = jm.get_db()
+    assert result["stored"] == 2
+    assert result["push_candidates"] == 1
+    assert result["telegram_summary_sent"] is True
+    assert len(sent_messages) == 1
+    assert "金十重连补拉完成" in sent_messages[0]
+    assert "自动补拉只入库和摘要，不逐条推送历史消息。" in sent_messages[0]
+    assert "Reconnect hit" in sent_messages[0]
+    assert row_by_id(conn, "ws-initial-new-hit")["source"] == "ws_initial"
+    assert row_by_id(conn, "ws-initial-plain")["priority_level"] == jm.PRIORITY_NONE
+    assert not jm.has_any_delivery(conn, "ws-initial-new-hit", channel="telegram")
+    assert telegram_status(conn, "ws-initial-new-hit", mode="ws_initial") is None
+    assert telegram_status(conn, jm.catchup_summary_status_id(result), mode="ws_initial_summary") == (
+        jm.TELEGRAM_STATUS_SENT,
+        "stored=2 push_candidates=1 truncated=False",
+    )
+    assert telegram_status(conn, "ws-initial-plain", mode="ws_initial") is None
+    assert telegram_status(conn, "ws-initial-existing", mode="ws_initial") is None
+    assert state_value(conn, "last_ws_initial_saved_count") == "2"
 
 
 def test_handle_item_suppresses_similar_realtime_pushes_after_success(temp_history_db, monkeypatch):
@@ -672,6 +726,84 @@ def test_catch_up_window_stores_unmatched_items_without_send_candidate(temp_hist
         jm.PRIORITY_HIGH: 0,
         jm.PRIORITY_NORMAL: 0,
     }
+
+
+def test_split_catchup_windows_uses_adjacent_half_open_windows():
+    windows = jm.split_catchup_windows(
+        datetime(2026, 5, 17, 10, 0, 0),
+        datetime(2026, 5, 17, 11, 10, 0),
+        30,
+    )
+
+    assert windows == [
+        (datetime(2026, 5, 17, 10, 0, 0), datetime(2026, 5, 17, 10, 30, 0)),
+        (datetime(2026, 5, 17, 10, 30, 0), datetime(2026, 5, 17, 11, 0, 0)),
+        (datetime(2026, 5, 17, 11, 0, 0), datetime(2026, 5, 17, 11, 10, 0)),
+    ]
+
+
+def test_catch_up_windowed_stops_after_first_failed_sub_window(temp_history_db, monkeypatch):
+    calls = []
+
+    def fake_catch_up_window(start_dt, end_dt, **kwargs):
+        calls.append((start_dt, end_dt, kwargs))
+        if len(calls) == 2:
+            return {
+                "ok": False,
+                "error": "HTTPError: HTTP Error 403: Forbidden",
+                "send_candidates": [],
+                "summary_items": [],
+                "seen_item_ids": [],
+            }
+        return {
+            "ok": True,
+            "source": kwargs["source"],
+            "window": {
+                "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            "pages": 1,
+            "scanned": 2,
+            "stored": 2,
+            "push_candidates": 1,
+            "priority_counts": {
+                jm.PRIORITY_IMPORTANT: 1,
+                jm.PRIORITY_HIGH: 0,
+                jm.PRIORITY_NORMAL: 0,
+            },
+            "already_stored": 0,
+            "already_delivered": 0,
+            "send_candidates": [{"id": f"send-{len(calls)}"}],
+            "send_candidate_count": 1,
+            "summary_items": [{"time": "2026-05-17 10:01:00", "priority_level": jm.PRIORITY_IMPORTANT, "text": "hit"}],
+            "seen_item_ids": [f"seen-{len(calls)}"],
+            "truncated": False,
+            "error": "",
+        }
+
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+
+    result = jm.catch_up_windowed(
+        datetime(2026, 5, 17, 10, 0, 0),
+        datetime(2026, 5, 17, 11, 30, 0),
+        source="catchup_manual",
+        max_store=100,
+        max_send=10,
+        window_minutes=30,
+    )
+
+    assert result["ok"] is False
+    assert result["stopped_early"] is True
+    assert result["error"] == "HTTPError: HTTP Error 403: Forbidden"
+    assert result["stored"] == 2
+    assert result["push_candidates"] == 1
+    assert result["seen_item_ids"] == ["seen-1"]
+    assert len(result["sub_windows"]) == 2
+    assert len(calls) == 2
+    assert calls[0][0] == datetime(2026, 5, 17, 10, 0, 0)
+    assert calls[0][1] == datetime(2026, 5, 17, 10, 30, 0)
+    assert calls[1][0] == datetime(2026, 5, 17, 10, 30, 0)
+    assert calls[1][1] == datetime(2026, 5, 17, 11, 0, 0)
 
 
 def test_build_catchup_summary_items_prioritizes_important_and_high_only():

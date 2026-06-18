@@ -1511,6 +1511,99 @@ def record_ws_initial_runtime_status(items: list[dict], *, saved_count: int) -> 
         log.debug("WebSocket 初始历史状态写入 runtime_state 失败：%s", exc)
 
 
+async def handle_ws_initial_items(session: aiohttp.ClientSession, items: list[dict]) -> dict:
+    conn = get_db()
+    saved_count = 0
+    rows = []
+    item_times = []
+    for item in items:
+        fid = str(item.get("id", ""))
+        if fid:
+            already_stored = history_item_exists(conn, fid)
+            if not already_stored:
+                saved_count += 1
+            remember_seen_id(fid)
+        else:
+            already_stored = True
+        item_dt = parse_item_time(item)
+        if item_dt:
+            item_times.append(item_dt)
+        title, content = item_text(item)
+        hit, high = match_keywords(f"{title} {content}")
+        priority_level = classify_priority(item, hit=hit, high=high)
+        should = should_push(priority_level, hit=hit)
+        save_history_item(
+            item,
+            hit=hit,
+            high=high,
+            source="ws_initial",
+            priority_level=priority_level,
+        )
+        rows.append({
+            "id": fid,
+            "time": item_dt.strftime("%Y-%m-%d %H:%M:%S") if item_dt else "",
+            "item": item,
+            "should_push": should and bool(item_full_text(item)),
+            "priority_level": priority_level,
+            "already_stored": already_stored,
+        })
+
+    record_ws_initial_runtime_status(items, saved_count=saved_count)
+    conn.commit()
+
+    new_rows = [row for row in rows if not row["already_stored"]]
+    push_rows = [row for row in new_rows if row["should_push"]]
+    priority_counts = {
+        priority: sum(1 for row in push_rows if row["priority_level"] == priority)
+        for priority in (PRIORITY_IMPORTANT, PRIORITY_HIGH, PRIORITY_NORMAL)
+    }
+    oldest = format_cursor_datetime(min(item_times)) if item_times else ""
+    newest = format_cursor_datetime(max(item_times)) if item_times else ""
+    result = {
+        "ok": True,
+        "trigger": "ws_initial",
+        "window": {"start": oldest, "end": newest},
+        "stored": saved_count,
+        "already_stored": len(rows) - saved_count,
+        "push_candidates": len(push_rows),
+        "priority_counts": priority_counts,
+        "summary_items": build_catchup_summary_items(push_rows),
+        "truncated": False,
+        "telegram_summary_sent": False,
+        "telegram_summary_skipped": False,
+        "telegram_skip_reason": "",
+    }
+    if not saved_count or not CATCHUP_TELEGRAM:
+        return result
+
+    skip_reason = telegram_skip_reason()
+    if skip_reason:
+        result["telegram_summary_skipped"] = True
+        result["telegram_skip_reason"] = skip_reason
+        record_telegram_delivery_status(
+            conn,
+            catchup_summary_status_id(result),
+            mode="ws_initial_summary",
+            status=TELEGRAM_STATUS_SKIPPED,
+            detail=catchup_summary_delivery_detail(result, skip_reason),
+        )
+        conn.commit()
+        log.warning("WebSocket initial history 摘要已生成，但被保护规则跳过 Telegram：%s", skip_reason)
+        return result
+
+    send_result = await send_telegram(session, format_catchup_summary_message(result))
+    result["telegram_summary_sent"] = send_result.ok
+    record_telegram_delivery_status(
+        conn,
+        catchup_summary_status_id(result),
+        mode="ws_initial_summary",
+        status=send_result.status,
+        detail=catchup_summary_delivery_detail(result, send_result.detail),
+    )
+    conn.commit()
+    return result
+
+
 async def poll_once(session: aiohttp.ClientSession) -> list[dict]:
     global rest_forbidden_backoff_until, rest_forbidden_streak
     now = time.time()
@@ -1823,6 +1916,110 @@ def catch_up_window(
     return {"ok": False, "error": last_error or "未知错误", "send_candidates": [], "summary_items": [], "seen_item_ids": []}
 
 
+def split_catchup_windows(start_dt: datetime, end_dt: datetime, minutes: int) -> list[tuple[datetime, datetime]]:
+    if minutes <= 0 or end_dt <= start_dt:
+        return [(start_dt, end_dt)]
+    windows = []
+    cursor = start_dt
+    step = timedelta(minutes=minutes)
+    while cursor < end_dt:
+        next_dt = min(cursor + step, end_dt)
+        windows.append((cursor, next_dt))
+        cursor = next_dt
+    return windows
+
+
+def merge_catchup_results(
+    window_results: list[dict],
+    *,
+    start_dt: datetime,
+    end_dt: datetime,
+    max_send: int,
+    window_minutes: int,
+) -> dict:
+    priority_counts = {
+        PRIORITY_IMPORTANT: 0,
+        PRIORITY_HIGH: 0,
+        PRIORITY_NORMAL: 0,
+    }
+    send_candidates = []
+    summary_items = []
+    seen_item_ids = []
+    first_error = ""
+    ok = True
+    for result in window_results:
+        if not result.get("ok"):
+            ok = False
+            first_error = str(result.get("error") or "子窗口补拉失败")
+            break
+        counts = result.get("priority_counts") or {}
+        for priority in priority_counts:
+            priority_counts[priority] += int(counts.get(priority) or 0)
+        send_candidates.extend(result.get("send_candidates") or [])
+        summary_items.extend(result.get("summary_items") or [])
+        seen_item_ids.extend(result.get("seen_item_ids") or [])
+
+    if max_send >= 0:
+        send_candidates = send_candidates[:max_send]
+    return {
+        "ok": ok,
+        "source": "catchup_manual",
+        "window": {
+            "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        },
+        "window_minutes": window_minutes,
+        "sub_windows": window_results,
+        "pages": sum(int(result.get("pages") or 0) for result in window_results if result.get("ok")),
+        "scanned": sum(int(result.get("scanned") or 0) for result in window_results if result.get("ok")),
+        "stored": sum(int(result.get("stored") or 0) for result in window_results if result.get("ok")),
+        "push_candidates": sum(int(result.get("push_candidates") or 0) for result in window_results if result.get("ok")),
+        "priority_counts": priority_counts,
+        "already_stored": sum(int(result.get("already_stored") or 0) for result in window_results if result.get("ok")),
+        "already_delivered": sum(int(result.get("already_delivered") or 0) for result in window_results if result.get("ok")),
+        "send_candidates": send_candidates,
+        "send_candidate_count": len(send_candidates),
+        "summary_items": summary_items[:10],
+        "seen_item_ids": seen_item_ids,
+        "truncated": any(bool(result.get("truncated")) for result in window_results if result.get("ok")),
+        "error": first_error,
+        "stopped_early": not ok,
+    }
+
+
+def catch_up_windowed(
+    start_dt: datetime,
+    end_dt: datetime,
+    *,
+    source: str,
+    max_store: int,
+    max_send: int,
+    window_minutes: int,
+) -> dict:
+    windows = split_catchup_windows(start_dt, end_dt, window_minutes)
+    results = []
+    for window_start, window_end in windows:
+        result = catch_up_window(
+            window_start,
+            window_end,
+            source=source,
+            max_store=max_store,
+            max_send=max_send,
+        )
+        results.append(result)
+        if not result.get("ok"):
+            break
+    if len(results) == 1 and window_minutes <= 0:
+        return results[0]
+    return merge_catchup_results(
+        results,
+        start_dt=start_dt,
+        end_dt=end_dt,
+        max_send=max_send,
+        window_minutes=window_minutes,
+    )
+
+
 def score_keywords(text: str, keywords: list[str]) -> tuple[int, list[str]]:
     lower = text.lower()
     hits = []
@@ -1958,6 +2155,10 @@ def print_catchup_summary(result: dict) -> None:
         print(f"错误: {result.get('error')}")
         return
     print(f"入库: {result.get('stored', 0)} 条")
+    if result.get("sub_windows"):
+        print(f"子窗口: {len(result.get('sub_windows') or [])} 个")
+    if result.get("stopped_early"):
+        print("注意: 子窗口补拉失败，已停止后续窗口。")
     if result.get("already_stored"):
         print(f"已存在未重复入库: {result.get('already_stored', 0)} 条")
     print(f"命中推送条件: {result.get('push_candidates', 0)} 条")
@@ -1983,7 +2184,12 @@ def format_catchup_summary_message(result: dict) -> str:
     window = result.get("window", {})
     counts = result.get("priority_counts") or {}
     trigger = result.get("trigger", "startup")
-    title = "金十自愈补拉完成" if trigger == "gap" else "金十离线补拉完成"
+    if trigger == "gap":
+        title = "金十自愈补拉完成"
+    elif trigger == "ws_initial":
+        title = "金十重连补拉完成"
+    else:
+        title = "金十离线补拉完成"
     lines = [
         f"📦 <b>{title}</b>",
         f"窗口：{escape(str(window.get('start', '')))} → {escape(str(window.get('end', '')))}",
@@ -2023,15 +2229,17 @@ async def run_catch_up(
     max_store: int,
     max_send: int,
     send_interval: float,
+    window_minutes: int = 0,
 ) -> dict:
     init_history_db()
     result = await asyncio.to_thread(
-        catch_up_window,
+        catch_up_windowed,
         start_dt,
         end_dt,
         source="catchup_manual",
         max_store=max_store,
         max_send=max_send,
+        window_minutes=window_minutes,
     )
     result["telegram_enabled"] = telegram_enabled
     result["telegram_sent"] = 0
@@ -2366,23 +2574,14 @@ async def ws_loop(session: aiohttp.ClientSession) -> None:
                     elif code == 1200 and isinstance(data, list):
                         if not skipped_initial_list:
                             initial_items = [item for item in data if isinstance(item, dict)]
-                            saved_count = 0
-                            conn = get_db()
-                            for item in initial_items:
-                                fid = str(item.get("id", ""))
-                                if fid:
-                                    if not history_item_exists(conn, fid):
-                                        saved_count += 1
-                                    remember_seen_id(fid)
-                                title, content = item_text(item)
-                                hit, high = match_keywords(f"{title} {content}")
-                                save_history_item(item, hit=hit, high=high, source="ws_initial")
-                            record_ws_initial_runtime_status(initial_items, saved_count=saved_count)
+                            summary = await handle_ws_initial_items(session, initial_items)
                             skipped_initial_list = True
                             log.info(
-                                "WebSocket 初始历史列表已预热去重：%d 条，新入库 %d 条",
+                                "WebSocket 初始历史列表已预热去重：%d 条，新入库 %d 条，摘要 Telegram sent=%s skipped=%s",
                                 len(initial_items),
-                                saved_count,
+                                summary.get("stored", 0),
+                                summary.get("telegram_summary_sent", False),
+                                summary.get("telegram_summary_skipped", False),
                             )
                             continue
                         for item in data:
@@ -2520,6 +2719,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--catch-up-max-store", type=int, default=CATCHUP_MAX_STORE, help="补拉最多入库条数，范围 20-5000")
     parser.add_argument("--catch-up-max-send", type=int, default=CATCHUP_MAX_SEND, help="补拉最多发送 Telegram 条数，范围 0-300")
     parser.add_argument("--catch-up-send-interval", type=float, default=CATCHUP_SEND_INTERVAL, help="补拉 Telegram 发送间隔秒数，范围 0-10")
+    parser.add_argument("--catch-up-window-minutes", type=int, default=0, help="手动补拉按多少分钟拆分子窗口；0 表示不拆分")
     return parser.parse_args()
 
 
@@ -2528,6 +2728,7 @@ def normalized_catchup_limits(args: argparse.Namespace) -> dict[str, Any]:
         "max_store": clamp_int_value("--catch-up-max-store", args.catch_up_max_store, 20, 5000),
         "max_send": clamp_int_value("--catch-up-max-send", args.catch_up_max_send, 0, 300),
         "send_interval": clamp_float_value("--catch-up-send-interval", args.catch_up_send_interval, 0.0, 10.0),
+        "window_minutes": clamp_int_value("--catch-up-window-minutes", getattr(args, "catch_up_window_minutes", 0), 0, 1440),
     }
 
 
@@ -2563,6 +2764,7 @@ if __name__ == "__main__":
                 max_store=catchup_limits["max_store"],
                 max_send=catchup_limits["max_send"],
                 send_interval=catchup_limits["send_interval"],
+                window_minutes=catchup_limits["window_minutes"],
             ))
             print_catchup_summary(result)
         elif args.lookup_date or args.lookup_start or args.lookup_end:

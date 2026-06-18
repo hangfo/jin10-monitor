@@ -1,11 +1,16 @@
-更新时间：2026-06-18 09:26（Asia/Shanghai）
+更新时间：2026-06-19 01:00（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
+## 2026-06-19
+
+- 恢复 WebSocket initial history 的补拉可见性：重连快照中新入库的消息继续只入库、不逐条刷屏；如有新增内容，会发送一条“金十重连补拉完成”摘要并记录 `mode=ws_initial_summary`，方便确认补拉确实发生。
+
 ## 2026-06-18
 
+- 增强手动离线补拉的 REST 不稳定处理：新增 `--catch-up-window-minutes`，可将手动 `--catch-up` 拆成连续子窗口顺序执行，任一子窗口失败即停止后续窗口，避免在 REST 403 退避期间连续硬打接口；默认值 `0` 保持旧单窗口行为，自动补拉路径不变。
 - 清理旧内嵌 Dashboard 原型：`jin10_monitor.py --dashboard` 不再启动旧 HTTPServer 页面，改为提示使用独立 `run_dashboard.py`；同步更新 README 和测试，采集、Telegram 推送、历史查询与 Dashboard 深链保持不变。
 - 改进 `/system/ws-initial` 只读审计文案：晚于游标的统计明确展示对比基准 `last_ingested_at`，并在查询结果顶层补充该字段，方便人工判断 WebSocket initial history 是否覆盖短缺口。
 - 修复 launchd 采集服务启动防护：`scripts/run_monitor.sh` 不再用 shell `source .env`，改由 `scripts/run_monitor.py` 通过 `python-dotenv` 加载配置后启动 `jin10_monitor.py`，避免 `.env` 中带空格的值导致 monitor 反复以 `127` 退出。

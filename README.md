@@ -46,7 +46,7 @@ pytest
 - `python run_dashboard.py`：启动独立本地只读 Dashboard，默认打开 `http://127.0.0.1:8765/`。
 - `python jin10_monitor.py --lookup-date 2026-05-02 --lookup-start 20:05 --lookup-end 20:20`：直接从金十 REST 回溯指定时间窗口。
 - `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --no-catch-up-telegram`：手动补拉指定离线窗口，只入库不发 Telegram。
-- `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --catch-up-telegram --catch-up-max-send 10`：手动补拉并最多补发 10 条 Telegram；`--catch-up-max-store` 范围 `20-5000`，`--catch-up-max-send` 范围 `0-300`，`--catch-up-send-interval` 范围 `0-10` 秒。
+- `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --catch-up-telegram --catch-up-max-send 10`：手动补拉并最多补发 10 条 Telegram；`--catch-up-max-store` 范围 `20-5000`，`--catch-up-max-send` 范围 `0-300`，`--catch-up-send-interval` 范围 `0-10` 秒，`--catch-up-window-minutes` 可将手动补拉拆成子窗口。
 - `python jin10_monitor.py`：常驻运行，WebSocket + REST 双路。
 
 ## 配置
@@ -151,11 +151,24 @@ python jin10_monitor.py --telegram-status failed --telegram-status-limit 20
 
 常驻运行时，如果 Mac 睡眠、网络长时间断开或进程被系统暂停，脚本会检测 REST 轮询是否停顿超过 `AUTO_CATCHUP_GAP_SECONDS`。恢复后会用同样的规则从 `last_ingested_at` 补到恢复时刻，并只发送一条“自愈补拉”摘要。摘要会列出最多 10 条 T3/T2 重点标题，方便快速判断是否需要手动逐条补发。
 
+WebSocket 重连收到 initial history 快照时，会把新入库消息写入 SQLite，并只发送一条“金十重连补拉完成”摘要，不逐条刷屏。摘要用于确认补拉发生和查看重点标题；单条历史消息不会写入 `delivery_log`，避免被误判为已经逐条推送过。
+
 补拉跨多页时，终端会输出轻量进度日志，例如：
 
 ```text
 catch-up page=1 source=catchup_auto window_hits=20 collected=20 existing=5
 catch-up page=2 source=catchup_auto window_hits=23 collected=43 existing=18
+```
+
+如果 REST 不稳定，手动补拉可以按较小窗口顺序执行；任一子窗口失败后会停止后续窗口，避免连续硬打接口：
+
+```bash
+python jin10_monitor.py --catch-up \
+  --from "2026-06-17 18:00:00" \
+  --to "2026-06-18 00:00:00" \
+  --no-catch-up-telegram \
+  --catch-up-max-send 0 \
+  --catch-up-window-minutes 30
 ```
 
 查看游标是否正常推进：
