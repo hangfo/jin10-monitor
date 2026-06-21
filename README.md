@@ -72,6 +72,7 @@ pytest
 - `CATCHUP_MAX_SEND`：手动补拉最多补发 Telegram 条数，默认 120，范围 `0-300`；设为 `0` 可关闭逐条补发。
 - `CATCHUP_SEND_INTERVAL`：手动补发 Telegram 的发送间隔，默认 0.5 秒，范围 `0-10` 秒；设为 `0` 表示不等待。
 - `AUTO_CATCHUP_GAP_SECONDS`：常驻进程检测到 REST 轮询停顿超过该秒数后，会自动补拉一次摘要，默认 300，范围 `0-86400`；设为 `0` 可关闭。
+- `HEALTH_HEARTBEAT_INTERVAL_S`：Telegram 健康心跳间隔，默认 21600 秒（6 小时），范围 `0-604800`；设为 `0` 可关闭。心跳会按 `last_ingested_at` 新鲜度区分正常、停滞和告警，不写入 `delivery_log`。
 - `SHOW_DELAY_IF_SECONDS`：消息发生时间距当前超过该秒数时，在 Telegram 和终端显示 `延迟：Xs`，默认 60，范围 `0-3600`；设为 `0` 可关闭。
 - `ALLOW_TMP_TELEGRAM`：临时测试库是否允许真实发送 Telegram，默认 `0`。当 `HISTORY_DB=/tmp/...` 时，脚本会跳过真实 Telegram 发送并在终端显示跳过原因。
 
@@ -150,6 +151,8 @@ python jin10_monitor.py --telegram-status failed --telegram-status-limit 20
 也就是从上次已入库消息之后开始，到本次启动那一刻为止。自动补拉只入库并发送一条 Telegram 摘要，不逐条推送历史消息，避免补拉期间堵住实时新闻。
 
 常驻运行时，如果 Mac 睡眠、网络长时间断开或进程被系统暂停，脚本会检测 REST 轮询是否停顿超过 `AUTO_CATCHUP_GAP_SECONDS`。恢复后会用同样的规则从 `last_ingested_at` 补到恢复时刻，并只发送一条“自愈补拉”摘要。摘要会列出最多 10 条 T3/T2 重点标题，方便快速判断是否需要手动逐条补发。
+
+常驻进程还会按 `HEALTH_HEARTBEAT_INTERVAL_S` 向 Telegram 发送健康心跳：5 分钟内有入库显示正常，5-30 分钟无入库显示停滞提醒，超过 30 分钟无入库显示告警。心跳只记录 `telegram_delivery_status` 的 `mode=health_heartbeat` 和 `last_health_heartbeat_at`，不会写入 `delivery_log`，避免被 Dashboard 误判为某条新闻已推送。
 
 WebSocket 重连收到 initial history 快照时，会把新入库消息写入 SQLite，并只发送一条“金十重连补拉完成”摘要，不逐条刷屏。摘要用于确认补拉发生和查看重点标题；单条历史消息不会写入 `delivery_log`，避免被误判为已经逐条推送过。
 

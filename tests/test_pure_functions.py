@@ -292,6 +292,25 @@ def test_send_telegram_returns_unknown_timeout_without_retry(monkeypatch):
     assert len(session.calls) == 1
 
 
+def test_format_health_heartbeat_message_levels_by_staleness():
+    now = jm.datetime(2026, 6, 21, 17, 30, 0)
+
+    assert "✅ Monitor 正常" in jm.format_health_heartbeat_message("2026-06-21 17:28:00", now=now)
+    assert "⚠️ Monitor 已 20 分钟无入库" in jm.format_health_heartbeat_message("2026-06-21 17:10:00", now=now)
+    assert "🚨 Monitor 已 45 分钟无入库，请检查" in jm.format_health_heartbeat_message("2026-06-21 16:45:00", now=now)
+    assert "🚨 Monitor 无入库游标" in jm.format_health_heartbeat_message("", now=now)
+
+
+def test_catchup_checkpoint_progress_text_uses_original_window():
+    progress = jm.catchup_checkpoint_progress_text({
+        "original_start": "2026-06-18 11:00:00",
+        "target_end": "2026-06-18 23:00:00",
+        "next_start": "2026-06-18 17:00:00",
+    })
+
+    assert progress == "进度: 50.0%（已完成 360/720 分钟）"
+
+
 def test_previous_page_cursor_moves_before_oldest_item():
     dated = [
         (datetime(2026, 5, 16, 20, 30, 10), {"id": "newer"}),

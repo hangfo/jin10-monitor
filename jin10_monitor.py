@@ -116,6 +116,7 @@ CATCHUP_MAX_STORE = env_range_int("CATCHUP_MAX_STORE", 1000, 20, 5000)
 CATCHUP_MAX_SEND = env_range_int("CATCHUP_MAX_SEND", 120, 0, 300)
 CATCHUP_SEND_INTERVAL = env_range_float("CATCHUP_SEND_INTERVAL", 0.5, 0.0, 10.0)
 AUTO_CATCHUP_GAP_SECONDS = env_range_int("AUTO_CATCHUP_GAP_SECONDS", 300, 0, 86400)
+HEALTH_HEARTBEAT_INTERVAL_S = env_range_int("HEALTH_HEARTBEAT_INTERVAL_S", 6 * 3600, 0, 7 * 86400)
 SHOW_DELAY_IF_SECONDS = env_range_int("SHOW_DELAY_IF_SECONDS", 60, 0, 3600)
 ALLOW_TMP_TELEGRAM = os.getenv("ALLOW_TMP_TELEGRAM", "0").lower() in {"1", "true", "yes", "on"}
 TELEGRAM_TIMEOUT = aiohttp.ClientTimeout(total=10)
@@ -1964,6 +1965,18 @@ def clear_catchup_checkpoint(conn: sqlite3.Connection) -> None:
         delete_state(conn, key)
 
 
+def catchup_checkpoint_progress_text(checkpoint: dict[str, str]) -> str:
+    original_start = parse_cursor_datetime(checkpoint.get("original_start", ""))
+    target_end = parse_cursor_datetime(checkpoint.get("target_end", ""))
+    next_start = parse_cursor_datetime(checkpoint.get("next_start", ""))
+    if not (original_start and target_end and next_start) or target_end <= original_start:
+        return ""
+    total_minutes = max(0.0, (target_end - original_start).total_seconds() / 60)
+    done_minutes = min(total_minutes, max(0.0, (next_start - original_start).total_seconds() / 60))
+    pct = (done_minutes / total_minutes * 100) if total_minutes else 0.0
+    return f"进度: {pct:.1f}%（已完成 {done_minutes:.0f}/{total_minutes:.0f} 分钟）"
+
+
 def merge_catchup_results(
     window_results: list[dict],
     *,
@@ -1989,6 +2002,7 @@ def merge_catchup_results(
             ok = False
             if not first_error:
                 first_error = str(result.get("error") or "子窗口补拉失败")
+            # 失败窗口没有可靠的入库/候选发送数据；后续成功窗口仍可继续聚合。
             continue
         counts = result.get("priority_counts") or {}
         for priority in priority_counts:
@@ -2243,10 +2257,13 @@ def print_catchup_summary(result: dict) -> None:
     checkpoint = result.get("checkpoint") or {}
     if checkpoint.get("next_start"):
         print(f"断点: 下次可用 --resume 从 {checkpoint.get('next_start')} 继续。")
+        progress_text = catchup_checkpoint_progress_text(checkpoint)
+        if progress_text:
+            print(progress_text)
     elif has_sub_windows and result.get("ok"):
         print("断点: 窗口已完整补拉，已清空。")
     if result.get("already_stored"):
-        print(f"已存在未重复入库: {result.get('already_stored', 0)} 条")
+        print(f"去重跳过（已存在）: {result.get('already_stored', 0)} 条")
     print(f"命中推送条件: {result.get('push_candidates', 0)} 条")
     print(f"已推送过未重复发送: {result.get('already_delivered', 0)} 条")
     print(f"本次候选发送: {result.get('send_candidate_count', 0)} 条")
@@ -2736,6 +2753,50 @@ async def handle_item(session: aiohttp.ClientSession, item: dict, *, source: str
     conn.commit()
 
 
+def format_health_heartbeat_message(last_at: str, *, now: Optional[datetime] = None) -> str:
+    current = now or datetime.now().replace(microsecond=0)
+    ts_text = current.strftime("%m-%d %H:%M")
+    last_dt = parse_cursor_datetime(last_at)
+    if not last_dt:
+        return f"🚨 Monitor 无入库游标 · {ts_text}\nlast_ingested_at: 未知"
+
+    minutes_ago = max(0.0, (current - last_dt).total_seconds() / 60)
+    if minutes_ago < 5:
+        icon = "✅"
+        status = "正常"
+    elif minutes_ago < 30:
+        icon = "⚠️"
+        status = f"已 {minutes_ago:.0f} 分钟无入库"
+    else:
+        icon = "🚨"
+        status = f"已 {minutes_ago:.0f} 分钟无入库，请检查"
+    return f"{icon} Monitor {status} · {ts_text}\nlast_ingested_at: {last_at}"
+
+
+async def health_heartbeat_loop(session: aiohttp.ClientSession) -> None:
+    if HEALTH_HEARTBEAT_INTERVAL_S <= 0:
+        log.info("health_heartbeat: 已禁用（HEALTH_HEARTBEAT_INTERVAL_S=0）")
+        return
+    log.info("health_heartbeat: 每 %.1fh 发送一次心跳", HEALTH_HEARTBEAT_INTERVAL_S / 3600)
+    while True:
+        await asyncio.sleep(HEALTH_HEARTBEAT_INTERVAL_S)
+        conn = get_db()
+        last_at = get_state(conn, "last_ingested_at")
+        message = format_health_heartbeat_message(last_at)
+        send_result = await send_telegram(session, message)
+        set_state(conn, "last_health_heartbeat_at", datetime.now().replace(microsecond=0).isoformat(sep=" "))
+        record_telegram_delivery_status(
+            conn,
+            "health_heartbeat",
+            mode="health_heartbeat",
+            status=send_result.status,
+            detail=send_result.detail,
+        )
+        conn.commit()
+        if not send_result.ok:
+            log.warning("health_heartbeat: 发送失败 status=%s detail=%s", send_result.status, send_result.detail)
+
+
 async def run_once(limit: int) -> None:
     init_history_db()
     connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
@@ -2774,6 +2835,8 @@ async def main() -> None:
                     name="startup_catchup",
                 )
             )
+        if HEALTH_HEARTBEAT_INTERVAL_S > 0:
+            tasks.append(asyncio.create_task(health_heartbeat_loop(session), name="health_heartbeat"))
         await asyncio.gather(
             *tasks,
         )

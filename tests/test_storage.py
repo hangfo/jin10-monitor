@@ -911,6 +911,38 @@ def test_resolve_catchup_cli_window_rejects_resume_with_from(temp_history_db):
         )
 
 
+def test_health_heartbeat_loop_records_status_without_delivery_log(temp_history_db, monkeypatch):
+    conn = jm.get_db()
+    jm.set_state(conn, "last_ingested_at", "2026-06-21 17:28:00")
+    conn.commit()
+    sleep_calls = 0
+    sent_messages = []
+
+    async def fake_sleep(seconds):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls > 1:
+            raise StopPollLoop
+
+    async def fake_send_telegram(session, text):
+        sent_messages.append(text)
+        return jm.TelegramSendResult(jm.TELEGRAM_STATUS_SENT)
+
+    monkeypatch.setattr(jm, "HEALTH_HEARTBEAT_INTERVAL_S", 1)
+    monkeypatch.setattr(jm.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+
+    with pytest.raises(StopPollLoop):
+        asyncio.run(jm.health_heartbeat_loop(object()))
+
+    assert len(sent_messages) == 1
+    assert "Monitor" in sent_messages[0]
+    assert "last_ingested_at: 2026-06-21 17:28:00" in sent_messages[0]
+    assert state_value(conn, "last_health_heartbeat_at")
+    assert telegram_status(conn, "health_heartbeat", mode="health_heartbeat") == (jm.TELEGRAM_STATUS_SENT, "")
+    assert not jm.has_any_delivery(conn, "health_heartbeat", channel="telegram")
+
+
 def test_build_catchup_summary_items_prioritizes_important_and_high_only():
     rows = [
         {
@@ -1763,6 +1795,7 @@ def test_main_schedules_websocket_before_rest_startup_tasks(temp_history_db, mon
         return real_create_task(coro, *args, **kwargs)
 
     monkeypatch.setattr(jm, "AUTO_CATCHUP", True)
+    monkeypatch.setattr(jm, "HEALTH_HEARTBEAT_INTERVAL_S", 1)
     monkeypatch.setattr(jm.aiohttp, "TCPConnector", lambda **kwargs: object())
     monkeypatch.setattr(jm.aiohttp, "ClientSession", lambda connector: FakeSession())
     monkeypatch.setattr(jm, "ws_loop", fake_ws_loop)
@@ -1773,7 +1806,7 @@ def test_main_schedules_websocket_before_rest_startup_tasks(temp_history_db, mon
     with pytest.raises(StopPollLoop):
         asyncio.run(jm.main())
 
-    assert created_tasks[:3] == ["ws_loop", "rest_preload_poll", "startup_catchup"]
+    assert created_tasks[:4] == ["ws_loop", "rest_preload_poll", "startup_catchup", "health_heartbeat"]
 
 
 @pytest.mark.parametrize(

@@ -1,8 +1,14 @@
-更新时间：2026-06-21 18:28（Asia/Shanghai）
+更新时间：2026-06-22 00:04（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
+
+## 2026-06-22
+
+- 新增差异化 Telegram 健康心跳：常驻进程默认每 6 小时发送一次在线状态，并按 `last_ingested_at` 新鲜度区分正常、停滞和超过 30 分钟无入库告警；心跳只记录 `mode=health_heartbeat` 与 `last_health_heartbeat_at`，不写入 `delivery_log`，避免污染新闻逐条推送判断。
+- 改进手动分窗口补拉终端反馈：断点续补时会用 `original_start` / `target_end` / `next_start` 显示整体进度，去重文案改为“去重跳过（已存在）”，并为失败窗口聚合逻辑补充维护注释，明确失败窗口不参与入库/候选发送统计。
+- 新增项目状态摘要 058：逐项记录 `057-diff.md` review 的采纳、暂缓和小误差，明确健康心跳上线后的运行边界、验证结果和下一轮 `/system` 日志诊断建议。
 
 ## 2026-06-21
 
