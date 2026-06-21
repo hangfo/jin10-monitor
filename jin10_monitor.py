@@ -1936,6 +1936,7 @@ def merge_catchup_results(
     end_dt: datetime,
     max_send: int,
     window_minutes: int,
+    stopped_early: bool = False,
 ) -> dict:
     priority_counts = {
         PRIORITY_IMPORTANT: 0,
@@ -1950,8 +1951,9 @@ def merge_catchup_results(
     for result in window_results:
         if not result.get("ok"):
             ok = False
-            first_error = str(result.get("error") or "子窗口补拉失败")
-            break
+            if not first_error:
+                first_error = str(result.get("error") or "子窗口补拉失败")
+            continue
         counts = result.get("priority_counts") or {}
         for priority in priority_counts:
             priority_counts[priority] += int(counts.get(priority) or 0)
@@ -1983,7 +1985,7 @@ def merge_catchup_results(
         "seen_item_ids": seen_item_ids,
         "truncated": any(bool(result.get("truncated")) for result in window_results if result.get("ok")),
         "error": first_error,
-        "stopped_early": not ok,
+        "stopped_early": stopped_early,
     }
 
 
@@ -1995,9 +1997,12 @@ def catch_up_windowed(
     max_store: int,
     max_send: int,
     window_minutes: int,
+    max_consecutive_errors: int = 2,
 ) -> dict:
     windows = split_catchup_windows(start_dt, end_dt, window_minutes)
     results = []
+    consecutive_errors = 0
+    stopped_early = False
     for window_start, window_end in windows:
         result = catch_up_window(
             window_start,
@@ -2008,7 +2013,12 @@ def catch_up_windowed(
         )
         results.append(result)
         if not result.get("ok"):
-            break
+            consecutive_errors += 1
+            if consecutive_errors >= max(1, max_consecutive_errors):
+                stopped_early = True
+                break
+            continue
+        consecutive_errors = 0
     if len(results) == 1 and window_minutes <= 0:
         return results[0]
     return merge_catchup_results(
@@ -2017,6 +2027,7 @@ def catch_up_windowed(
         end_dt=end_dt,
         max_send=max_send,
         window_minutes=window_minutes,
+        stopped_early=stopped_early,
     )
 
 

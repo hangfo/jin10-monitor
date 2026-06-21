@@ -160,7 +160,7 @@ catch-up page=1 source=catchup_auto window_hits=20 collected=20 existing=5
 catch-up page=2 source=catchup_auto window_hits=23 collected=43 existing=18
 ```
 
-如果 REST 不稳定，手动补拉可以按较小窗口顺序执行；任一子窗口失败后会停止后续窗口，避免连续硬打接口：
+如果 REST 不稳定，手动补拉可以按较小窗口顺序执行；单个子窗口失败后会继续尝试下一窗口，连续 2 个子窗口失败才停止后续窗口，避免一次网络抖动跳过全部剩余窗口，同时仍避免连续硬打接口：
 
 ```bash
 python jin10_monitor.py --catch-up \

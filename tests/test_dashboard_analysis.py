@@ -1288,9 +1288,12 @@ def test_run_monitor_loads_dotenv_without_shell_source():
 
     assert "source" not in run_monitor_sh
     assert "run_monitor.py" in run_monitor_sh
+    assert "import sys" in run_monitor_py
     assert "from dotenv import load_dotenv" in run_monitor_py
     assert "load_dotenv(ENV_FILE, override=True)" in run_monitor_py
     assert "os.execv" in run_monitor_py
+    assert "sys.executable" in run_monitor_py
+    assert "PYTHON_BIN" not in run_monitor_py
 
 
 def test_dashboard_bugfix_routes_are_registered():

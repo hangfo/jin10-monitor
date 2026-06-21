@@ -1,8 +1,13 @@
-更新时间：2026-06-19 01:00（Asia/Shanghai）
+更新时间：2026-06-21 00:00（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
+
+## 2026-06-21
+
+- 加固 launchd 启动接力：`scripts/run_monitor.py` 不再重复硬编码 `.venv/bin/python`，改用当前运行脚本的 `sys.executable` 执行 `jin10_monitor.py`，避免迁移到不同 Python 环境时二次路径声明失配。
+- 改进手动分窗口补拉容错：`catch_up_windowed` 在子窗口失败后会继续尝试下一窗口，只有连续 2 个子窗口失败才停止，减少单次网络瞬断导致后续窗口全部跳过的概率。
 
 ## 2026-06-19
 

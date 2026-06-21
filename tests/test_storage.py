@@ -742,12 +742,12 @@ def test_split_catchup_windows_uses_adjacent_half_open_windows():
     ]
 
 
-def test_catch_up_windowed_stops_after_first_failed_sub_window(temp_history_db, monkeypatch):
+def test_catch_up_windowed_stops_after_consecutive_failed_sub_windows(temp_history_db, monkeypatch):
     calls = []
 
     def fake_catch_up_window(start_dt, end_dt, **kwargs):
         calls.append((start_dt, end_dt, kwargs))
-        if len(calls) == 2:
+        if len(calls) in {2, 4, 5}:
             return {
                 "ok": False,
                 "error": "HTTPError: HTTP Error 403: Forbidden",
@@ -785,7 +785,7 @@ def test_catch_up_windowed_stops_after_first_failed_sub_window(temp_history_db, 
 
     result = jm.catch_up_windowed(
         datetime(2026, 5, 17, 10, 0, 0),
-        datetime(2026, 5, 17, 11, 30, 0),
+        datetime(2026, 5, 17, 12, 30, 0),
         source="catchup_manual",
         max_store=100,
         max_send=10,
@@ -795,15 +795,21 @@ def test_catch_up_windowed_stops_after_first_failed_sub_window(temp_history_db, 
     assert result["ok"] is False
     assert result["stopped_early"] is True
     assert result["error"] == "HTTPError: HTTP Error 403: Forbidden"
-    assert result["stored"] == 2
-    assert result["push_candidates"] == 1
-    assert result["seen_item_ids"] == ["seen-1"]
-    assert len(result["sub_windows"]) == 2
-    assert len(calls) == 2
+    assert result["stored"] == 4
+    assert result["push_candidates"] == 2
+    assert result["seen_item_ids"] == ["seen-1", "seen-3"]
+    assert len(result["sub_windows"]) == 5
+    assert len(calls) == 5
     assert calls[0][0] == datetime(2026, 5, 17, 10, 0, 0)
     assert calls[0][1] == datetime(2026, 5, 17, 10, 30, 0)
     assert calls[1][0] == datetime(2026, 5, 17, 10, 30, 0)
     assert calls[1][1] == datetime(2026, 5, 17, 11, 0, 0)
+    assert calls[2][0] == datetime(2026, 5, 17, 11, 0, 0)
+    assert calls[2][1] == datetime(2026, 5, 17, 11, 30, 0)
+    assert calls[3][0] == datetime(2026, 5, 17, 11, 30, 0)
+    assert calls[3][1] == datetime(2026, 5, 17, 12, 0, 0)
+    assert calls[4][0] == datetime(2026, 5, 17, 12, 0, 0)
+    assert calls[4][1] == datetime(2026, 5, 17, 12, 30, 0)
 
 
 def test_build_catchup_summary_items_prioritizes_important_and_high_only():
