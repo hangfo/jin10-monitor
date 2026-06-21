@@ -31,10 +31,21 @@ REST_HEADLINE_LABELS = {
     "recent": "最近成功",
     "no_recent_success": "暂无成功记录",
 }
+MONITOR_LOG_MARKERS = (
+    "[ERROR]",
+    " ERROR ",
+    "command not found",
+    "Traceback",
+    "Exception",
+)
 
 
 def history_db_path() -> Path:
     return Path(os.getenv("HISTORY_DB", str(DEFAULT_HISTORY_DB))).expanduser()
+
+
+def monitor_log_path() -> Path:
+    return Path(os.getenv("MONITOR_LOG_PATH", str(BASE_DIR / "logs" / "jin10-monitor.log"))).expanduser()
 
 
 def open_readonly_connection(path: Optional[Path] = None) -> sqlite3.Connection:
@@ -101,6 +112,39 @@ def safe_int(value: object, default: int = 0) -> int:
 
 def escape_like(value: str) -> str:
     return str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def query_recent_monitor_log_events(limit: int = 8, *, path: Optional[Path] = None) -> dict[str, Any]:
+    log_path = (path or monitor_log_path()).expanduser()
+    safe_limit = max(1, min(int(limit or 8), 30))
+    result: dict[str, Any] = {
+        "path": str(log_path),
+        "exists": log_path.exists(),
+        "events": [],
+    }
+    if not log_path.exists() or not log_path.is_file():
+        return result
+
+    max_bytes = 256 * 1024
+    with log_path.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        fh.seek(max(0, size - max_bytes))
+        text = fh.read().decode("utf-8", errors="replace")
+
+    events = []
+    for line in reversed(text.splitlines()):
+        clean = line.strip()
+        if not clean:
+            continue
+        if not any(marker in clean for marker in MONITOR_LOG_MARKERS):
+            continue
+        level = "ERROR" if "[ERROR]" in clean or " ERROR " in clean else "SHELL"
+        events.append({"level": level, "line": clean})
+        if len(events) >= safe_limit:
+            break
+    result["events"] = events
+    return result
 
 
 def history_health() -> dict[str, Any]:
@@ -964,6 +1008,7 @@ def query_system_health() -> dict[str, Any]:
         "ops_overview": ops_overview,
         "delivery_latest": delivery_latest,
         "catchup_summary_latest": row_to_dict(catchup_summary_row) if catchup_summary_row else {},
+        "recent_monitor_log_events": query_recent_monitor_log_events(),
     }
 
 

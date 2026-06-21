@@ -1613,6 +1613,9 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "provider_call_stats.recent_timeline" in system_template
     assert "provider_call_stats.recent_timeline | reverse" in system_template
     assert "uncounted_count" in system_template
+    assert "最近 monitor 错误日志" in system_template
+    assert "recent_monitor_log_events" in system_template
+    assert "command not found" in system_template
     assert "无需处理" in ws_initial_template
     assert "建议逐条确认" in ws_initial_template
     assert "建议手动补拉" in ws_initial_template

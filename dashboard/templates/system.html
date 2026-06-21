@@ -364,6 +364,35 @@
   </div>
 
   <div class="panel system-detail" style="margin-top:14px">
+    <h2 style="margin-top:0">最近 monitor 错误日志</h2>
+    {% set log_events = system_health.recent_monitor_log_events %}
+    {% if not log_events.exists %}
+    <div class="empty">未找到日志文件：<span class="mono">{{ log_events.path }}</span></div>
+    {% elif log_events.events %}
+    <table style="min-width:0">
+      <thead>
+        <tr>
+          <th style="min-width:72px">级别</th>
+          <th>日志行</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for event in log_events.events %}
+        <tr>
+          <td><span class="pill {{ 'failed' if event.level == 'ERROR' else 'unknown_timeout' }}">{{ event.level }}</span></td>
+          <td class="mono" style="word-break:break-all">{{ event.line }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="meta" style="margin-top:10px">只读扫描本地日志尾部，筛选 ERROR、command not found、Traceback 和 Exception；不触发补拉、REST 请求或 Telegram 发送。</div>
+    {% else %}
+    <div class="empty">最近日志尾部没有匹配的错误行。</div>
+    <div class="meta" style="margin-top:10px">只读扫描本地日志尾部，筛选 ERROR、command not found、Traceback 和 Exception；不触发补拉、REST 请求或 Telegram 发送。</div>
+    {% endif %}
+  </div>
+
+  <div class="panel system-detail" style="margin-top:14px">
     <h2 style="margin-top:0">Telegram 与补拉状态</h2>
     <table style="min-width:0">
       <thead>

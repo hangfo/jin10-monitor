@@ -423,6 +423,38 @@ def test_query_system_health_reads_persisted_rest_backoff_state(dashboard_histor
     assert any("REST 曾间歇恢复后当前再次退避" in notice["text"] for notice in health["system_notices"])
 
 
+def test_query_recent_monitor_log_events_reads_error_tail(tmp_path):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "00:01:00 [INFO] normal line",
+                "00:02:00 [ERROR] Telegram 超时，送达状态未知",
+                "scripts/run_monitor.sh: line 1: Proxy: command not found",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = db.query_recent_monitor_log_events(path=log_path)
+
+    assert result["exists"] is True
+    assert result["path"] == str(log_path)
+    assert [event["level"] for event in result["events"]] == ["SHELL", "ERROR"]
+    assert "command not found" in result["events"][0]["line"]
+    assert "Telegram 超时" in result["events"][1]["line"]
+
+
+def test_query_recent_monitor_log_events_handles_missing_file(tmp_path):
+    result = db.query_recent_monitor_log_events(path=tmp_path / "missing.log")
+
+    assert result == {
+        "path": str(tmp_path / "missing.log"),
+        "exists": False,
+        "events": [],
+    }
+
+
 def test_query_feed_page_applies_offset_limit_and_filters(dashboard_history_db):
     conn = sqlite3.connect(dashboard_history_db)
     insert_flash(conn, "dash-2", history_ts(-8), "Second Dashboard title")

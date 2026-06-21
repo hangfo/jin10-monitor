@@ -1,4 +1,4 @@
-更新时间：2026-06-22 00:04（Asia/Shanghai）
+更新时间：2026-06-22 00:20（Asia/Shanghai）
 
 # Changelog
 
@@ -6,6 +6,9 @@
 
 ## 2026-06-22
 
+- 增强 Dashboard `/system` 只读诊断：新增“最近 monitor 错误日志”面板，只扫描本地 `logs/jin10-monitor.log` 尾部并展示最近 `ERROR`、`command not found`、`Traceback`、`Exception` 行；不触发补拉、REST 请求、SQLite 写入或 Telegram 发送。
+- 生产观察：已 reload launchd 采集服务，确认当前生产进程加载健康心跳任务并输出 `health_heartbeat: 每 6.0h 发送一次心跳`；因心跳循环启动后先等待 6 小时，下一条真实 Telegram 健康心跳需继续观察。
+- 补拉尝试：按 30 分钟窗口重试 `2026-06-18 11:00:00` 到 `2026-06-18 23:00:00` 缺口，只入库、不发 Telegram；REST 仍返回 403，脚本在连续 2 个子窗口失败后停止，断点保留在 `2026-06-18 11:00:00`。
 - 新增差异化 Telegram 健康心跳：常驻进程默认每 6 小时发送一次在线状态，并按 `last_ingested_at` 新鲜度区分正常、停滞和超过 30 分钟无入库告警；心跳只记录 `mode=health_heartbeat` 与 `last_health_heartbeat_at`，不写入 `delivery_log`，避免污染新闻逐条推送判断。
 - 改进手动分窗口补拉终端反馈：断点续补时会用 `original_start` / `target_end` / `next_start` 显示整体进度，去重文案改为“去重跳过（已存在）”，并为失败窗口聚合逻辑补充维护注释，明确失败窗口不参与入库/候选发送统计。
 - 新增项目状态摘要 058：逐项记录 `057-diff.md` review 的采纳、暂缓和小误差，明确健康心跳上线后的运行边界、验证结果和下一轮 `/system` 日志诊断建议。
