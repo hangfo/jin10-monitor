@@ -1,4 +1,4 @@
-更新时间：2026-06-21 17:11（Asia/Shanghai）
+更新时间：2026-06-21 18:28（Asia/Shanghai）
 
 # Changelog
 
@@ -9,6 +9,7 @@
 - 加固 launchd 启动接力：`scripts/run_monitor.py` 不再重复硬编码 `.venv/bin/python`，改用当前运行脚本的 `sys.executable` 执行 `jin10_monitor.py`，避免迁移到不同 Python 环境时二次路径声明失配。
 - 改进手动分窗口补拉容错：`catch_up_windowed` 在子窗口失败后会继续尝试下一窗口，只有连续 2 个子窗口失败才停止，减少单次网络瞬断导致后续窗口全部跳过的概率。
 - 新增手动分窗口补拉断点续补：带 `--catch-up-window-minutes` 的手动补拉会在 `runtime_state` 记录连续成功窗口的 `catch_up_checkpoint`；失败后可用 `--resume` 从断点继续，完整成功后自动清空断点，不改变自动补拉和 Telegram 摘要/逐条策略。
+- 新增项目状态摘要 057：记录本轮生产故障恢复、旧内嵌 Dashboard 清理、summary catchup、分窗口补拉容错和 `--resume` 断点续补的完成状态，并给出下一 session 的恢复缺口、健康心跳和 `/system` 日志诊断建议。
 
 ## 2026-06-19
 
