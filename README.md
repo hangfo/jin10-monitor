@@ -171,6 +171,17 @@ python jin10_monitor.py --catch-up \
   --catch-up-window-minutes 30
 ```
 
+带 `--catch-up-window-minutes` 的手动补拉会在 SQLite `runtime_state` 里记录 `catch_up_checkpoint`。断点只推进到从起点开始连续成功的窗口末尾；如果中间某个窗口失败，即使后续窗口成功，断点也不会越过失败窗口。失败后可以直接从断点继续：
+
+```bash
+python jin10_monitor.py --catch-up \
+  --resume \
+  --no-catch-up-telegram \
+  --catch-up-max-send 0
+```
+
+`--resume` 默认使用断点里记录的目标结束时间和窗口分钟数；也可以重新指定 `--to` 覆盖结束时间。完整补拉成功后断点会自动清空。
+
 查看游标是否正常推进：
 
 ```bash

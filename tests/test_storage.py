@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+from argparse import Namespace
 from datetime import datetime, timedelta
 
 import pytest
@@ -790,11 +791,18 @@ def test_catch_up_windowed_stops_after_consecutive_failed_sub_windows(temp_histo
         max_store=100,
         max_send=10,
         window_minutes=30,
+        checkpoint_enabled=True,
     )
 
+    conn = jm.get_db()
     assert result["ok"] is False
     assert result["stopped_early"] is True
     assert result["error"] == "HTTPError: HTTP Error 403: Forbidden"
+    assert result["checkpoint"]["next_start"] == "2026-05-17 10:30:00"
+    assert result["checkpoint"]["original_start"] == "2026-05-17 10:00:00"
+    assert result["checkpoint"]["target_end"] == "2026-05-17 12:30:00"
+    assert result["checkpoint"]["window_minutes"] == "30"
+    assert state_value(conn, "catch_up_checkpoint") == "2026-05-17 10:30:00"
     assert result["stored"] == 4
     assert result["push_candidates"] == 2
     assert result["seen_item_ids"] == ["seen-1", "seen-3"]
@@ -810,6 +818,97 @@ def test_catch_up_windowed_stops_after_consecutive_failed_sub_windows(temp_histo
     assert calls[3][1] == datetime(2026, 5, 17, 12, 0, 0)
     assert calls[4][0] == datetime(2026, 5, 17, 12, 0, 0)
     assert calls[4][1] == datetime(2026, 5, 17, 12, 30, 0)
+
+
+def test_catch_up_windowed_clears_checkpoint_after_complete(temp_history_db, monkeypatch):
+    conn = jm.get_db()
+    jm.save_catchup_checkpoint(
+        conn,
+        next_start=datetime(2026, 5, 17, 10, 30, 0),
+        original_start=datetime(2026, 5, 17, 10, 0, 0),
+        target_end=datetime(2026, 5, 17, 11, 0, 0),
+        window_minutes=30,
+    )
+    conn.commit()
+
+    def fake_catch_up_window(start_dt, end_dt, **kwargs):
+        return {
+            "ok": True,
+            "source": kwargs["source"],
+            "window": {
+                "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            "pages": 1,
+            "scanned": 0,
+            "stored": 0,
+            "push_candidates": 0,
+            "priority_counts": {
+                jm.PRIORITY_IMPORTANT: 0,
+                jm.PRIORITY_HIGH: 0,
+                jm.PRIORITY_NORMAL: 0,
+            },
+            "already_stored": 0,
+            "already_delivered": 0,
+            "send_candidates": [],
+            "send_candidate_count": 0,
+            "summary_items": [],
+            "seen_item_ids": [],
+            "truncated": False,
+            "error": "",
+        }
+
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+
+    result = jm.catch_up_windowed(
+        datetime(2026, 5, 17, 10, 0, 0),
+        datetime(2026, 5, 17, 11, 0, 0),
+        source="catchup_manual",
+        max_store=100,
+        max_send=10,
+        window_minutes=30,
+        checkpoint_enabled=True,
+    )
+
+    assert result["ok"] is True
+    assert result["checkpoint"] == {}
+    assert state_value(conn, "catch_up_checkpoint") == ""
+    assert state_value(conn, "catch_up_checkpoint_target_end") == ""
+
+
+def test_resolve_catchup_cli_window_uses_resume_checkpoint(temp_history_db):
+    conn = jm.get_db()
+    jm.save_catchup_checkpoint(
+        conn,
+        next_start=datetime(2026, 5, 17, 10, 30, 0),
+        original_start=datetime(2026, 5, 17, 10, 0, 0),
+        target_end=datetime(2026, 5, 17, 12, 30, 0),
+        window_minutes=30,
+    )
+    conn.commit()
+    limits = {"window_minutes": 0}
+
+    start_dt, end_dt = jm.resolve_catchup_cli_window(
+        Namespace(catchup_resume=True, catchup_from=None, catchup_to=None),
+        conn,
+        limits,
+    )
+
+    assert start_dt == datetime(2026, 5, 17, 10, 30, 0)
+    assert end_dt == datetime(2026, 5, 17, 12, 30, 0)
+    assert limits["window_minutes"] == 30
+
+
+def test_resolve_catchup_cli_window_rejects_resume_with_from(temp_history_db):
+    conn = jm.get_db()
+    limits = {"window_minutes": 30}
+
+    with pytest.raises(SystemExit, match="不要同时指定 --from"):
+        jm.resolve_catchup_cli_window(
+            Namespace(catchup_resume=True, catchup_from="2026-05-17 10:00:00", catchup_to=None),
+            conn,
+            limits,
+        )
 
 
 def test_build_catchup_summary_items_prioritizes_important_and_high_only():
