@@ -1,9 +1,11 @@
-更新时间：2026-06-25 04:28（Asia/Shanghai）
+更新时间：2026-06-25 05:08（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
+- 新增受保护的 Provider A/B 批量评测工具 `scripts/run_ab_eval.py`：默认 dry-run 只导出/检查 packet 和 Provider 配置，真实调用必须同时传入 `--execute --yes`；默认仅评测当前基线 `gemini compatible`，批量真实调用默认最多 5 个 `run_id`，结果只写 `exports/provider_ab/<run_id>/`，不写独立分析库、不写业务历史库、不请求金十 REST、不触发 Telegram。
+- 更新 Provider A/B 设计文档，明确自动评测脚本复用 Dashboard 当前 Provider 调用语义、只自动记录耗时/Token/finish reason/JSON 稳定性/错误等客观字段，催化覆盖、重复 `news_id`、缺失证据合理性和最终 pass/watch/fail 仍需人工复核。
 - 接纳 `4981335 → 355a88d` 深度 review 的监控可靠性修复：健康心跳启动后最多 60 秒发送 `🟢 [启动]` 首次心跳，发送成功后才更新 `last_health_heartbeat_at`；心跳循环内部隔离异常，避免 Telegram 或 SQLite 临时错误把 WebSocket/REST 主路带崩。
 - 增强 `/system` 最近 monitor 错误日志只读诊断：日志扫描支持 `XxxError` / `XxxException` 裸异常名、Traceback 上下文聚合、时间列、文件大小和最后写入时间，并增加 30 秒 TTL 缓存与 `/api/system/log-events` 局部刷新端点；REST 403 退避剩余时间在前端倒计时显示。
 - 增强聚合降噪只读报告：`query_aggregation_report()` 增加最近 24h `skipped_24h` 与 00-23 小时粒度 `hourly_counts`，`/aggregation` 增加 SVG 小时柱状图、24h 统计卡和更清晰的 `AGGREGATION_V2` 开启说明；不改变聚合开关默认值或 Telegram 投递语义。

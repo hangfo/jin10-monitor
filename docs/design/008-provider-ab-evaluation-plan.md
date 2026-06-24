@@ -1,4 +1,4 @@
-更新时间：2026-06-07 12:55（Asia/Shanghai）
+更新时间：2026-06-25 05:08（Asia/Shanghai）
 
 # 008 - Provider 同窗 A/B 评测计划
 
@@ -66,7 +66,36 @@ exports/provider_ab/<run_id>/
 
 脚本只读 `data/dashboard_analysis.sqlite3`，不请求模型 API，不请求金十 REST，不写业务历史库，不触发 Telegram。
 
-## 5. Provider 执行顺序
+## 5. 受保护的自动评测方式
+
+如果需要批量调用 Gemini / GLM 等 API Provider，可以使用受保护的自动评测脚本：
+
+```bash
+# 默认 dry-run：只导出/检查 packet 和 Provider 配置，不调用任何模型 API
+.venv/bin/python scripts/run_ab_eval.py ar_xxx
+
+# 批量 dry-run：适合先确认 3-5 个窗口和配置状态
+.venv/bin/python scripts/run_ab_eval.py --run-ids ar_1 ar_2 ar_3 --providers gemini compatible
+
+# 真实调用：必须同时提供 --execute 和 --yes
+.venv/bin/python scripts/run_ab_eval.py --run-ids ar_1 ar_2 ar_3 --providers gemini compatible --execute --yes
+```
+
+安全边界：
+
+- 默认不调用 Provider API；真实外部调用必须显式加 `--execute --yes`。
+- 默认 Provider 为 `gemini compatible`，对应当前 Gemini + GLM/OpenAI-compatible 基线；`openai` / `anthropic` 只有显式指定才会尝试。
+- 批量真实调用默认最多 5 个 `run_id`，超过需显式提高 `--max-runs`。
+- 脚本会自动补齐缺失的 `exports/provider_ab/<run_id>/` packet，但真实调用结果只写该导出目录：
+  - `<provider>_raw.txt`
+  - `<provider>_parsed.json`
+  - `<provider>_result.json`
+  - `eval_results.json`
+  - `ab_scorecard.md` 自动结果区块
+- 脚本复用 Dashboard 当前调用语义：`system_prompt = provider_system_prompt(...)`，`user_prompt = prompt.md`，确保结果可与 `/analyze` 后台 Provider 调用对齐。
+- 脚本不写 `analysis_runs`，不写业务历史库，不请求金十 REST，不触发 Telegram。
+
+## 6. Provider 执行顺序
 
 建议顺序：
 
@@ -76,7 +105,7 @@ exports/provider_ab/<run_id>/
 
 如果某个 Provider 返回不可解析 JSON，不要手工修复后再参与“稳定性”评分；可以另存一份修复版用于后续业务阅读，但评测记录必须保留原始失败。
 
-## 6. 评分口径
+## 7. 评分口径
 
 每个 Provider 至少记录：
 
@@ -93,18 +122,19 @@ exports/provider_ab/<run_id>/
 - `watch`：可读但有明显重复、漏因或格式风险。
 - `fail`：JSON 不稳定、关键新闻漏掉、或归因明显错误。
 
-## 7. 暂不做
+自动脚本只填写耗时、Token、finish reason、JSON 稳定性和错误等客观字段；`key_catalysts_hit`、`duplicate_news_id`、`missing_evidence_reasonable` 和最终 `pass/watch/fail` 仍需人工复核。
+
+## 8. 暂不做
 
 本轮暂不做：
 
 - embedding 或向量相似度。
-- 自动评测框架。
 - 自动 Provider 多路并发。
 - 自动重写 Prompt。
 - 继续扩大 v3 默认选择规则。
 - WebSocket / REST / Telegram / SQLite 业务历史库改动。
 
-## 8. 下一步判断
+## 9. 下一步判断
 
 如果 A/B 结果显示 Gemini / GLM 的主要问题是重复 `news_id` 或 JSON 不稳，优先小改 Prompt 和 Provider 错误展示。
 
