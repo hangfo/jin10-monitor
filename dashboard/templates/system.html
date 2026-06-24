@@ -343,7 +343,7 @@
       <span class="mono">{{ system_health.rest_state.status }}</span>
       {% if system_health.rest_state.forbidden_streak %} · 连续 403 {{ system_health.rest_state.forbidden_streak }} 轮{% endif %}
       {% if system_health.rest_state.backoff_until %} · 退避至 <span class="mono">{{ system_health.rest_state.backoff_until }}</span>{% endif %}
-      {% if system_health.rest_state.backoff_remaining_seconds %} · 剩余约 {{ system_health.rest_state.backoff_remaining_seconds }}s{% endif %}
+      {% if system_health.rest_state.backoff_remaining_seconds %} · 剩余 <span id="backoff-countdown" data-seconds="{{ system_health.rest_state.backoff_remaining_seconds }}">{{ system_health.rest_state.backoff_remaining_seconds }}s</span>{% endif %}
       {% if system_health.rest_state.last_ok_at %} · 最近恢复 <span class="mono">{{ system_health.rest_state.last_ok_at }}</span>{% endif %}
       {% if system_health.rest_state.last_error %} · {{ system_health.rest_state.last_error }}{% endif %}
     </div>
@@ -363,9 +363,16 @@
     {% endif %}
   </div>
 
-  <div class="panel system-detail" style="margin-top:14px">
-    <h2 style="margin-top:0">最近 monitor 错误日志</h2>
+  <div class="panel system-detail" id="log-events-panel" style="margin-top:14px">
     {% set log_events = system_health.recent_monitor_log_events %}
+    <h2 style="margin-top:0;display:flex;align-items:center;gap:10px">
+      <span>最近 monitor 错误日志</span>
+      <button id="log-refresh-btn" onclick="refreshLogEvents()" title="从磁盘重新扫描（绕过 30s 缓存）" style="font-size:12px;padding:2px 10px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text)">↻ 刷新</button>
+      <span id="log-refresh-status" style="font-size:11px;color:#888"></span>
+      {% if log_events.exists and log_events.last_modified %}
+      <span class="meta" style="font-weight:normal;font-size:12px;margin-left:10px">{{ log_events.file_size_kb }} KB · 最后写入 {{ log_events.last_modified }}</span>
+      {% endif %}
+    </h2>
     {% if not log_events.exists %}
     <div class="empty">未找到日志文件：<span class="mono">{{ log_events.path }}</span></div>
     {% elif log_events.events %}
@@ -373,22 +380,24 @@
       <thead>
         <tr>
           <th style="min-width:72px">级别</th>
+          <th style="min-width:110px;white-space:nowrap">时间</th>
           <th>日志行</th>
         </tr>
       </thead>
       <tbody>
         {% for event in log_events.events %}
-        <tr>
+        <tr{% if 'Traceback' in event.line %} style="background:rgba(220,50,50,.06)"{% endif %}>
           <td><span class="pill {{ 'failed' if event.level == 'ERROR' else 'unknown_timeout' }}">{{ event.level }}</span></td>
-          <td class="mono" style="word-break:break-all">{{ event.line }}</td>
+          <td class="mono" style="font-size:11px;white-space:nowrap;color:#888">{{ event.ts or '-' }}</td>
+          <td class="mono" style="word-break:break-all;font-size:12px">{{ event.line }}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
-    <div class="meta" style="margin-top:10px">只读扫描本地日志尾部，筛选 ERROR、command not found、Traceback 和 Exception；不触发补拉、REST 请求或 Telegram 发送。</div>
+    <div class="meta" style="margin-top:10px">只读扫描日志尾部 256 KB，筛选 ERROR、command not found、Traceback、Exception 及 Python 异常类名；Traceback 块自动聚合上下文。结果缓存 30s，不触发补拉、REST 请求或 Telegram 发送。</div>
     {% else %}
     <div class="empty">最近日志尾部没有匹配的错误行。</div>
-    <div class="meta" style="margin-top:10px">只读扫描本地日志尾部，筛选 ERROR、command not found、Traceback 和 Exception；不触发补拉、REST 请求或 Telegram 发送。</div>
+    <div class="meta" style="margin-top:6px">日志文件：<span class="mono">{{ log_events.path }}</span>{% if log_events.file_size_kb %} · {{ log_events.file_size_kb }} KB{% endif %}{% if log_events.last_modified %} · 最后写入 {{ log_events.last_modified }}{% endif %}</div>
     {% endif %}
   </div>
 
@@ -518,4 +527,104 @@
     <div class="empty">最近没有 Provider 调用记录。</div>
     {% endif %}
   </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const el = document.getElementById('backoff-countdown');
+  if (!el) return;
+  let remaining = parseInt(el.dataset.seconds, 10);
+  if (!remaining || remaining <= 0) return;
+
+  function fmt(seconds) {
+    if (seconds <= 0) return '已到期，等待下次轮询恢复';
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    if (hours > 0) return hours + 'h ' + String(minutes).padStart(2, '0') + 'm ' + String(secs).padStart(2, '0') + 's';
+    if (minutes > 0) return minutes + 'm ' + String(secs).padStart(2, '0') + 's';
+    return secs + 's';
+  }
+
+  el.textContent = fmt(remaining);
+  const timer = setInterval(function () {
+    remaining -= 1;
+    el.textContent = fmt(remaining);
+    if (remaining <= 0) clearInterval(timer);
+  }, 1000);
+})();
+
+function refreshLogEvents() {
+  const btn = document.getElementById('log-refresh-btn');
+  const status = document.getElementById('log-refresh-status');
+  const panel = document.getElementById('log-events-panel');
+  if (!btn || !panel) return;
+
+  btn.disabled = true;
+  btn.textContent = '读取中...';
+  status.textContent = '';
+
+  fetch('/api/system/log-events?limit=8&force=true')
+    .then(function (response) { return response.json(); })
+    .then(function (data) {
+      btn.disabled = false;
+      btn.textContent = '↻ 刷新';
+      if (!data.ok) {
+        status.textContent = '请求失败';
+        return;
+      }
+
+      const now = new Date();
+      status.textContent = '已刷新 ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0')
+        + (data.file_size_kb ? ' · ' + data.file_size_kb + ' KB' : '')
+        + (data.last_modified ? ' · ' + data.last_modified : '');
+
+      const oldEmpty = panel.querySelector('.empty');
+      const table = panel.querySelector('table');
+      const tbody = panel.querySelector('tbody');
+      if (oldEmpty) oldEmpty.remove();
+
+      if (!data.exists) {
+        if (table) table.style.display = 'none';
+        panel.appendChild(emptyNode('未找到日志文件：' + data.path));
+        return;
+      }
+
+      if (!data.events || data.events.length === 0) {
+        if (table) table.style.display = 'none';
+        panel.appendChild(emptyNode('最近日志尾部没有匹配的错误行。'));
+        return;
+      }
+
+      if (table) table.style.display = '';
+      const rows = data.events.map(function (event) {
+        const level = _esc(event.level || '');
+        const line = _esc(event.line || '');
+        const ts = _esc(event.ts || '-');
+        const pillClass = level === 'ERROR' ? 'failed' : 'unknown_timeout';
+        const bg = line.indexOf('Traceback') !== -1 ? ' style="background:rgba(220,50,50,.06)"' : '';
+        return '<tr' + bg + '><td><span class="pill ' + pillClass + '">' + level + '</span></td><td class="mono" style="font-size:11px;white-space:nowrap;color:#888">' + ts + '</td><td class="mono" style="word-break:break-all;font-size:12px">' + line + '</td></tr>';
+      }).join('');
+      if (tbody) {
+        tbody.innerHTML = rows;
+      }
+    })
+    .catch(function (error) {
+      btn.disabled = false;
+      btn.textContent = '↻ 刷新';
+      status.textContent = '请求出错：' + error.message;
+    });
+}
+
+function emptyNode(text) {
+  const node = document.createElement('div');
+  node.className = 'empty';
+  node.textContent = text;
+  return node;
+}
+
+function _esc(value) {
+  return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+</script>
 {% endblock %}

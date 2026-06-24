@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
+import time
 import urllib.parse
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -38,6 +40,11 @@ MONITOR_LOG_MARKERS = (
     "Traceback",
     "Exception",
 )
+_EXCEPTION_NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.]*(?:Error|Exception)(?:Group)?(?:\s*[:(]|$)")
+_LOG_TIMESTAMP_RE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}\s+)?\d{2}:\d{2}:\d{2}")
+_LOG_TS_PREFIX_RE = re.compile(r"^((?:\d{4}-\d{2}-\d{2}\s+)?\d{2}:\d{2}:\d{2})")
+_LOG_EVENTS_CACHE: dict[str, Any] = {}
+_LOG_EVENTS_CACHE_TTL = 30
 
 
 def history_db_path() -> Path:
@@ -114,16 +121,39 @@ def escape_like(value: str) -> str:
     return str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _line_is_monitor_error(line: str) -> bool:
+    if any(marker in line for marker in MONITOR_LOG_MARKERS):
+        return True
+    return bool(_EXCEPTION_NAME_RE.search(line))
+
+
+def _extract_log_timestamp(line: str) -> str:
+    match = _LOG_TS_PREFIX_RE.match(line)
+    return match.group(1) if match else ""
+
+
 def query_recent_monitor_log_events(limit: int = 8, *, path: Optional[Path] = None) -> dict[str, Any]:
     log_path = (path or monitor_log_path()).expanduser()
     safe_limit = max(1, min(int(limit or 8), 30))
+    cache_key = str(log_path)
+    if path is None:
+        cached = _LOG_EVENTS_CACHE.get(cache_key)
+        if cached and (time.monotonic() - cached["_cached_at"]) < _LOG_EVENTS_CACHE_TTL:
+            return {key: value for key, value in cached.items() if key != "_cached_at"}
+
     result: dict[str, Any] = {
         "path": str(log_path),
         "exists": log_path.exists(),
+        "file_size_kb": 0,
+        "last_modified": "",
         "events": [],
     }
     if not log_path.exists() or not log_path.is_file():
         return result
+
+    stat = log_path.stat()
+    result["file_size_kb"] = round(stat.st_size / 1024, 2) or round(stat.st_size / 1024, 4)
+    result["last_modified"] = datetime.fromtimestamp(stat.st_mtime).strftime("%m-%d %H:%M:%S")
 
     max_bytes = 256 * 1024
     with log_path.open("rb") as fh:
@@ -132,18 +162,53 @@ def query_recent_monitor_log_events(limit: int = 8, *, path: Optional[Path] = No
         fh.seek(max(0, size - max_bytes))
         text = fh.read().decode("utf-8", errors="replace")
 
-    events = []
-    for line in reversed(text.splitlines()):
-        clean = line.strip()
+    lines = text.splitlines()
+    events: list[dict[str, Any]] = []
+    i = len(lines) - 1
+    while i >= 0 and len(events) < safe_limit:
+        clean = lines[i].strip()
         if not clean:
+            i -= 1
             continue
-        if not any(marker in clean for marker in MONITOR_LOG_MARKERS):
+
+        if not _line_is_monitor_error(clean):
+            i -= 1
             continue
+
+        if "Traceback" not in clean and _EXCEPTION_NAME_RE.search(clean):
+            previous_context = "\n".join(line.strip() for line in lines[max(0, i - 5):i])
+            if "Traceback" in previous_context:
+                i -= 1
+                continue
+
         level = "ERROR" if "[ERROR]" in clean or " ERROR " in clean else "SHELL"
-        events.append({"level": level, "line": clean})
-        if len(events) >= safe_limit:
-            break
+        ts = _extract_log_timestamp(clean)
+
+        if "Traceback" in clean:
+            block = [clean]
+            j = i + 1
+            while j < len(lines) and len(block) < 6:
+                next_clean = lines[j].strip()
+                if _LOG_TIMESTAMP_RE.match(next_clean) and len(block) >= 2:
+                    break
+                if next_clean:
+                    block.append(next_clean)
+                    if _EXCEPTION_NAME_RE.search(next_clean) and len(block) >= 2:
+                        break
+                j += 1
+            display = " → ".join(block[:5])
+            if len(block) > 5:
+                display += f" (...+{len(block) - 5}行)"
+            events.append({"level": "ERROR", "ts": ts, "line": display})
+            i -= 1
+            continue
+
+        events.append({"level": level, "ts": ts, "line": clean})
+        i -= 1
+
     result["events"] = events
+    if path is None:
+        _LOG_EVENTS_CACHE[cache_key] = {**result, "_cached_at": time.monotonic()}
     return result
 
 
@@ -1100,12 +1165,28 @@ def query_aggregation_report() -> dict[str, Any]:
             """,
             (since_7d,),
         ).fetchall()
+        since_24h = since_text(24)
+        hourly_rows = conn.execute(
+            """
+            SELECT strftime('%H', updated_at) AS hour, COUNT(*) AS count
+            FROM telegram_delivery_status
+            WHERE status = 'skipped' AND updated_at >= ?
+            GROUP BY hour
+            ORDER BY hour
+            """,
+            (since_24h,),
+        ).fetchall()
+        hourly_map = {str(row["hour"]): int(row["count"]) for row in hourly_rows}
+        hourly_counts = [{"hour": f"{hour:02d}", "count": hourly_map.get(f"{hour:02d}", 0)} for hour in range(24)]
+        skipped_24h = sum(row["count"] for row in hourly_counts)
 
     return {
         "agg_enabled": agg_enabled,
         "agg_window_seconds": agg_window_seconds,
         "agg_bypass_important": agg_bypass_important,
         "skipped_7d": skipped_7d,
+        "skipped_24h": skipped_24h,
+        "hourly_counts": hourly_counts,
         "skip_records": skip_records,
         "similar_items": similar_items,
         "daily_counts": [row_to_dict(row) for row in daily_rows],

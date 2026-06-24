@@ -562,3 +562,92 @@ def test_format_message_appends_dashboard_item_link(monkeypatch):
     message = jm.format_message(item, jm.PRIORITY_NORMAL)
 
     assert 'Dashboard：<a href="http://127.0.0.1:8765/item/news%20id%2F1">查看详情</a>' in message
+
+
+def aggregation_item(title: str, *, item_id: str = "agg-1", source: str = "jin10") -> dict:
+    return news_item(id=item_id, data={"title": title, "content": "", "source": source})
+
+
+def test_aggregation_key_normalises_whitespace_and_punctuation():
+    key = jm.aggregation_key(aggregation_item("美联储 宣布：加息 25bp！"), jm.PRIORITY_NORMAL)
+
+    assert "美联储" in key
+    assert " " not in key
+    assert "：" not in key
+    assert "！" not in key
+
+
+def test_aggregation_suppression_returns_empty_when_disabled(monkeypatch):
+    monkeypatch.setattr(jm, "AGGREGATION_V2", False)
+
+    assert jm.aggregation_suppression_detail(aggregation_item("利率决议"), jm.PRIORITY_NORMAL) == ""
+
+
+def test_aggregation_suppression_returns_empty_on_first_push(monkeypatch):
+    monkeypatch.setattr(jm, "AGGREGATION_V2", True)
+    monkeypatch.setattr(jm, "AGGREGATION_WINDOW_SECONDS", 180)
+    monkeypatch.setattr(jm, "aggregation_recent", jm.OrderedDict())
+
+    assert jm.aggregation_suppression_detail(aggregation_item("第一条利率新闻"), jm.PRIORITY_NORMAL) == ""
+
+
+def test_aggregation_suppresses_duplicate_within_window(monkeypatch):
+    monkeypatch.setattr(jm, "AGGREGATION_V2", True)
+    monkeypatch.setattr(jm, "AGGREGATION_WINDOW_SECONDS", 180)
+    monkeypatch.setattr(jm, "aggregation_recent", jm.OrderedDict())
+    now = datetime.now().replace(microsecond=0)
+
+    jm.remember_aggregation_push(aggregation_item("美联储宣布加息25bp", item_id="agg-2"), jm.PRIORITY_NORMAL, now=now)
+    detail = jm.aggregation_suppression_detail(
+        aggregation_item("美联储宣布加息25bp", item_id="agg-3"),
+        jm.PRIORITY_NORMAL,
+        now=now,
+    )
+
+    assert "aggregation_v2" in detail
+    assert "agg-2" in detail
+
+
+def test_aggregation_allows_push_after_window_expires(monkeypatch):
+    monkeypatch.setattr(jm, "AGGREGATION_V2", True)
+    monkeypatch.setattr(jm, "AGGREGATION_WINDOW_SECONDS", 60)
+    monkeypatch.setattr(jm, "aggregation_recent", jm.OrderedDict())
+    past = datetime.now().replace(microsecond=0) - timedelta(seconds=61)
+    future = datetime.now().replace(microsecond=0)
+
+    jm.remember_aggregation_push(aggregation_item("CPI数据公布", item_id="agg-4"), jm.PRIORITY_NORMAL, now=past)
+    detail = jm.aggregation_suppression_detail(
+        aggregation_item("CPI数据公布", item_id="agg-5"),
+        jm.PRIORITY_NORMAL,
+        now=future,
+    )
+
+    assert detail == ""
+
+
+def test_aggregation_bypass_important_items(monkeypatch):
+    monkeypatch.setattr(jm, "AGGREGATION_V2", True)
+    monkeypatch.setattr(jm, "AGGREGATION_WINDOW_SECONDS", 180)
+    monkeypatch.setattr(jm, "AGGREGATION_BYPASS_IMPORTANT", True)
+    monkeypatch.setattr(jm, "aggregation_recent", jm.OrderedDict())
+    now = datetime.now().replace(microsecond=0)
+
+    jm.remember_aggregation_push(aggregation_item("FOMC紧急声明", item_id="agg-6"), jm.PRIORITY_IMPORTANT, now=now)
+    detail = jm.aggregation_suppression_detail(
+        aggregation_item("FOMC紧急声明", item_id="agg-7"),
+        jm.PRIORITY_IMPORTANT,
+        now=now,
+    )
+
+    assert detail == ""
+
+
+def test_aggregation_caps_memory_at_500_entries(monkeypatch):
+    monkeypatch.setattr(jm, "AGGREGATION_V2", True)
+    monkeypatch.setattr(jm, "AGGREGATION_WINDOW_SECONDS", 9999)
+    monkeypatch.setattr(jm, "aggregation_recent", jm.OrderedDict())
+
+    for index in range(510):
+        jm.remember_aggregation_push(aggregation_item(f"新闻标题{'x' * index}", item_id=f"agg-cap-{index}"), jm.PRIORITY_NORMAL)
+
+    assert len(jm.aggregation_recent) <= 500

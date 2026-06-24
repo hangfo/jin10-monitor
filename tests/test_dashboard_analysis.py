@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sqlite3
 from datetime import datetime, timedelta
@@ -1306,6 +1307,43 @@ def test_dashboard_bugfix_routes_are_registered():
     assert "/api/screenshots/upload" in paths
     assert "/screenshots/{screenshot_id}" in paths
     assert "/aggregation" in paths
+    assert "/api/system/log-events" in paths
+
+
+def test_api_system_log_events_returns_json_structure(tmp_path, monkeypatch):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text("2026-06-23 09:00:00 ERROR test error line\n", encoding="utf-8")
+    monkeypatch.setenv("MONITOR_LOG_PATH", str(log_path))
+    db._LOG_EVENTS_CACHE.clear()
+
+    endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", "") == "/api/system/log-events")
+    data = asyncio.run(endpoint(limit=5, force=False))
+
+    assert data["ok"] is True
+    assert data["exists"] is True
+    assert data["file_size_kb"] > 0
+    assert data["events"][0]["line"].endswith("test error line")
+
+
+def test_api_system_log_events_force_clears_cache(tmp_path, monkeypatch):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text("2026-06-23 10:00:00 ERROR first error\n", encoding="utf-8")
+    monkeypatch.setenv("MONITOR_LOG_PATH", str(log_path))
+    db._LOG_EVENTS_CACHE.clear()
+
+    endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", "") == "/api/system/log-events")
+    first = asyncio.run(endpoint())
+    assert first["ok"] is True
+
+    log_path.write_text(
+        "2026-06-23 10:00:00 ERROR first error\n"
+        "2026-06-23 10:01:00 ERROR second error added\n",
+        encoding="utf-8",
+    )
+    second = asyncio.run(endpoint(force=True))
+
+    lines = [event["line"] for event in second["events"]]
+    assert any("second error" in line for line in lines)
 
 
 def test_query_latest_published_at_respects_current_keyword_filter(tmp_path, monkeypatch):
@@ -1616,6 +1654,11 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "最近 monitor 错误日志" in system_template
     assert "recent_monitor_log_events" in system_template
     assert "command not found" in system_template
+    assert "/api/system/log-events?limit=8&force=true" in system_template
+    assert "backoff-countdown" in system_template
+    assert "{% block scripts %}" in system_template
+    assert "skipped_24h" in (TEMPLATE_DIR / "aggregation.html").read_text()
+    assert "hourly_counts" in (TEMPLATE_DIR / "aggregation.html").read_text()
     assert "无需处理" in ws_initial_template
     assert "建议逐条确认" in ws_initial_template
     assert "建议手动补拉" in ws_initial_template

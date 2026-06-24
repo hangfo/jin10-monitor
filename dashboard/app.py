@@ -749,6 +749,23 @@ def create_app() -> FastAPI:
             },
         )
 
+    @app.get("/api/system/log-events")
+    async def api_system_log_events(limit: int = 8, force: bool = False):
+        from .db import _LOG_EVENTS_CACHE, monitor_log_path, query_recent_monitor_log_events
+
+        if force:
+            _LOG_EVENTS_CACHE.pop(str(monitor_log_path().expanduser()), None)
+        result = query_recent_monitor_log_events(limit=limit)
+        return {
+            "ok": True,
+            "path": result.get("path", ""),
+            "exists": result.get("exists", False),
+            "file_size_kb": result.get("file_size_kb", 0),
+            "last_modified": result.get("last_modified", ""),
+            "events": result.get("events", []),
+            "cached": not force,
+        }
+
     @app.get("/system/ws-initial")
     async def ws_initial_review(request: Request):
         health = history_health()

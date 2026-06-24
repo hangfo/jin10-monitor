@@ -2777,24 +2777,40 @@ async def health_heartbeat_loop(session: aiohttp.ClientSession) -> None:
     if HEALTH_HEARTBEAT_INTERVAL_S <= 0:
         log.info("health_heartbeat: 已禁用（HEALTH_HEARTBEAT_INTERVAL_S=0）")
         return
-    log.info("health_heartbeat: 每 %.1fh 发送一次心跳", HEALTH_HEARTBEAT_INTERVAL_S / 3600)
+    startup_delay = min(60.0, HEALTH_HEARTBEAT_INTERVAL_S)
+    log.info(
+        "health_heartbeat: 每 %.1fh 发送一次心跳，启动后 %.0fs 发送首次心跳",
+        HEALTH_HEARTBEAT_INTERVAL_S / 3600,
+        startup_delay,
+    )
+    await asyncio.sleep(startup_delay)
+    first_tick = True
     while True:
+        try:
+            conn = get_db()
+            last_at = get_state(conn, "last_ingested_at")
+            message = format_health_heartbeat_message(last_at)
+            if first_tick:
+                message = "🟢 [启动] " + message
+            send_result = await send_telegram(session, message)
+            if send_result.ok:
+                set_state(conn, "last_health_heartbeat_at", datetime.now().replace(microsecond=0).isoformat(sep=" "))
+            else:
+                log.warning("health_heartbeat: 发送失败 status=%s detail=%s", send_result.status, send_result.detail)
+            record_telegram_delivery_status(
+                conn,
+                "health_heartbeat",
+                mode="health_heartbeat",
+                status=send_result.status,
+                detail=send_result.detail,
+            )
+            conn.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error("health_heartbeat: 心跳异常（已隔离，进程继续运行）: %s", exc, exc_info=True)
+        first_tick = False
         await asyncio.sleep(HEALTH_HEARTBEAT_INTERVAL_S)
-        conn = get_db()
-        last_at = get_state(conn, "last_ingested_at")
-        message = format_health_heartbeat_message(last_at)
-        send_result = await send_telegram(session, message)
-        set_state(conn, "last_health_heartbeat_at", datetime.now().replace(microsecond=0).isoformat(sep=" "))
-        record_telegram_delivery_status(
-            conn,
-            "health_heartbeat",
-            mode="health_heartbeat",
-            status=send_result.status,
-            detail=send_result.detail,
-        )
-        conn.commit()
-        if not send_result.ok:
-            log.warning("health_heartbeat: 发送失败 status=%s detail=%s", send_result.status, send_result.detail)
 
 
 async def run_once(limit: int) -> None:

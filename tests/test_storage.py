@@ -936,10 +936,41 @@ def test_health_heartbeat_loop_records_status_without_delivery_log(temp_history_
         asyncio.run(jm.health_heartbeat_loop(object()))
 
     assert len(sent_messages) == 1
+    assert sent_messages[0].startswith("🟢 [启动] ")
     assert "Monitor" in sent_messages[0]
     assert "last_ingested_at: 2026-06-21 17:28:00" in sent_messages[0]
     assert state_value(conn, "last_health_heartbeat_at")
     assert telegram_status(conn, "health_heartbeat", mode="health_heartbeat") == (jm.TELEGRAM_STATUS_SENT, "")
+    assert not jm.has_any_delivery(conn, "health_heartbeat", channel="telegram")
+
+
+def test_health_heartbeat_loop_does_not_mark_failed_send_as_success(temp_history_db, monkeypatch):
+    conn = jm.get_db()
+    jm.set_state(conn, "last_ingested_at", "2026-06-21 17:28:00")
+    conn.commit()
+    sleep_calls = 0
+
+    async def fake_sleep(seconds):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls > 1:
+            raise StopPollLoop
+
+    async def fake_send_telegram(session, text):
+        return jm.TelegramSendResult(jm.TELEGRAM_STATUS_FAILED, "bad token")
+
+    monkeypatch.setattr(jm, "HEALTH_HEARTBEAT_INTERVAL_S", 1)
+    monkeypatch.setattr(jm.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(jm, "send_telegram", fake_send_telegram)
+
+    with pytest.raises(StopPollLoop):
+        asyncio.run(jm.health_heartbeat_loop(object()))
+
+    assert state_value(conn, "last_health_heartbeat_at") == ""
+    assert telegram_status(conn, "health_heartbeat", mode="health_heartbeat") == (
+        jm.TELEGRAM_STATUS_FAILED,
+        "bad token",
+    )
     assert not jm.has_any_delivery(conn, "health_heartbeat", channel="telegram")
 
 

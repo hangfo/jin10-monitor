@@ -448,11 +448,71 @@ def test_query_recent_monitor_log_events_reads_error_tail(tmp_path):
 def test_query_recent_monitor_log_events_handles_missing_file(tmp_path):
     result = db.query_recent_monitor_log_events(path=tmp_path / "missing.log")
 
-    assert result == {
-        "path": str(tmp_path / "missing.log"),
-        "exists": False,
-        "events": [],
-    }
+    assert result["path"] == str(tmp_path / "missing.log")
+    assert result["exists"] is False
+    assert result["events"] == []
+    assert result["file_size_kb"] == 0
+    assert result["last_modified"] == ""
+
+
+def test_query_recent_monitor_log_events_captures_exception_suffix(tmp_path):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "2026-06-22 08:00:00 INFO normal",
+                "aiohttp.ClientConnectorError: Cannot connect to host",
+                "asyncio.TimeoutError",
+                "RuntimeError: db locked",
+                "2026-06-22 08:01:00 INFO recovered",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = db.query_recent_monitor_log_events(path=log_path)
+    lines = [event["line"] for event in result["events"]]
+
+    assert any("ClientConnectorError" in line for line in lines)
+    assert any("TimeoutError" in line for line in lines)
+    assert any("RuntimeError" in line for line in lines)
+
+
+def test_query_recent_monitor_log_events_aggregates_traceback_block(tmp_path):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "2026-06-22 08:00:01 INFO starting",
+                "2026-06-22 08:01:15 ERROR send failed",
+                "Traceback (most recent call last):",
+                '  File "jin10_monitor.py", line 1402, in send_telegram',
+                "    await session.post(url)",
+                "asyncio.TimeoutError",
+                "2026-06-22 08:02:00 INFO recovered",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = db.query_recent_monitor_log_events(path=log_path)
+    tracebacks = [event for event in result["events"] if "Traceback" in event["line"]]
+
+    assert len(tracebacks) == 1
+    assert tracebacks[0]["level"] == "ERROR"
+    assert "TimeoutError" in tracebacks[0]["line"]
+    assert "→" in tracebacks[0]["line"]
+
+
+def test_query_recent_monitor_log_events_metadata_fields(tmp_path):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text("2026-06-22 09:00:00 ERROR test error\n", encoding="utf-8")
+
+    result = db.query_recent_monitor_log_events(path=log_path)
+
+    assert result["file_size_kb"] > 0
+    assert result["last_modified"]
+    assert result["events"][0]["ts"] == "2026-06-22 09:00:00"
 
 
 def test_query_feed_page_applies_offset_limit_and_filters(dashboard_history_db):
@@ -529,7 +589,31 @@ def test_query_aggregation_report_is_readonly(dashboard_history_db):
 
     assert report["agg_enabled"] is False
     assert report["skipped_7d"] == 0
+    assert report["skipped_24h"] == 0
+    assert len(report["hourly_counts"]) == 24
+    assert all(slot["count"] == 0 for slot in report["hourly_counts"])
     assert report["skip_records"] == []
+
+
+def test_query_aggregation_report_counts_skipped_records(dashboard_history_db):
+    conn = sqlite3.connect(dashboard_history_db)
+    conn.execute(
+        """
+        INSERT INTO telegram_delivery_status (message_id, mode, status, detail, updated_at)
+        VALUES ('agg-t1','realtime','skipped','aggregation_v2 similar_to=old-1', datetime('now')),
+               ('agg-t2','realtime','skipped','aggregation_v2 similar_to=old-1', datetime('now'))
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    report = db.query_aggregation_report()
+
+    assert report["skipped_7d"] >= 2
+    assert report["skipped_24h"] >= 2
+    assert sum(slot["count"] for slot in report["hourly_counts"]) >= 2
+    ids = {row["message_id"] for row in report["skip_records"]}
+    assert {"agg-t1", "agg-t2"}.issubset(ids)
 
 
 def test_query_item_context_returns_window(dashboard_history_db):

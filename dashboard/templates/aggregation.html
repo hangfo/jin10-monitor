@@ -3,8 +3,8 @@
 
 {% block content %}
   <div class="page-head">
-    <h1>聚合报告</h1>
-    <div class="meta">只读诊断，不修改聚合配置</div>
+    <h1>聚合降噪报告</h1>
+    <div class="meta">只读诊断，不修改聚合配置 · 需开启 <span class="mono">AGGREGATION_V2=1</span></div>
   </div>
 
   {% if not agg %}
@@ -19,28 +19,70 @@
     <div class="stat-card">
       <div class="stat-label">聚合窗口</div>
       <div class="stat-value">{{ agg.agg_window_seconds }}s</div>
+      <div class="meta">{{ (agg.agg_window_seconds / 60) | round(1) }} 分钟内相同内容仅推一次</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">T3 绕过聚合</div>
+      <div class="stat-label">重要消息绕过</div>
       <div class="stat-value" style="font-size:18px">{{ '是' if agg.agg_bypass_important else '否' }}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">7天 skipped</div>
+      <div class="stat-label">24h 被抑制</div>
+      <div class="stat-value">{{ agg.skipped_24h }}</div>
+      <div class="meta">减少推送 {{ agg.skipped_24h }} 条</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">7天 被抑制</div>
       <div class="stat-value">{{ agg.skipped_7d }}</div>
     </div>
   </div>
 
   {% if not agg.agg_enabled %}
-  <div class="panel" style="margin-bottom:16px">
+  <div class="panel" style="margin-bottom:16px;border-left:4px solid #f0a11a">
     <div class="muted">
-      AGGREGATION_V2 当前关闭。本页只展示历史中已有的 skipped 诊断记录，不会启用聚合、不执行 suppress、不修改业务库。
+      AGGREGATION_V2 当前关闭。启用方式：在 <span class="mono">.env</span> 加 <span class="mono">AGGREGATION_V2=1</span> 并重启 monitor。本页只展示历史中已有的 skipped 诊断记录，不会启用聚合、不执行 suppress、不修改业务库。
     </div>
+  </div>
+  {% endif %}
+
+  {% if agg.hourly_counts %}
+  <div class="panel" style="margin-bottom:16px">
+    <h2 style="margin-top:0">最近 24h 抑制分布</h2>
+    {% set max_count = agg.hourly_counts | map(attribute='count') | max %}
+    {% set denom = [max_count, 1] | max %}
+    {% set bar_h = 60 %}
+    {% set bar_w = 16 %}
+    {% set gap = 4 %}
+    {% set svg_w = (bar_w + gap) * 24 + gap %}
+    {% set svg_h = bar_h + 28 %}
+    <div style="overflow-x:auto">
+      <svg viewBox="0 0 {{ svg_w }} {{ svg_h }}" width="{{ svg_w * 1.5 }}" height="{{ svg_h * 1.5 }}" xmlns="http://www.w3.org/2000/svg" style="display:block">
+        {% for item in agg.hourly_counts %}
+          {% set x = loop.index0 * (bar_w + gap) + gap %}
+          {% set bh = ((item.count / denom) * bar_h) | int %}
+          {% set by = bar_h - bh %}
+          {% if item.count > 0 %}
+          <rect x="{{ x }}" y="{{ by }}" width="{{ bar_w }}" height="{{ bh }}" fill="#1d6678" rx="2" opacity="0.85">
+            <title>{{ item.hour }}:00 · {{ item.count }} 条被抑制</title>
+          </rect>
+          {% if item.count == max_count and max_count > 0 %}
+          <text x="{{ x + bar_w // 2 }}" y="{{ by - 3 }}" text-anchor="middle" font-size="9" fill="#1d6678">{{ item.count }}</text>
+          {% endif %}
+          {% else %}
+          <rect x="{{ x }}" y="{{ bar_h - 2 }}" width="{{ bar_w }}" height="2" fill="#cfd7d3" rx="1" opacity="0.55"/>
+          {% endif %}
+          {% if loop.index0 % 4 == 0 %}
+          <text x="{{ x + bar_w // 2 }}" y="{{ svg_h - 4 }}" text-anchor="middle" font-size="9" fill="#657177">{{ item.hour }}</text>
+          {% endif %}
+        {% endfor %}
+      </svg>
+    </div>
+    <div class="meta" style="margin-top:6px">横轴：小时（00-23）· 纵轴：被抑制条数 · 鼠标悬停查看数值。</div>
   </div>
   {% endif %}
 
   {% if agg.daily_counts %}
   <div class="panel" style="margin-bottom:16px">
-    <div class="muted" style="margin-bottom:8px">最近 7 天 skipped 计数</div>
+    <div class="muted" style="margin-bottom:8px">最近 7 天 skipped 分布</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       {% for row in agg.daily_counts %}
       <span class="pill">{{ row.day }} · {{ row.count }}</span>
@@ -50,6 +92,10 @@
   {% endif %}
 
   {% if agg.skip_records %}
+  <div class="panel" style="margin-bottom:0">
+    <h2 style="margin:0">最近被抑制明细</h2>
+    <div class="meta">最多展示 60 条。</div>
+  </div>
   <div class="table-wrap">
     <table>
       <thead>
@@ -66,18 +112,18 @@
         {% set row_class = priority_class(item.priority_level) %}
         {% set original = agg.similar_items.get(item.similar_to_id) %}
         <tr class="row-{{ row_class }}">
-          <td class="mono">{{ (item.updated_at or '')[:19] }}</td>
+          <td class="mono" style="white-space:nowrap">{{ (item.updated_at or '')[:19] }}</td>
           <td><span class="pill {{ row_class }}">{{ item.priority_level or '-' }}</span></td>
           <td>
             <a href="/item/{{ item.message_id }}">{{ item.summary or item.message_id }}</a>
-            <div class="meta mono">{{ item.message_id }}</div>
+            <div class="meta mono" style="font-size:11px">{{ item.message_id }}</div>
           </td>
           <td>
             {% if original %}
             <a href="/item/{{ original.id }}">{{ (original.title or original.content or original.id)[:90] }}</a>
-            <div class="meta mono">{{ original.published_at }}</div>
+            <div class="meta mono" style="font-size:11px">{{ original.published_at }}</div>
             {% elif item.similar_to_id %}
-            <span class="mono">{{ item.similar_to_id }}</span>
+            <span class="mono" style="font-size:11px">{{ item.similar_to_id }}</span>
             {% else %}
             <span class="meta">-</span>
             {% endif %}
@@ -89,7 +135,7 @@
     </table>
   </div>
   {% else %}
-  <div class="card"><div class="empty">暂无 skipped 记录</div></div>
+  <div class="card"><div class="empty">暂无 skipped 记录（聚合未触发或 AGGREGATION_V2 尚未开启）</div></div>
   {% endif %}
   {% endif %}
 {% endblock %}
