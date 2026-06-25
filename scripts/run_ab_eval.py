@@ -92,7 +92,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--providers",
         nargs="+",
-        default=list(DEFAULT_PROVIDERS),
+        default=None,
         help="provider keys to evaluate; default: gemini compatible",
     )
     parser.add_argument("--db", type=Path, default=DEFAULT_ANALYSIS_DB, help="analysis sqlite path")
@@ -146,6 +146,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="skip providers with an existing <provider>_result.json status=done result",
     )
+    parser.add_argument(
+        "--rebuild-comparisons",
+        action="store_true",
+        help="offline mode: rebuild comparison.md from existing provider result files; no API calls",
+    )
+    parser.add_argument(
+        "--summary-report",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help=(
+            "offline mode: write a batch Markdown summary from existing provider results; "
+            "default path is <output-root>/summary.md"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -165,10 +181,13 @@ def normalize_provider_keys(values: Sequence[str] | None) -> list[str]:
 def validate_args(args: argparse.Namespace) -> tuple[bool, str]:
     if args.run_id and args.run_ids:
         return False, "run_id and --run-ids cannot be used together"
-    if not args.run_id and not args.run_ids:
+    offline_mode = bool(args.rebuild_comparisons or args.summary_report is not None)
+    if not args.run_id and not args.run_ids and not offline_mode:
         return False, "provide run_id or --run-ids"
     if args.packet_dir and args.run_ids:
         return False, "--packet-dir is only valid for single-run mode"
+    if args.packet_dir and not (args.run_id or offline_mode):
+        return False, "--packet-dir requires run_id unless using offline report mode"
     provider_values = list(args.providers or DEFAULT_PROVIDERS)
     if any(not str(value or "").strip() for value in provider_values):
         return False, "--providers contains an empty value; use gemini, compatible, openai, or anthropic"
@@ -182,6 +201,8 @@ def validate_args(args: argparse.Namespace) -> tuple[bool, str]:
             "(manual is not callable by this CLI)"
         )
     run_ids = collect_run_ids(args)
+    if offline_mode and args.execute:
+        return False, "offline report modes cannot be combined with --execute"
     if args.execute and not args.yes:
         return False, "real provider calls require both --execute and --yes"
     if args.execute and getattr(args, "dry_run", False):
@@ -200,6 +221,8 @@ def validate_args(args: argparse.Namespace) -> tuple[bool, str]:
 def collect_run_ids(args: argparse.Namespace) -> list[str]:
     if args.run_ids:
         return [str(run_id).strip() for run_id in args.run_ids if str(run_id).strip()]
+    if not args.run_id:
+        return []
     return [str(args.run_id).strip()]
 
 
@@ -237,6 +260,36 @@ def read_json_dict(path: Path) -> dict[str, Any]:
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def discover_packet_dirs(*, output_root: Path, run_ids: Sequence[str], packet_dir: Path | None = None) -> list[tuple[str, Path]]:
+    if packet_dir is not None:
+        run_id = run_ids[0] if run_ids else packet_dir.name
+        return [(run_id, packet_dir)]
+    if run_ids:
+        return [(run_id, packet_dir_for(run_id, output_root=output_root)) for run_id in run_ids]
+    if not output_root.exists():
+        return []
+    packet_dirs: list[tuple[str, Path]] = []
+    for child in sorted(output_root.iterdir()):
+        if not child.is_dir():
+            continue
+        if any(child.glob("*_result.json")):
+            packet_dirs.append((child.name, child))
+    return packet_dirs
+
+
+def discover_result_provider_keys(packet_dir: Path) -> list[str]:
+    keys: list[str] = []
+    for result_path in sorted(packet_dir.glob("*_result.json")):
+        key = result_path.name[: -len("_result.json")]
+        result = read_json_dict(result_path)
+        key = str(result.get("provider_key") or key).strip()
+        if key and key not in keys:
+            keys.append(key)
+    ordered = [key for key in DEFAULT_PROVIDERS if key in keys]
+    ordered.extend(key for key in keys if key not in ordered)
+    return ordered
 
 
 def provider_plan(provider_keys: Sequence[str]) -> list[ProviderPlan]:
@@ -506,6 +559,126 @@ def write_comparison(packet_dir: Path, run_id: str, provider_keys: Sequence[str]
     return path
 
 
+def rebuild_existing_comparisons(packet_dirs: Sequence[tuple[str, Path]], *, stdout: Any = None) -> list[Path]:
+    stdout = stdout or sys.stdout
+    written: list[Path] = []
+    for run_id, packet_dir in packet_dirs:
+        provider_keys = discover_result_provider_keys(packet_dir)
+        if len(provider_keys) < 2:
+            print(f"skip {run_id}: found {len(provider_keys)} provider result(s)", file=stdout, flush=True)
+            continue
+        path = write_comparison(packet_dir, run_id, provider_keys)
+        if path is None:
+            print(f"skip {run_id}: comparison requires at least two providers", file=stdout, flush=True)
+            continue
+        written.append(path)
+        print(f"wrote comparison: {path}", file=stdout, flush=True)
+    return written
+
+
+def _summary_rows(packet_dirs: Sequence[tuple[str, Path]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for run_id, packet_dir in packet_dirs:
+        provider_keys = discover_result_provider_keys(packet_dir)
+        metadata = read_json_dict(packet_dir / "metadata.json")
+        for provider_key in provider_keys:
+            prefix = safe_filename(provider_key)
+            result = read_json_dict(packet_dir / f"{prefix}_result.json")
+            if not result:
+                continue
+            parsed = read_json_dict(packet_dir / f"{prefix}_parsed.json")
+            catalysts = parsed.get("catalysts") if isinstance(parsed.get("catalysts"), list) else []
+            missing = parsed.get("missing_evidence") if isinstance(parsed.get("missing_evidence"), list) else []
+            news_ids = [str(item.get("news_id") or "") for item in catalysts if isinstance(item, dict)]
+            duplicate_ids = sorted({news_id for news_id in news_ids if news_id and news_ids.count(news_id) > 1})
+            rows.append(
+                {
+                    "run_id": run_id,
+                    "asset": metadata.get("asset") or "-",
+                    "question": metadata.get("question") or "-",
+                    "provider": provider_key,
+                    "status": result.get("status") or "-",
+                    "model": result.get("model_label") or result.get("provider_name") or "-",
+                    "judgement": parsed.get("judgement") or "-",
+                    "confidence": parsed.get("overall_confidence", "-") if parsed else "-",
+                    "catalysts": len(catalysts),
+                    "missing": len(missing),
+                    "duplicates": ", ".join(duplicate_ids) if duplicate_ids else "-",
+                    "json": "yes" if result.get("json_parse_stable") else "no",
+                    "elapsed": result.get("elapsed_seconds", "-"),
+                    "tokens": format_tokens(result.get("input_tokens"), result.get("output_tokens")),
+                    "error": (result.get("error") or "-").replace("|", "/")[:120],
+                    "comparison": "yes" if (packet_dir / "comparison.md").exists() else "no",
+                }
+            )
+    return rows
+
+
+def write_summary_report(output_path: Path, packet_dirs: Sequence[tuple[str, Path]]) -> Path:
+    rows = _summary_rows(packet_dirs)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Provider A/B Batch Summary",
+        "",
+        f"更新时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        f"- 扫描 run 数：{len(packet_dirs)}",
+        f"- Provider 结果数：{len(rows)}",
+        "- 边界：只汇总已有导出文件，不调用 Provider API，不写 analysis_runs，不请求金十 REST，不触发 Telegram。",
+        "",
+    ]
+    if not rows:
+        lines.extend(["未找到可汇总的 Provider 结果。", ""])
+        output_path.write_text("\n".join(lines), encoding="utf-8")
+        return output_path
+
+    lines.extend(
+        [
+            "| run_id | asset | provider | status | judgement | confidence | catalysts | missing | duplicate_news_id | JSON | elapsed | tokens | comparison | error |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for row in rows:
+        lines.append(
+            "| {run_id} | {asset} | {provider} | {status} | {judgement} | {confidence} | {catalysts} | {missing} | {duplicates} | {json} | {elapsed} | {tokens} | {comparison} | {error} |".format(
+                **{key: str(value).replace("|", "/") for key, value in row.items()}
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Run 摘要",
+            "",
+            "| run_id | question | providers | comparison.md |",
+            "| --- | --- | --- | --- |",
+        ]
+    )
+    by_run: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_run.setdefault(str(row["run_id"]), []).append(row)
+    for run_id, run_rows in by_run.items():
+        providers = ", ".join(str(row["provider"]) for row in run_rows)
+        question = str(run_rows[0]["question"]).replace("|", "/")
+        comparison = "yes" if any(row["comparison"] == "yes" for row in run_rows) else "no"
+        lines.append(f"| {run_id} | {question} | {providers} | {comparison} |")
+    lines.extend(
+        [
+            "",
+            "> 自动汇总只记录客观字段和模型自报结构；关键催化覆盖、缺失证据是否合理、最终 pass/watch/fail 仍需人工复核。",
+            "",
+        ]
+    )
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+    return output_path
+
+
+def summary_output_path(args: argparse.Namespace) -> Path:
+    value = args.summary_report
+    if value in (None, ""):
+        return args.output_root / "summary.md"
+    return Path(value)
+
+
 def write_eval_plan(packet_dir: Path, run_id: str, plans: Sequence[ProviderPlan], *, prompt_chars: int) -> Path:
     path = packet_dir / "eval_plan.json"
     path.write_text(
@@ -660,8 +833,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"run_ab_eval: {message}", file=sys.stderr)
         return 2
 
-    provider_keys = normalize_provider_keys(args.providers)
     run_ids = collect_run_ids(args)
+    if args.rebuild_comparisons or args.summary_report is not None:
+        packet_dirs = discover_packet_dirs(output_root=args.output_root, run_ids=run_ids, packet_dir=args.packet_dir)
+        if not packet_dirs:
+            print(f"run_ab_eval: no existing provider result directories found under {args.output_root}", file=sys.stderr)
+            return 1
+        if args.rebuild_comparisons:
+            written = rebuild_existing_comparisons(packet_dirs)
+            print(f"rebuilt comparisons: {len(written)}", flush=True)
+        if args.summary_report is not None:
+            path = write_summary_report(summary_output_path(args), packet_dirs)
+            print(f"wrote summary report: {path}", flush=True)
+        return 0
+
+    provider_keys = normalize_provider_keys(args.providers)
     if not args.execute:
         print("DRY-RUN: no provider API calls will be made.", flush=True)
     else:

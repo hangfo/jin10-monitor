@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- 增强 Provider A/B 离线复盘能力：`scripts/run_ab_eval.py` 新增 `--rebuild-comparisons` 和 `--summary-report [PATH]`，可从已有导出结果补生成 `comparison.md` 并输出批量汇总 Markdown；该模式不调用 Provider API、不写 `analysis_runs`、不请求金十 REST、不触发 Telegram。
 - 增强 `/system` 最近 monitor 错误日志面板：新增 level 下拉筛选，可在前端选择全部、`ERROR` 或 `SHELL` 并复用 `/api/system/log-events?level=...` 只读刷新，不改变日志扫描、缓存、REST、Telegram 或业务库边界。
 - 新增项目状态摘要 067：只读整理 `exports/provider_ab_after_fix/` 的 3 个 Gemini vs GLM Provider A/B 样本，落档人工 scorecard 汇总、Provider 结论和后续复测建议。
 - 新增项目状态摘要 066：记录 Provider judgement Prompt 口径调整，明确证据方向与行情方向冲突时降级为 `unclear` / 低置信 `macro_sentiment`，并约束 GLM 不得输出 `[#news_id]` 占位符。

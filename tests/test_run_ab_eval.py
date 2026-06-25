@@ -118,6 +118,20 @@ def test_validate_args_accepts_valid_timeout_and_skip_existing():
     assert args.skip_existing is True
 
 
+def test_validate_args_allows_offline_modes_without_run_id():
+    args = run_ab_eval.parse_args(["--rebuild-comparisons", "--summary-report"])
+    ok, message = run_ab_eval.validate_args(args)
+    assert ok is True
+    assert message == ""
+
+
+def test_validate_args_rejects_execute_with_offline_mode():
+    args = run_ab_eval.parse_args(["ar_1", "--rebuild-comparisons", "--execute", "--yes"])
+    ok, message = run_ab_eval.validate_args(args)
+    assert ok is False
+    assert "offline report modes" in message
+
+
 def test_validate_args_rejects_empty_provider_value():
     args = run_ab_eval.parse_args(["ar_1", "--providers", ""])
     ok, message = run_ab_eval.validate_args(args)
@@ -437,6 +451,92 @@ def test_write_comparison_skips_single_provider(tmp_path):
 
     assert run_ab_eval.write_comparison(tmp_path, "ar_1", ["gemini"]) is None
     assert not (tmp_path / "comparison.md").exists()
+
+
+def test_rebuild_existing_comparisons_discovers_provider_results(tmp_path):
+    run_dir = tmp_path / "ar_1"
+    run_dir.mkdir()
+    gemini = run_ab_eval.EvalResult(
+        run_id="ar_1",
+        provider_key="gemini",
+        provider_name="Gemini",
+        status="done",
+        json_parse_stable=True,
+        parsed={"judgement": "news_driven", "catalysts": [], "missing_evidence": []},
+    )
+    compatible = run_ab_eval.EvalResult(
+        run_id="ar_1",
+        provider_key="compatible",
+        provider_name="GLM",
+        status="done",
+        json_parse_stable=True,
+        parsed={"judgement": "macro_sentiment", "catalysts": [{"news_id": "n1"}], "missing_evidence": ["volume"]},
+    )
+    run_ab_eval.write_result_files(run_dir, compatible)
+    run_ab_eval.write_result_files(run_dir, gemini)
+
+    written = run_ab_eval.rebuild_existing_comparisons([("ar_1", run_dir)])
+
+    assert written == [run_dir / "comparison.md"]
+    text = (run_dir / "comparison.md").read_text(encoding="utf-8")
+    assert "| judgement | news_driven | macro_sentiment |" in text
+
+
+def test_write_summary_report_summarizes_existing_results(tmp_path):
+    run_dir = tmp_path / "ar_1"
+    run_dir.mkdir()
+    (run_dir / "metadata.json").write_text(
+        json.dumps({"asset": "ETH", "question": "ETH why moved?"}),
+        encoding="utf-8",
+    )
+    result = run_ab_eval.EvalResult(
+        run_id="ar_1",
+        provider_key="gemini",
+        provider_name="Gemini",
+        status="done",
+        model_label="gemini:test",
+        elapsed_seconds=2.5,
+        input_tokens=10,
+        output_tokens=7,
+        json_parse_stable=True,
+        parsed={
+            "judgement": "news_driven",
+            "overall_confidence": 0.8,
+            "catalysts": [{"news_id": "n1"}, {"news_id": "n1"}],
+            "missing_evidence": [],
+        },
+    )
+    run_ab_eval.write_result_files(run_dir, result)
+    output_path = tmp_path / "summary.md"
+
+    path = run_ab_eval.write_summary_report(output_path, [("ar_1", run_dir)])
+
+    assert path == output_path
+    text = output_path.read_text(encoding="utf-8")
+    assert "Provider A/B Batch Summary" in text
+    assert "| ar_1 | ETH | gemini | done | news_driven | 0.8 | 2 | 0 | n1 | yes |" in text
+    assert "ETH why moved?" in text
+
+
+def test_main_offline_summary_and_rebuild_scan_output_root(tmp_path):
+    run_dir = tmp_path / "ar_1"
+    run_dir.mkdir()
+    for key, judgement in [("gemini", "news_driven"), ("compatible", "macro_sentiment")]:
+        result = run_ab_eval.EvalResult(
+            run_id="ar_1",
+            provider_key=key,
+            provider_name=key,
+            status="done",
+            json_parse_stable=True,
+            parsed={"judgement": judgement, "catalysts": [], "missing_evidence": []},
+        )
+        run_ab_eval.write_result_files(run_dir, result)
+
+    code = run_ab_eval.main(["--output-root", str(tmp_path), "--rebuild-comparisons", "--summary-report"])
+
+    assert code == 0
+    assert (run_dir / "comparison.md").exists()
+    assert (tmp_path / "summary.md").exists()
 
 
 def test_main_dry_run_returns_zero_and_writes_plan(tmp_path, monkeypatch):

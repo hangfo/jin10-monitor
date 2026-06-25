@@ -1,4 +1,4 @@
-更新时间：2026-06-26 00:54（Asia/Shanghai）
+更新时间：2026-06-26 01:24（Asia/Shanghai）
 
 # Backlog
 
@@ -28,17 +28,12 @@
 - 下一步：给 `/system` 日志面板增加下拉筛选。
 - 边界：只读刷新，不改变日志扫描和缓存语义。
 
-### A/B 批量汇总 Markdown
+### A/B 离线复盘能力
 
-- 背景：单个 `run_id` 的 `comparison.md` 解决局部对比；样本扩大后仍需要总览。
-- 下一步：在不调用 Provider API 的前提下，从已有 `eval_results.json` 和 `*_parsed.json` 生成批量汇总。
-- 边界：不做自动投票，不自动改 Provider 排序。
-
-### 旧导出目录补生成 `comparison.md`
-
-- 背景：部分早期导出目录已有两个 Provider 结果，但没有 `comparison.md`。
-- 下一步：提供只读输入、只写导出目录的重建方式。
-- 边界：不得重新请求模型。
+- 状态：已完成基础能力。
+- 用法：`scripts/run_ab_eval.py --rebuild-comparisons --summary-report` 可从已有导出结果补生成 `comparison.md` 并输出 `<output-root>/summary.md`。
+- 边界：只读已有结果，不调用 Provider API，不做自动投票，不自动改 Provider 排序。
+- 后续：如果样本扩大很多，再考虑把 summary 转成 Dashboard 只读页。
 
 ## P2：后续观察
 
@@ -68,4 +63,3 @@
 - A/B 自动投票或自动保存到 `analysis_runs`。
 - WebSocket / REST / Telegram 主链路重构。
 - 业务历史库 schema 调整。
-
