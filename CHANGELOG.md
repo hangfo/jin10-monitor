@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- 新增项目状态摘要 065：记录 Provider A/B scorecard 后的路线收口，新增 ROADMAP / DECISIONS / BACKLOG 三件套并确认下一步优先处理 Provider judgement Prompt 口径评估。
+- 新增路线收口三件套：`docs/ROADMAP.md`、`docs/DECISIONS.md`、`docs/BACKLOG.md`，按当前 Provider A/B、独立 Dashboard、只读诊断和运行稳定性边界拆分路线、决策与待办，明确暂不触碰 WebSocket / REST / Telegram / 业务历史库。
+
 ## 2026-06-25
 
 - 新增项目状态摘要 064：逐项复核 Replit `355a88d → cacbe1d` 深度审查报告，采纳 `CHANGELOG` 日期归档、A/B 自动对比、日志 API level 过滤，并将 ROADMAP/DECISIONS/BACKLOG 与复杂 A/B 汇总列入后续计划。
