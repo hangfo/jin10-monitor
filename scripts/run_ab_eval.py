@@ -9,10 +9,12 @@ tokens or hit external services.
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import re
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -132,6 +134,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=MAX_DEFAULT_EXECUTE_RUNS,
         help="maximum run count allowed in execute mode; default 5",
     )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="per-provider call timeout in seconds; overrides PROVIDER_TIMEOUT_SECONDS for this CLI run",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="skip providers with an existing <provider>_result.json status=done result",
+    )
     return parser.parse_args(argv)
 
 
@@ -155,12 +169,18 @@ def validate_args(args: argparse.Namespace) -> tuple[bool, str]:
         return False, "provide run_id or --run-ids"
     if args.packet_dir and args.run_ids:
         return False, "--packet-dir is only valid for single-run mode"
-    provider_keys = normalize_provider_keys(args.providers)
+    provider_values = list(args.providers or DEFAULT_PROVIDERS)
+    if any(not str(value or "").strip() for value in provider_values):
+        return False, "--providers contains an empty value; use gemini, compatible, openai, or anthropic"
+    provider_keys = normalize_provider_keys(provider_values)
     unknown = [key for key in provider_keys if key not in SUPPORTED_PROVIDERS]
     if unknown:
         return False, f"unknown provider(s): {', '.join(unknown)}"
     if not provider_keys:
-        return False, "no callable provider selected"
+        return False, (
+            "no callable provider selected; use gemini, compatible, openai, or anthropic "
+            "(manual is not callable by this CLI)"
+        )
     run_ids = collect_run_ids(args)
     if args.execute and not args.yes:
         return False, "real provider calls require both --execute and --yes"
@@ -171,6 +191,9 @@ def validate_args(args: argparse.Namespace) -> tuple[bool, str]:
             False,
             f"execute mode refuses {len(run_ids)} runs; raise --max-runs only after reviewing the batch",
         )
+    timeout = getattr(args, "timeout", None)
+    if timeout is not None and (timeout < 1 or timeout > 600):
+        return False, f"--timeout must be between 1 and 600 seconds, got {timeout:g}"
     return True, ""
 
 
@@ -295,6 +318,22 @@ def format_tokens(input_tokens: int | None, output_tokens: int | None) -> str:
     if output_tokens is not None:
         parts.append(f"out={output_tokens}")
     return " ".join(parts)
+
+
+@contextmanager
+def temporary_provider_timeout(timeout_seconds: float | None):
+    if timeout_seconds is None:
+        yield
+        return
+    original = os.environ.get("PROVIDER_TIMEOUT_SECONDS")
+    os.environ["PROVIDER_TIMEOUT_SECONDS"] = str(timeout_seconds)
+    try:
+        yield
+    finally:
+        if original is None:
+            os.environ.pop("PROVIDER_TIMEOUT_SECONDS", None)
+        else:
+            os.environ["PROVIDER_TIMEOUT_SECONDS"] = original
 
 
 def run_provider(
@@ -431,6 +470,8 @@ def evaluate_run(
     provider_keys: Sequence[str],
     execute: bool,
     refresh_packet: bool,
+    timeout_seconds: float | None = None,
+    skip_existing: bool = False,
     provider_factory: Callable[[str], Any] | None = None,
     stdout: Any = None,
 ) -> list[EvalResult]:
@@ -455,6 +496,8 @@ def evaluate_run(
     )
     if evidence_json:
         print(f"evidence_packet_chars={len(evidence_json)}", file=stdout, flush=True)
+    if timeout_seconds is not None:
+        print(f"timeout_seconds={timeout_seconds:g}", file=stdout, flush=True)
     for plan in plans:
         state = "will-run" if plan.will_run else f"skip:{plan.reason}"
         print(f"- {plan.key}: {state} ({plan.label})", file=stdout, flush=True)
@@ -475,20 +518,27 @@ def evaluate_run(
     factory = provider_factory or get_provider
     results: list[EvalResult] = []
     for plan in runnable:
-        provider = factory(plan.key)
-        if provider is None:
-            results.append(
-                EvalResult(
-                    run_id=run_id,
-                    provider_key=plan.key,
-                    provider_name=plan.key,
-                    status="failed",
-                    error="provider factory returned None",
+        if skip_existing:
+            result_path = packet_dir / f"{safe_filename(plan.key)}_result.json"
+            existing = read_json_dict(result_path)
+            if existing.get("status") == "done":
+                print(f"skip {plan.key}: existing done result found", file=stdout, flush=True)
+                continue
+        with temporary_provider_timeout(timeout_seconds):
+            provider = factory(plan.key)
+            if provider is None:
+                results.append(
+                    EvalResult(
+                        run_id=run_id,
+                        provider_key=plan.key,
+                        provider_name=plan.key,
+                        status="failed",
+                        error="provider factory returned None",
+                    )
                 )
-            )
-            continue
-        print(f"calling {plan.key}...", file=stdout, flush=True)
-        result = run_provider(run_id, plan.key, provider, manual_prompt=manual_prompt)
+                continue
+            print(f"calling {plan.key}...", file=stdout, flush=True)
+            result = run_provider(run_id, plan.key, provider, manual_prompt=manual_prompt)
         write_result_files(packet_dir, result)
         results.append(result)
         if result.status == "done":
@@ -515,7 +565,7 @@ def print_batch_summary(all_results: dict[str, list[EvalResult]], *, stdout: Any
         return
     provider_keys = sorted({result.provider_key for results in all_results.values() for result in results})
     if not provider_keys:
-        print("\nBatch dry-run completed; no provider calls executed.", file=stdout, flush=True)
+        print("\nBatch completed; no provider calls executed.", file=stdout, flush=True)
         return
     print("\nProvider A/B batch summary", file=stdout, flush=True)
     header = "run_id".ljust(24) + " ".join(key[:18].ljust(20) for key in provider_keys)
@@ -562,6 +612,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 provider_keys=provider_keys,
                 execute=args.execute,
                 refresh_packet=args.refresh_packet,
+                timeout_seconds=args.timeout,
+                skip_existing=args.skip_existing,
             )
         except Exception as exc:  # noqa: BLE001 - CLI reports per-run failures.
             had_failure = True

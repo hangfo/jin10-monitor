@@ -1,5 +1,6 @@
 import json
 import os
+import io
 from pathlib import Path
 
 from dashboard import analysis_db
@@ -92,6 +93,44 @@ def test_validate_args_rejects_oversized_execute_batch():
     ok, message = run_ab_eval.validate_args(args)
     assert ok is False
     assert "refuses 3 runs" in message
+
+
+def test_validate_args_rejects_invalid_timeout():
+    args = run_ab_eval.parse_args(["ar_1", "--timeout", "0"])
+    ok, message = run_ab_eval.validate_args(args)
+    assert ok is False
+    assert "timeout" in message
+
+
+def test_validate_args_rejects_extreme_timeout():
+    args = run_ab_eval.parse_args(["ar_1", "--timeout", "601"])
+    ok, message = run_ab_eval.validate_args(args)
+    assert ok is False
+    assert "between 1 and 600" in message
+
+
+def test_validate_args_accepts_valid_timeout_and_skip_existing():
+    args = run_ab_eval.parse_args(["ar_1", "--timeout", "120", "--skip-existing"])
+    ok, message = run_ab_eval.validate_args(args)
+    assert ok is True
+    assert message == ""
+    assert args.timeout == 120
+    assert args.skip_existing is True
+
+
+def test_validate_args_rejects_empty_provider_value():
+    args = run_ab_eval.parse_args(["ar_1", "--providers", ""])
+    ok, message = run_ab_eval.validate_args(args)
+    assert ok is False
+    assert "empty value" in message
+
+
+def test_validate_args_manual_provider_message_is_actionable():
+    args = run_ab_eval.parse_args(["ar_1", "--providers", "manual"])
+    ok, message = run_ab_eval.validate_args(args)
+    assert ok is False
+    assert "gemini" in message
+    assert "manual is not callable" in message
 
 
 def test_normalize_provider_keys_keeps_gemini_compatible_baseline():
@@ -222,6 +261,121 @@ def test_evaluate_run_execute_records_provider_failure(tmp_path, monkeypatch):
     assert not (output_dir / "gemini_parsed.json").exists()
 
 
+def test_temporary_provider_timeout_restores_env(monkeypatch):
+    monkeypatch.setenv("PROVIDER_TIMEOUT_SECONDS", "99")
+
+    with run_ab_eval.temporary_provider_timeout(15):
+        assert os.getenv("PROVIDER_TIMEOUT_SECONDS") == "15"
+
+    assert os.getenv("PROVIDER_TIMEOUT_SECONDS") == "99"
+
+
+def test_temporary_provider_timeout_restores_env_on_exception(monkeypatch):
+    monkeypatch.delenv("PROVIDER_TIMEOUT_SECONDS", raising=False)
+
+    try:
+        with run_ab_eval.temporary_provider_timeout(7):
+            assert os.getenv("PROVIDER_TIMEOUT_SECONDS") == "7"
+            raise RuntimeError("boom")
+    except RuntimeError:
+        pass
+
+    assert os.getenv("PROVIDER_TIMEOUT_SECONDS") is None
+
+
+def test_evaluate_run_timeout_is_visible_before_provider_factory(tmp_path, monkeypatch):
+    db_path = tmp_path / "analysis.sqlite3"
+    run_id = create_analysis_run(db_path)
+    output_dir = tmp_path / "exports" / run_id
+    captured = {}
+
+    def fake_factory(key):
+        captured["timeout"] = os.getenv("PROVIDER_TIMEOUT_SECONDS")
+        return FakeProvider()
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("PROVIDER_TIMEOUT_SECONDS", "99")
+    results = run_ab_eval.evaluate_run(
+        run_id,
+        db_path=db_path,
+        packet_dir=output_dir,
+        provider_keys=["gemini"],
+        execute=True,
+        refresh_packet=False,
+        timeout_seconds=15,
+        provider_factory=fake_factory,
+    )
+
+    assert results[0].status == "done"
+    assert captured["timeout"] == "15"
+    assert os.getenv("PROVIDER_TIMEOUT_SECONDS") == "99"
+
+
+def test_evaluate_run_skip_existing_skips_done_result(tmp_path, monkeypatch):
+    db_path = tmp_path / "analysis.sqlite3"
+    run_id = create_analysis_run(db_path)
+    output_dir = tmp_path / "exports" / run_id
+    output_dir.mkdir(parents=True)
+    (output_dir / "gemini_result.json").write_text(
+        json.dumps({"provider_key": "gemini", "status": "done"}),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_factory(key):
+        calls.append(key)
+        return FakeProvider()
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    stdout = io.StringIO()
+    results = run_ab_eval.evaluate_run(
+        run_id,
+        db_path=db_path,
+        packet_dir=output_dir,
+        provider_keys=["gemini"],
+        execute=True,
+        refresh_packet=False,
+        skip_existing=True,
+        provider_factory=fake_factory,
+        stdout=stdout,
+    )
+
+    assert results == []
+    assert calls == []
+    assert "skip gemini" in stdout.getvalue()
+
+
+def test_evaluate_run_skip_existing_reruns_failed_result(tmp_path, monkeypatch):
+    db_path = tmp_path / "analysis.sqlite3"
+    run_id = create_analysis_run(db_path)
+    output_dir = tmp_path / "exports" / run_id
+    output_dir.mkdir(parents=True)
+    (output_dir / "gemini_result.json").write_text(
+        json.dumps({"provider_key": "gemini", "status": "failed", "error": "timeout"}),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_factory(key):
+        calls.append(key)
+        return FakeProvider()
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    results = run_ab_eval.evaluate_run(
+        run_id,
+        db_path=db_path,
+        packet_dir=output_dir,
+        provider_keys=["gemini"],
+        execute=True,
+        refresh_packet=False,
+        skip_existing=True,
+        provider_factory=fake_factory,
+    )
+
+    assert calls == ["gemini"]
+    assert results[0].status == "done"
+
+
 def test_main_dry_run_returns_zero_and_writes_plan(tmp_path, monkeypatch):
     db_path = tmp_path / "analysis.sqlite3"
     run_id = create_analysis_run(db_path)
@@ -246,7 +400,7 @@ def test_main_dry_run_returns_zero_and_writes_plan(tmp_path, monkeypatch):
 
 def test_print_batch_summary_handles_dry_run(capsys):
     run_ab_eval.print_batch_summary({"ar_1": []})
-    assert "Batch dry-run completed" in capsys.readouterr().out
+    assert "Batch completed; no provider calls executed" in capsys.readouterr().out
 
 
 def test_write_result_files_sanitizes_provider_filename(tmp_path):

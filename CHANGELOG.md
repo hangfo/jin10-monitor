@@ -1,9 +1,12 @@
-更新时间：2026-06-25 06:10（Asia/Shanghai）
+更新时间：2026-06-25 21:17（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
+- 新增项目状态摘要 063：逐项复核 `355a88d → cacbe1d` 深度 review zip 和补充说明，采纳 `run_ab_eval.py` 断点续跑、timeout 范围校验、空 Provider 友好错误与 `/api/aggregation/stats` 只读刷新端点，记录候选实现中不应覆盖当前 Provider hardening 的取舍。
+- 增强 Provider A/B CLI：新增 `--skip-existing` 断点续跑，只跳过已有 `status=done` 的 Provider 结果；新增 `--timeout 1-600`，在 Provider 实例创建前临时覆盖 `PROVIDER_TIMEOUT_SECONDS` 并在调用后恢复；空 provider 或仅传 `manual` 时返回更可操作的错误信息。
+- 增强聚合降噪报告只读刷新：新增 `GET /api/aggregation/stats` JSON 端点，`/aggregation` 页面增加“刷新统计”按钮，可 AJAX 更新 24h/7d 被抑制统计，不触发聚合、不写业务库、不改变 SVG/明细表服务端渲染边界。
 - 新增项目状态摘要 062：记录 Provider A/B 真实调用暴露的 Gemini `MAX_TOKENS`、GLM `reasoning_content` 空输出和裸 `caveat` JSON 失败问题，确认修复后 3 个问题样本 Gemini + GLM 共 6 次真实复测均 `json=yes`。
 - 收稳 Provider A/B 真实调用边界：`scripts/run_ab_eval.py` 会自动读取仓库 `.env` 且实时刷新 CLI 进度；Gemini 默认关闭 thinking 并提高 JSON 输出上限，GLM/智谱 compatible 默认关闭 `thinking.type`，同时强化 Provider system prompt 的合法 JSON、禁止 reasoning 和字符串引号约束，减少 `MAX_TOKENS`、空 `content` 与裸中文 `caveat` 解析失败。
 - 新增受保护的 Provider A/B 批量评测工具 `scripts/run_ab_eval.py`：默认 dry-run 只导出/检查 packet 和 Provider 配置，真实调用必须同时传入 `--execute --yes`；默认仅评测当前基线 `gemini compatible`，批量真实调用默认最多 5 个 `run_id`，结果只写 `exports/provider_ab/<run_id>/`，不写独立分析库、不写业务历史库、不请求金十 REST、不触发 Telegram。

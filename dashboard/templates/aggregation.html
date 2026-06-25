@@ -5,6 +5,10 @@
   <div class="page-head">
     <h1>聚合降噪报告</h1>
     <div class="meta">只读诊断，不修改聚合配置 · 需开启 <span class="mono">AGGREGATION_V2=1</span></div>
+    <div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button type="button" id="agg-refresh-btn" onclick="refreshAggregationStats()">刷新统计</button>
+      <span id="agg-refresh-status" class="meta"></span>
+    </div>
   </div>
 
   {% if not agg %}
@@ -27,12 +31,12 @@
     </div>
     <div class="stat-card">
       <div class="stat-label">24h 被抑制</div>
-      <div class="stat-value">{{ agg.skipped_24h }}</div>
-      <div class="meta">减少推送 {{ agg.skipped_24h }} 条</div>
+      <div class="stat-value" id="agg-skipped-24h">{{ agg.skipped_24h }}</div>
+      <div class="meta">减少推送 <span id="agg-skipped-24h-meta">{{ agg.skipped_24h }}</span> 条</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">7天 被抑制</div>
-      <div class="stat-value">{{ agg.skipped_7d }}</div>
+      <div class="stat-value" id="agg-skipped-7d">{{ agg.skipped_7d }}</div>
     </div>
   </div>
 
@@ -138,4 +142,37 @@
   <div class="card"><div class="empty">暂无 skipped 记录（聚合未触发或 AGGREGATION_V2 尚未开启）</div></div>
   {% endif %}
   {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function refreshAggregationStats() {
+  const button = document.getElementById('agg-refresh-btn');
+  const status = document.getElementById('agg-refresh-status');
+  if (!button || !status) return;
+  button.disabled = true;
+  status.textContent = '读取中...';
+
+  fetch('/api/aggregation/stats')
+    .then((response) => response.json())
+    .then((data) => {
+      button.disabled = false;
+      if (!data.ok) {
+        status.textContent = '读取失败：' + (data.error || '未知错误');
+        return;
+      }
+      const skipped24h = document.getElementById('agg-skipped-24h');
+      const skipped24hMeta = document.getElementById('agg-skipped-24h-meta');
+      const skipped7d = document.getElementById('agg-skipped-7d');
+      if (skipped24h) skipped24h.textContent = data.skipped_24h ?? '-';
+      if (skipped24hMeta) skipped24hMeta.textContent = data.skipped_24h ?? '-';
+      if (skipped7d) skipped7d.textContent = data.skipped_7d ?? '-';
+      status.textContent = '已刷新 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    })
+    .catch((error) => {
+      button.disabled = false;
+      status.textContent = '请求失败：' + error.message;
+    });
+}
+</script>
 {% endblock %}

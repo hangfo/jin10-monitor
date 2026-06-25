@@ -1311,7 +1311,44 @@ def test_dashboard_bugfix_routes_are_registered():
     assert "/api/screenshots/upload" in paths
     assert "/screenshots/{screenshot_id}" in paths
     assert "/aggregation" in paths
+    assert "/api/aggregation/stats" in paths
     assert "/api/system/log-events" in paths
+
+
+def test_api_aggregation_stats_returns_readonly_report(monkeypatch):
+    endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", "") == "/api/aggregation/stats")
+    monkeypatch.setitem(endpoint.__globals__, "history_health", lambda: {"status": "ok"})
+    monkeypatch.setitem(
+        endpoint.__globals__,
+        "query_aggregation_report",
+        lambda: {
+            "agg_enabled": True,
+            "skipped_24h": 3,
+            "skipped_7d": 9,
+            "hourly_counts": [],
+            "daily_counts": [],
+            "skip_records": [],
+        },
+    )
+
+    response = asyncio.run(endpoint())
+    data = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert data["ok"] is True
+    assert data["skipped_24h"] == 3
+    assert data["skipped_7d"] == 9
+
+
+def test_api_aggregation_stats_returns_503_when_history_unavailable(monkeypatch):
+    endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", "") == "/api/aggregation/stats")
+    monkeypatch.setitem(endpoint.__globals__, "history_health", lambda: {"status": "missing"})
+
+    response = asyncio.run(endpoint())
+    data = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert data == {"ok": False, "error": "missing"}
 
 
 def test_api_system_log_events_returns_json_structure(tmp_path, monkeypatch):
@@ -1697,6 +1734,8 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "{% block scripts %}" in system_template
     assert "skipped_24h" in (TEMPLATE_DIR / "aggregation.html").read_text()
     assert "hourly_counts" in (TEMPLATE_DIR / "aggregation.html").read_text()
+    assert "refreshAggregationStats" in (TEMPLATE_DIR / "aggregation.html").read_text()
+    assert "/api/aggregation/stats" in (TEMPLATE_DIR / "aggregation.html").read_text()
     assert "无需处理" in ws_initial_template
     assert "建议逐条确认" in ws_initial_template
     assert "建议手动补拉" in ws_initial_template

@@ -1,4 +1,4 @@
-更新时间：2026-06-25 06:04（Asia/Shanghai）
+更新时间：2026-06-25 21:17（Asia/Shanghai）
 
 # 008 - Provider 同窗 A/B 评测计划
 
@@ -79,6 +79,12 @@ exports/provider_ab/<run_id>/
 
 # 真实调用：必须同时提供 --execute 和 --yes
 .venv/bin/python scripts/run_ab_eval.py --run-ids ar_1 ar_2 ar_3 --providers gemini compatible --execute --yes
+
+# 断点续跑：跳过已有 done 结果，失败或缺失的 Provider 会重新调用
+.venv/bin/python scripts/run_ab_eval.py --run-ids ar_1 ar_2 ar_3 --providers gemini compatible --execute --yes --skip-existing
+
+# 慢模型或长 Prompt：临时覆盖本次 CLI 的 per-provider 超时
+.venv/bin/python scripts/run_ab_eval.py ar_xxx --providers gemini compatible --execute --yes --timeout 120
 ```
 
 安全边界：
@@ -87,6 +93,8 @@ exports/provider_ab/<run_id>/
 - CLI 会自动读取仓库 `.env`，与 `run_dashboard.py` 的 Provider 配置口径保持一致；shell 中已导出的环境变量优先级更高。
 - 默认 Provider 为 `gemini compatible`，对应当前 Gemini + GLM/OpenAI-compatible 基线；`openai` / `anthropic` 只有显式指定才会尝试。
 - 批量真实调用默认最多 5 个 `run_id`，超过需显式提高 `--max-runs`。
+- `--skip-existing` 只跳过已有 `<provider>_result.json` 且 `status=done` 的 Provider；失败结果不会跳过，便于中断后续跑。
+- `--timeout` 允许 `1-600` 秒，按 Provider 调用临时设置 `PROVIDER_TIMEOUT_SECONDS`，调用后恢复原环境变量。
 - 脚本会自动补齐缺失的 `exports/provider_ab/<run_id>/` packet，但真实调用结果只写该导出目录：
   - `<provider>_raw.txt`
   - `<provider>_parsed.json`

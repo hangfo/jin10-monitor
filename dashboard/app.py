@@ -1270,6 +1270,13 @@ def create_app() -> FastAPI:
             },
         )
 
+    @app.get("/api/aggregation/stats")
+    async def api_aggregation_stats():
+        health = history_health()
+        if health["status"] != "ok":
+            return JSONResponse({"ok": False, "error": health["status"]}, status_code=503)
+        return JSONResponse({"ok": True, **query_aggregation_report()})
+
     @app.get("/healthz")
     async def healthz():
         health = history_health()
