@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- 新增项目状态摘要 066：记录 Provider judgement Prompt 口径调整，明确证据方向与行情方向冲突时降级为 `unclear` / 低置信 `macro_sentiment`，并约束 GLM 不得输出 `[#news_id]` 占位符。
+- 调整 Provider judgement Prompt：当新闻证据主方向与实际价格涨跌明显相反，且缺少成交量、订单流、清算、资金费率或 BTC/ETH 联动等直接市场证据时，要求优先降级为 `unclear` 或低置信 `macro_sentiment` 并写明 missing evidence；同时约束 GLM 不得输出 `[#news_id]` 字面占位符。
 - 新增项目状态摘要 065：记录 Provider A/B scorecard 后的路线收口，新增 ROADMAP / DECISIONS / BACKLOG 三件套并确认下一步优先处理 Provider judgement Prompt 口径评估。
 - 新增路线收口三件套：`docs/ROADMAP.md`、`docs/DECISIONS.md`、`docs/BACKLOG.md`，按当前 Provider A/B、独立 Dashboard、只读诊断和运行稳定性边界拆分路线、决策与待办，明确暂不触碰 WebSocket / REST / Telegram / 业务历史库。
 

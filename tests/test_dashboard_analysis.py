@@ -896,6 +896,8 @@ def test_prompt_generation_includes_selected_evidence_and_question():
     assert "优先输出 4-8 条 catalysts" in prompt
     assert "news_driven：一条或几条具体新闻/数据能直接解释主要波动" in prompt
     assert "macro_sentiment：主要是利率、美元、通胀、就业、地缘风险等宏观风险偏好共同传导" in prompt
+    assert "新闻证据的主方向与价格涨跌方向明显相反" in prompt
+    assert "必须优先判为 unclear 或低置信 macro_sentiment" in prompt
 
 
 def test_prompt_generation_includes_optional_market_context():
@@ -1160,6 +1162,9 @@ def test_provider_system_prompt_adds_glm_only_constraints():
     assert "不要输出 reasoning_content" in glm_prompt
     assert "caveat 必须是 JSON 字符串" in glm_prompt
     assert "必须使用中文" in glm_prompt
+    assert "优先为 unclear 或低置信 macro_sentiment" in gemini_prompt
+    assert "不得强行解释为确定性上涨/下跌原因" in gemini_prompt
+    assert "不得输出 [#news_id] 字面占位符" in glm_prompt
     assert "单条 indirect/mixed 证据不得给出 news_driven" in glm_prompt
     assert is_glm_provider("glm-4.7-flash") is True
     assert is_glm_provider("zhipu-compatible") is True

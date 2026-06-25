@@ -190,6 +190,8 @@ def provider_system_prompt(provider_name: str, provider_label: str = "") -> str:
         "请严格执行用户 Prompt 中的系统指令，只输出一个合法 JSON object。"
         "不要添加前言、解释、Markdown 代码块或思考过程；"
         "JSON 内所有字符串值都必须使用双引号包裹，尤其是 summary、headline、impact_path、missing_evidence 和 caveat。"
+        "如果新闻证据主方向与价格涨跌方向明显相反，且缺少成交量、订单流、清算、资金费率或 BTC/ETH 联动等直接市场证据，"
+        "judgement 必须优先为 unclear 或低置信 macro_sentiment，并在 missing_evidence 写明缺口，不得强行解释为确定性上涨/下跌原因。"
     )
     provider_key = str(provider_name or "").strip().lower()
     if provider_key in {"compatible", "glm"} and is_glm_provider(provider_label):
@@ -199,6 +201,7 @@ def provider_system_prompt(provider_name: str, provider_label: str = "") -> str:
             + "不要输出 reasoning_content，不要输出 <think> 或任何思考过程，只输出最终 JSON；"
             + "除 judgement 字段的枚举值外，summary、headline、impact_path、missing_evidence 和 caveat 必须使用中文；"
             + "caveat 必须是 JSON 字符串，不能写裸中文文本；"
+            + "impact_path 末尾必须使用真实消息 ID，例如 [#20260624195807735800]，不得输出 [#news_id] 字面占位符；"
             + "如果唯一高相关证据不是标的直接新闻，或证据方向与价格方向不一致，judgement 必须优先为 unclear；"
             + "如果缺少成交量、订单流、清算、资金费率、BTC 联动或同步市场数据，不得写“资金流入”“导致上涨/下跌”等确定性因果；"
             + "单条 indirect/mixed 证据不得给出 news_driven，overall_confidence 不得高于 0.5。"

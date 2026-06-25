@@ -47,6 +47,7 @@ SYSTEM_INSTRUCTION = """\
    - macro_sentiment：主要是利率、美元、通胀、就业、地缘风险等宏观风险偏好共同传导，没有单一新闻足够解释。
    - technical_breakout：主要由价格、成交量、突破/跌破等行情结构解释，新闻只是辅助。
    - unclear：证据不足、时间不吻合或因果链不清楚。
+   如果新闻证据的主方向与价格涨跌方向明显相反，且缺少成交量、订单流、清算、资金费率或 BTC/ETH 联动等直接市场证据，必须优先判为 unclear 或低置信 macro_sentiment，并在 missing_evidence 写明缺口，不得强行解释为确定性上涨/下跌原因。
 8. 如果多个证据属于同一传导链，可合并说明，但 catalysts 应覆盖不同的高置信传导链。
 9. 同一个 news_id 只能出现在一个 catalyst；如果同一条新闻有多个影响机制，请合并到同一个 catalyst。
 10. 输出严格 JSON，不要 markdown 代码块，不要任何前言后语。
