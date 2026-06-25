@@ -442,6 +442,70 @@ def write_eval_results(packet_dir: Path, run_id: str, results: Sequence[EvalResu
     return path
 
 
+def write_comparison(packet_dir: Path, run_id: str, provider_keys: Sequence[str]) -> Path | None:
+    rows: list[dict[str, Any]] = []
+    for provider_key in provider_keys:
+        prefix = safe_filename(provider_key)
+        result = read_json_dict(packet_dir / f"{prefix}_result.json")
+        if not result:
+            continue
+        parsed = read_json_dict(packet_dir / f"{prefix}_parsed.json")
+        catalysts = parsed.get("catalysts") if isinstance(parsed.get("catalysts"), list) else []
+        missing = parsed.get("missing_evidence") if isinstance(parsed.get("missing_evidence"), list) else []
+        rows.append(
+            {
+                "provider": provider_key,
+                "status": result.get("status") or "-",
+                "model": result.get("model_label") or result.get("provider_name") or "-",
+                "judgement": parsed.get("judgement") or "-",
+                "confidence": parsed.get("overall_confidence", "-") if parsed else "-",
+                "catalysts": len(catalysts),
+                "missing": len(missing),
+                "json": "yes" if result.get("json_parse_stable") else "no",
+                "elapsed": result.get("elapsed_seconds", "-"),
+                "tokens": format_tokens(result.get("input_tokens"), result.get("output_tokens")),
+                "finish": result.get("finish_reason") or "-",
+                "error": (result.get("error") or "-").replace("|", "/")[:120],
+            }
+        )
+    if len(rows) < 2:
+        return None
+
+    lines = [
+        f"# Provider A/B Comparison - {run_id}",
+        "",
+        f"更新时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "| 字段 | " + " | ".join(row["provider"] for row in rows) + " |",
+        "| --- | " + " | ".join("---" for _ in rows) + " |",
+    ]
+    field_labels = [
+        ("status", "状态"),
+        ("model", "模型"),
+        ("judgement", "judgement"),
+        ("confidence", "overall_confidence"),
+        ("catalysts", "catalysts 数量"),
+        ("missing", "missing_evidence 数量"),
+        ("json", "JSON 稳定"),
+        ("elapsed", "耗时秒"),
+        ("tokens", "Token"),
+        ("finish", "finish_reason"),
+        ("error", "错误"),
+    ]
+    for key, label in field_labels:
+        lines.append("| " + label + " | " + " | ".join(str(row[key]) for row in rows) + " |")
+    lines.extend(
+        [
+            "",
+            "> 自动对比只汇总客观字段和模型自报结构；关键催化覆盖、重复 news_id、缺失证据是否合理仍需人工复核。",
+            "",
+        ]
+    )
+    path = packet_dir / "comparison.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
 def write_eval_plan(packet_dir: Path, run_id: str, plans: Sequence[ProviderPlan], *, prompt_chars: int) -> Path:
     path = packet_dir / "eval_plan.json"
     path.write_text(
@@ -556,6 +620,9 @@ def evaluate_run(
         append_scorecard(packet_dir / "ab_scorecard.md", results)
         results_path = write_eval_results(packet_dir, run_id, results)
         print(f"wrote results: {results_path}", file=stdout, flush=True)
+    comparison_path = write_comparison(packet_dir, run_id, [plan.key for plan in runnable])
+    if comparison_path is not None:
+        print(f"wrote comparison: {comparison_path}", file=stdout, flush=True)
     return results
 
 

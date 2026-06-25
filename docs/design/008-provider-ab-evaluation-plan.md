@@ -100,7 +100,9 @@ exports/provider_ab/<run_id>/
   - `<provider>_parsed.json`
   - `<provider>_result.json`
   - `eval_results.json`
+  - `comparison.md`（同一 `run_id` 至少有两个 Provider 结果时生成）
   - `ab_scorecard.md` 自动结果区块
+- `comparison.md` 只汇总客观字段和模型自报结构；关键催化覆盖、重复 `news_id`、缺失证据是否合理和最终 `pass/watch/fail` 仍以人工 scorecard 为准。
 - 脚本复用 Dashboard 当前调用语义：`system_prompt = provider_system_prompt(...)`，`user_prompt = prompt.md`，确保结果可与 `/analyze` 后台 Provider 调用对齐。
 - 脚本不写 `analysis_runs`，不写业务历史库，不请求金十 REST，不触发 Telegram。
 

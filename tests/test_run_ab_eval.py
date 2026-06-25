@@ -376,6 +376,69 @@ def test_evaluate_run_skip_existing_reruns_failed_result(tmp_path, monkeypatch):
     assert results[0].status == "done"
 
 
+def test_write_comparison_summarizes_multiple_provider_results(tmp_path):
+    gemini = run_ab_eval.EvalResult(
+        run_id="ar_1",
+        provider_key="gemini",
+        provider_name="Gemini",
+        status="done",
+        model_label="gemini:test",
+        elapsed_seconds=3.2,
+        input_tokens=10,
+        output_tokens=5,
+        finish_reason="STOP",
+        json_parse_stable=True,
+        parsed={
+            "judgement": "news_driven",
+            "overall_confidence": 0.72,
+            "catalysts": [{"news_id": "n1"}],
+            "missing_evidence": [],
+        },
+        raw_output="{}",
+    )
+    compatible = run_ab_eval.EvalResult(
+        run_id="ar_1",
+        provider_key="compatible",
+        provider_name="GLM",
+        status="done",
+        model_label="GLM:test",
+        elapsed_seconds=8.5,
+        input_tokens=11,
+        output_tokens=6,
+        json_parse_stable=True,
+        parsed={
+            "judgement": "macro_sentiment",
+            "overall_confidence": 0.65,
+            "catalysts": [{"news_id": "n1"}, {"news_id": "n2"}],
+            "missing_evidence": ["volume"],
+        },
+        raw_output="{}",
+    )
+    run_ab_eval.write_result_files(tmp_path, gemini)
+    run_ab_eval.write_result_files(tmp_path, compatible)
+
+    path = run_ab_eval.write_comparison(tmp_path, "ar_1", ["gemini", "compatible"])
+
+    assert path is not None
+    text = path.read_text(encoding="utf-8")
+    assert "| judgement | news_driven | macro_sentiment |" in text
+    assert "| catalysts 数量 | 1 | 2 |" in text
+    assert "关键催化覆盖" in text
+
+
+def test_write_comparison_skips_single_provider(tmp_path):
+    result = run_ab_eval.EvalResult(
+        run_id="ar_1",
+        provider_key="gemini",
+        provider_name="Gemini",
+        status="done",
+    )
+    run_ab_eval.write_result_files(tmp_path, result)
+
+    assert run_ab_eval.write_comparison(tmp_path, "ar_1", ["gemini"]) is None
+    assert not (tmp_path / "comparison.md").exists()
+
+
 def test_main_dry_run_returns_zero_and_writes_plan(tmp_path, monkeypatch):
     db_path = tmp_path / "analysis.sqlite3"
     run_id = create_analysis_run(db_path)

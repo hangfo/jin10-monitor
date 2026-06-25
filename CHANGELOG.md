@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+## 2026-06-25
+
+- 新增项目状态摘要 064：逐项复核 Replit `355a88d → cacbe1d` 深度审查报告，采纳 `CHANGELOG` 日期归档、A/B 自动对比、日志 API level 过滤，并将 ROADMAP/DECISIONS/BACKLOG 与复杂 A/B 汇总列入后续计划。
+- 增强 Provider A/B 结果复盘：同一 `run_id` 有两个以上 Provider 结果时自动生成 `comparison.md`，汇总 status、model、judgement、confidence、catalysts/missing 数量、JSON 稳定性、耗时、Token 和错误，仍保留人工复核关键催化覆盖与缺失证据合理性。
+- 增强 `/api/system/log-events` 只读筛选：支持 `level=ERROR` / `level=SHELL` 等后端过滤，便于只看 Traceback/ERROR 或 shell 启动错误，不改变日志扫描、缓存或前端刷新边界。
 - 新增项目状态摘要 063：逐项复核 `355a88d → cacbe1d` 深度 review zip 和补充说明，采纳 `run_ab_eval.py` 断点续跑、timeout 范围校验、空 Provider 友好错误与 `/api/aggregation/stats` 只读刷新端点，记录候选实现中不应覆盖当前 Provider hardening 的取舍。
 - 增强 Provider A/B CLI：新增 `--skip-existing` 断点续跑，只跳过已有 `status=done` 的 Provider 结果；新增 `--timeout 1-600`，在 Provider 实例创建前临时覆盖 `PROVIDER_TIMEOUT_SECONDS` 并在调用后恢复；空 provider 或仅传 `manual` 时返回更可操作的错误信息。
 - 增强聚合降噪报告只读刷新：新增 `GET /api/aggregation/stats` JSON 端点，`/aggregation` 页面增加“刷新统计”按钮，可 AJAX 更新 24h/7d 被抑制统计，不触发聚合、不写业务库、不改变 SVG/明细表服务端渲染边界。

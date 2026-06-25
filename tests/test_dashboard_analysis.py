@@ -1387,6 +1387,25 @@ def test_api_system_log_events_force_clears_cache(tmp_path, monkeypatch):
     assert any("second error" in line for line in lines)
 
 
+def test_api_system_log_events_filters_level(tmp_path, monkeypatch):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text(
+        "2026-06-23 10:00:00 ERROR first error\n"
+        "zsh: command not found: Proxy\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MONITOR_LOG_PATH", str(log_path))
+    db._LOG_EVENTS_CACHE.clear()
+
+    endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", "") == "/api/system/log-events")
+    data = asyncio.run(endpoint(limit=10, force=True, level="ERROR"))
+
+    assert data["level"] == "ERROR"
+    assert data["events"]
+    assert all(event["level"] == "ERROR" for event in data["events"])
+    assert all("command not found" not in event["line"] for event in data["events"])
+
+
 def test_query_latest_published_at_respects_current_keyword_filter(tmp_path, monkeypatch):
     history_path = tmp_path / "history.sqlite3"
     conn = create_history_db(history_path)
