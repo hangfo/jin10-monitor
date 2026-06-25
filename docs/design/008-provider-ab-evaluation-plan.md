@@ -1,4 +1,4 @@
-更新时间：2026-06-25 05:08（Asia/Shanghai）
+更新时间：2026-06-25 06:04（Asia/Shanghai）
 
 # 008 - Provider 同窗 A/B 评测计划
 
@@ -84,6 +84,7 @@ exports/provider_ab/<run_id>/
 安全边界：
 
 - 默认不调用 Provider API；真实外部调用必须显式加 `--execute --yes`。
+- CLI 会自动读取仓库 `.env`，与 `run_dashboard.py` 的 Provider 配置口径保持一致；shell 中已导出的环境变量优先级更高。
 - 默认 Provider 为 `gemini compatible`，对应当前 Gemini + GLM/OpenAI-compatible 基线；`openai` / `anthropic` 只有显式指定才会尝试。
 - 批量真实调用默认最多 5 个 `run_id`，超过需显式提高 `--max-runs`。
 - 脚本会自动补齐缺失的 `exports/provider_ab/<run_id>/` packet，但真实调用结果只写该导出目录：
@@ -94,6 +95,11 @@ exports/provider_ab/<run_id>/
   - `ab_scorecard.md` 自动结果区块
 - 脚本复用 Dashboard 当前调用语义：`system_prompt = provider_system_prompt(...)`，`user_prompt = prompt.md`，确保结果可与 `/analyze` 后台 Provider 调用对齐。
 - 脚本不写 `analysis_runs`，不写业务历史库，不请求金十 REST，不触发 Telegram。
+
+推荐配置：
+
+- Gemini 2.5 Flash 做 JSON A/B 时建议使用 `GEMINI_THINKING_BUDGET=0`，并将 `GEMINI_MAX_TOKENS` 设为 `8192`，降低 `MAX_TOKENS` 截断概率。
+- GLM 4.7 / 智谱 compatible 做 JSON A/B 时建议使用 `COMPAT_LLM_THINKING_TYPE=disabled`；否则 `reasoning_content` 可能占满输出预算，导致可见 `content` 为空或 JSON 不完整。
 
 ## 6. Provider 执行顺序
 

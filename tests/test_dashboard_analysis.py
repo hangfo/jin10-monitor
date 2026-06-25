@@ -1153,8 +1153,12 @@ def test_provider_system_prompt_adds_glm_only_constraints():
     gemini_prompt = provider_system_prompt("gemini", "gemini-gemini-2.5-flash")
     glm_prompt = provider_system_prompt("compatible", "compatible-glm-4.7-flash")
 
+    assert "只输出一个合法 JSON object" in gemini_prompt
+    assert "所有字符串值都必须使用双引号" in gemini_prompt
     assert "GLM 专用补充约束" not in gemini_prompt
     assert "GLM 专用补充约束" in glm_prompt
+    assert "不要输出 reasoning_content" in glm_prompt
+    assert "caveat 必须是 JSON 字符串" in glm_prompt
     assert "必须使用中文" in glm_prompt
     assert "单条 indirect/mixed 证据不得给出 news_driven" in glm_prompt
     assert is_glm_provider("glm-4.7-flash") is True
@@ -1441,8 +1445,14 @@ def test_provider_adapters_report_configured_keys_without_network(monkeypatch):
 def test_provider_adapters_parse_successful_responses(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.delenv("GEMINI_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("GEMINI_THINKING_BUDGET", raising=False)
     monkeypatch.setenv("COMPAT_LLM_API_KEY", "test-compatible-key")
     monkeypatch.setenv("COMPAT_LLM_LABEL", "compatible")
+    monkeypatch.setenv("COMPAT_LLM_MODEL", "glm-4.7-flash")
+    monkeypatch.setenv("COMPAT_LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+    monkeypatch.delenv("COMPAT_LLM_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("COMPAT_LLM_THINKING_TYPE", raising=False)
 
     from dashboard.providers.anthropic_provider import AnthropicProvider
     from dashboard.providers.compatible_provider import OpenAICompatibleProvider
@@ -1461,6 +1471,8 @@ def test_provider_adapters_parse_successful_responses(monkeypatch):
         def _post_json(self, payload, *, api_key):
             assert api_key == "test-gemini-key"
             assert payload["generationConfig"]["responseMimeType"] == "application/json"
+            assert payload["generationConfig"]["maxOutputTokens"] == 8192
+            assert payload["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
             return {
                 "candidates": [
                     {
@@ -1479,6 +1491,8 @@ def test_provider_adapters_parse_successful_responses(monkeypatch):
     class FakeCompatible(OpenAICompatibleProvider):
         def _post_json(self, payload, *, api_key):
             assert api_key == "test-compatible-key"
+            assert payload["max_tokens"] == 8192
+            assert payload["thinking"] == {"type": "disabled"}
             return {
                 "model": "deepseek-test",
                 "choices": [{"message": {"content": '{"judgement":"unclear"}'}}],
@@ -1529,6 +1543,30 @@ def test_compatible_provider_empty_response_reports_shape(monkeypatch):
         assert "completion_tokens=0" in message
     else:
         raise AssertionError("ProviderError was not raised")
+
+
+def test_compatible_provider_glm_label_enables_non_thinking_payload(monkeypatch):
+    monkeypatch.setenv("COMPAT_LLM_API_KEY", "test-compatible-key")
+    monkeypatch.setenv("COMPAT_LLM_LABEL", "GLM")
+    monkeypatch.setenv("COMPAT_LLM_MODEL", "custom-compatible-model")
+    monkeypatch.setenv("COMPAT_LLM_BASE_URL", "https://example.com/v1")
+    monkeypatch.delenv("COMPAT_LLM_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("COMPAT_LLM_THINKING_TYPE", raising=False)
+
+    from dashboard.providers.compatible_provider import OpenAICompatibleProvider
+
+    class FakeCompatible(OpenAICompatibleProvider):
+        def _post_json(self, payload, *, api_key):
+            assert payload["max_tokens"] == 8192
+            assert payload["thinking"] == {"type": "disabled"}
+            return {
+                "model": "custom-compatible-model",
+                "choices": [{"message": {"content": '{"judgement":"unclear"}'}}],
+            }
+
+    result = FakeCompatible().complete("system", "user")
+
+    assert result.text == '{"judgement":"unclear"}'
 
 
 def test_gemini_provider_rejects_non_stop_finish_reason(monkeypatch):

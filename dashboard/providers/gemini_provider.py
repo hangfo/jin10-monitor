@@ -12,6 +12,8 @@ from .http_json import DEFAULT_PROVIDER_TIMEOUT_SECONDS, env_float, env_int, pos
 
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MAX_TOKENS = 8192
+DEFAULT_GEMINI_THINKING_BUDGET = 0
 
 
 class GeminiProvider(BaseProvider):
@@ -29,8 +31,13 @@ class GeminiProvider(BaseProvider):
             "PROVIDER_TIMEOUT_SECONDS",
             DEFAULT_PROVIDER_TIMEOUT_SECONDS,
         )
-        self.max_tokens = max_tokens if max_tokens is not None else env_int("GEMINI_MAX_TOKENS", 1800)
-        self.thinking_budget = env_int("GEMINI_THINKING_BUDGET", -1, minimum=-1, maximum=24576)
+        self.max_tokens = max_tokens if max_tokens is not None else env_int("GEMINI_MAX_TOKENS", DEFAULT_GEMINI_MAX_TOKENS)
+        self.thinking_budget = env_int(
+            "GEMINI_THINKING_BUDGET",
+            DEFAULT_GEMINI_THINKING_BUDGET,
+            minimum=-1,
+            maximum=24576,
+        )
 
     @property
     def name(self) -> str:

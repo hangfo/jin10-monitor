@@ -186,13 +186,19 @@ def ensure_run_manual_prompt(run: dict[str, object]) -> str:
 
 
 def provider_system_prompt(provider_name: str, provider_label: str = "") -> str:
-    base_prompt = "请严格执行用户 Prompt 中的系统指令，输出严格 JSON，不要添加前言或 Markdown 代码块。"
+    base_prompt = (
+        "请严格执行用户 Prompt 中的系统指令，只输出一个合法 JSON object。"
+        "不要添加前言、解释、Markdown 代码块或思考过程；"
+        "JSON 内所有字符串值都必须使用双引号包裹，尤其是 summary、headline、impact_path、missing_evidence 和 caveat。"
+    )
     provider_key = str(provider_name or "").strip().lower()
     if provider_key in {"compatible", "glm"} and is_glm_provider(provider_label):
         return (
             base_prompt
             + "\n\nGLM 专用补充约束："
+            + "不要输出 reasoning_content，不要输出 <think> 或任何思考过程，只输出最终 JSON；"
             + "除 judgement 字段的枚举值外，summary、headline、impact_path、missing_evidence 和 caveat 必须使用中文；"
+            + "caveat 必须是 JSON 字符串，不能写裸中文文本；"
             + "如果唯一高相关证据不是标的直接新闻，或证据方向与价格方向不一致，judgement 必须优先为 unclear；"
             + "如果缺少成交量、订单流、清算、资金费率、BTC 联动或同步市场数据，不得写“资金流入”“导致上涨/下跌”等确定性因果；"
             + "单条 indirect/mixed 证据不得给出 news_driven，overall_confidence 不得高于 0.5。"

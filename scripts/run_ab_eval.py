@@ -29,6 +29,18 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 
+def load_local_dotenv(env_path: Path | None = None) -> bool:
+    """Load repo .env for CLI parity with run_dashboard.py without overwriting shell env."""
+    path = env_path or BASE_DIR / ".env"
+    if not path.exists():
+        return False
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return False
+    return bool(load_dotenv(path, override=False))
+
+
 @dataclass(frozen=True)
 class ProviderPlan:
     key: str
@@ -427,8 +439,8 @@ def evaluate_run(
     manual_prompt, metadata, evidence_json = load_packet(packet_dir)
     plans = provider_plan(provider_keys)
 
-    print(f"\nProvider A/B run_id={run_id}", file=stdout)
-    print(f"packet_dir={packet_dir}", file=stdout)
+    print(f"\nProvider A/B run_id={run_id}", file=stdout, flush=True)
+    print(f"packet_dir={packet_dir}", file=stdout, flush=True)
     print(
         "asset={asset} window={start} ~ {end} evidence={selected}/{total} prompt_chars={chars}".format(
             asset=metadata.get("asset") or "-",
@@ -439,22 +451,23 @@ def evaluate_run(
             chars=len(manual_prompt),
         ),
         file=stdout,
+        flush=True,
     )
     if evidence_json:
-        print(f"evidence_packet_chars={len(evidence_json)}", file=stdout)
+        print(f"evidence_packet_chars={len(evidence_json)}", file=stdout, flush=True)
     for plan in plans:
         state = "will-run" if plan.will_run else f"skip:{plan.reason}"
-        print(f"- {plan.key}: {state} ({plan.label})", file=stdout)
+        print(f"- {plan.key}: {state} ({plan.label})", file=stdout, flush=True)
 
     if not execute:
         plan_path = write_eval_plan(packet_dir, run_id, plans, prompt_chars=len(manual_prompt))
-        print(f"dry-run only; wrote plan: {plan_path}", file=stdout)
-        print("real calls require: --execute --yes", file=stdout)
+        print(f"dry-run only; wrote plan: {plan_path}", file=stdout, flush=True)
+        print("real calls require: --execute --yes", file=stdout, flush=True)
         return []
 
     runnable = [plan for plan in plans if plan.will_run]
     if not runnable:
-        print("no configured provider selected; nothing executed", file=stdout)
+        print("no configured provider selected; nothing executed", file=stdout, flush=True)
         return []
 
     from dashboard.providers.base import get_provider
@@ -474,7 +487,7 @@ def evaluate_run(
                 )
             )
             continue
-        print(f"calling {plan.key}...", file=stdout)
+        print(f"calling {plan.key}...", file=stdout, flush=True)
         result = run_provider(run_id, plan.key, provider, manual_prompt=manual_prompt)
         write_result_files(packet_dir, result)
         results.append(result)
@@ -484,14 +497,15 @@ def evaluate_run(
                 f"{result.elapsed_seconds:.1f}s json={'yes' if result.json_parse_stable else 'no'} "
                 f"tokens={format_tokens(result.input_tokens, result.output_tokens)}",
                 file=stdout,
+                flush=True,
             )
         else:
-            print(f"  failed {result.error}", file=stdout)
+            print(f"  failed {result.error}", file=stdout, flush=True)
 
     if results:
         append_scorecard(packet_dir / "ab_scorecard.md", results)
         results_path = write_eval_results(packet_dir, run_id, results)
-        print(f"wrote results: {results_path}", file=stdout)
+        print(f"wrote results: {results_path}", file=stdout, flush=True)
     return results
 
 
@@ -501,12 +515,12 @@ def print_batch_summary(all_results: dict[str, list[EvalResult]], *, stdout: Any
         return
     provider_keys = sorted({result.provider_key for results in all_results.values() for result in results})
     if not provider_keys:
-        print("\nBatch dry-run completed; no provider calls executed.", file=stdout)
+        print("\nBatch dry-run completed; no provider calls executed.", file=stdout, flush=True)
         return
-    print("\nProvider A/B batch summary", file=stdout)
+    print("\nProvider A/B batch summary", file=stdout, flush=True)
     header = "run_id".ljust(24) + " ".join(key[:18].ljust(20) for key in provider_keys)
-    print(header, file=stdout)
-    print("-" * len(header), file=stdout)
+    print(header, file=stdout, flush=True)
+    print("-" * len(header), file=stdout, flush=True)
     for run_id, results in all_results.items():
         by_key = {result.provider_key: result for result in results}
         cells = []
@@ -518,11 +532,12 @@ def print_batch_summary(all_results: dict[str, list[EvalResult]], *, stdout: Any
                 cells.append(f"ok {result.elapsed_seconds:.1f}s json={'Y' if result.json_parse_stable else 'N'}"[:20].ljust(20))
             else:
                 cells.append(("fail " + result.status)[:20].ljust(20))
-        print(run_id[:24].ljust(24) + " ".join(cells), file=stdout)
+        print(run_id[:24].ljust(24) + " ".join(cells), file=stdout, flush=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    load_local_dotenv()
     ok, message = validate_args(args)
     if not ok:
         print(f"run_ab_eval: {message}", file=sys.stderr)
@@ -531,9 +546,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     provider_keys = normalize_provider_keys(args.providers)
     run_ids = collect_run_ids(args)
     if not args.execute:
-        print("DRY-RUN: no provider API calls will be made.")
+        print("DRY-RUN: no provider API calls will be made.", flush=True)
     else:
-        print("EXECUTE MODE: provider API calls may incur cost.")
+        print("EXECUTE MODE: provider API calls may incur cost.", flush=True)
 
     all_results: dict[str, list[EvalResult]] = {}
     had_failure = False

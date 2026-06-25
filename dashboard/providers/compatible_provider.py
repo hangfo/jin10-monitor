@@ -11,6 +11,8 @@ from .http_json import DEFAULT_PROVIDER_TIMEOUT_SECONDS, env_float, env_int, pos
 
 DEFAULT_COMPAT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_COMPAT_MODEL = "deepseek-v4-flash"
+DEFAULT_COMPAT_MAX_TOKENS = 1800
+DEFAULT_GLM_MAX_TOKENS = 8192
 
 
 class OpenAICompatibleProvider(BaseProvider):
@@ -30,7 +32,12 @@ class OpenAICompatibleProvider(BaseProvider):
             "PROVIDER_TIMEOUT_SECONDS",
             DEFAULT_PROVIDER_TIMEOUT_SECONDS,
         )
-        self.max_tokens = max_tokens if max_tokens is not None else env_int("COMPAT_LLM_MAX_TOKENS", 1800)
+        default_max_tokens = (
+            DEFAULT_GLM_MAX_TOKENS
+            if _looks_like_glm(self.model, self.base_url, os.getenv("COMPAT_LLM_LABEL"))
+            else DEFAULT_COMPAT_MAX_TOKENS
+        )
+        self.max_tokens = max_tokens if max_tokens is not None else env_int("COMPAT_LLM_MAX_TOKENS", default_max_tokens)
 
     @property
     def name(self) -> str:
@@ -52,6 +59,10 @@ class OpenAICompatibleProvider(BaseProvider):
             "temperature": env_float("COMPAT_LLM_TEMPERATURE", 0.2, minimum=0.0, maximum=2.0),
             "max_tokens": self.max_tokens,
         }
+        if _looks_like_glm(self.model, self.base_url, os.getenv("COMPAT_LLM_LABEL")):
+            thinking_type = os.getenv("COMPAT_LLM_THINKING_TYPE", "disabled").strip().lower()
+            if thinking_type in {"enabled", "disabled"}:
+                payload["thinking"] = {"type": thinking_type}
         response = self._post_json(payload, api_key=api_key)
         choices = response.get("choices") or []
         if not choices or not isinstance(choices[0], dict):
@@ -85,6 +96,11 @@ def _optional_int(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _looks_like_glm(*values: object) -> bool:
+    text = " ".join(str(value or "").lower() for value in values)
+    return "glm" in text or "bigmodel.cn" in text or "zhipu" in text
 
 
 def _response_brief(response: dict[str, Any], choice: dict[str, Any]) -> str:

@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from dashboard import analysis_db
@@ -112,6 +113,28 @@ def test_parse_provider_json_rejects_plain_text():
     ok, parsed = run_ab_eval.parse_provider_json("not json")
     assert ok is False
     assert parsed == {}
+
+
+def test_load_local_dotenv_reads_provider_config(monkeypatch, tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("GEMINI_API_KEY=dotenv-gemini\nCOMPAT_LLM_LABEL=GLM\n", encoding="utf-8")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("COMPAT_LLM_LABEL", raising=False)
+
+    assert run_ab_eval.load_local_dotenv(env_path) is True
+
+    assert os.getenv("GEMINI_API_KEY") == "dotenv-gemini"
+    assert os.getenv("COMPAT_LLM_LABEL") == "GLM"
+
+
+def test_load_local_dotenv_preserves_shell_env(monkeypatch, tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("GEMINI_API_KEY=dotenv-gemini\n", encoding="utf-8")
+    monkeypatch.setenv("GEMINI_API_KEY", "shell-gemini")
+
+    assert run_ab_eval.load_local_dotenv(env_path) is True
+
+    assert os.getenv("GEMINI_API_KEY") == "shell-gemini"
 
 
 def test_evaluate_run_dry_run_exports_packet_but_does_not_call_provider(tmp_path, monkeypatch):

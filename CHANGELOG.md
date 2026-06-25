@@ -1,9 +1,11 @@
-更新时间：2026-06-25 05:08（Asia/Shanghai）
+更新时间：2026-06-25 06:10（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
+- 新增项目状态摘要 062：记录 Provider A/B 真实调用暴露的 Gemini `MAX_TOKENS`、GLM `reasoning_content` 空输出和裸 `caveat` JSON 失败问题，确认修复后 3 个问题样本 Gemini + GLM 共 6 次真实复测均 `json=yes`。
+- 收稳 Provider A/B 真实调用边界：`scripts/run_ab_eval.py` 会自动读取仓库 `.env` 且实时刷新 CLI 进度；Gemini 默认关闭 thinking 并提高 JSON 输出上限，GLM/智谱 compatible 默认关闭 `thinking.type`，同时强化 Provider system prompt 的合法 JSON、禁止 reasoning 和字符串引号约束，减少 `MAX_TOKENS`、空 `content` 与裸中文 `caveat` 解析失败。
 - 新增受保护的 Provider A/B 批量评测工具 `scripts/run_ab_eval.py`：默认 dry-run 只导出/检查 packet 和 Provider 配置，真实调用必须同时传入 `--execute --yes`；默认仅评测当前基线 `gemini compatible`，批量真实调用默认最多 5 个 `run_id`，结果只写 `exports/provider_ab/<run_id>/`，不写独立分析库、不写业务历史库、不请求金十 REST、不触发 Telegram。
 - 更新 Provider A/B 设计文档，明确自动评测脚本复用 Dashboard 当前 Provider 调用语义、只自动记录耗时/Token/finish reason/JSON 稳定性/错误等客观字段，催化覆盖、重复 `news_id`、缺失证据合理性和最终 pass/watch/fail 仍需人工复核。
 - 接纳 `4981335 → 355a88d` 深度 review 的监控可靠性修复：健康心跳启动后最多 60 秒发送 `🟢 [启动]` 首次心跳，发送成功后才更新 `last_health_heartbeat_at`；心跳循环内部隔离异常，避免 Telegram 或 SQLite 临时错误把 WebSocket/REST 主路带崩。
