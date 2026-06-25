@@ -1,4 +1,4 @@
-更新时间：2026-06-26 00:54（Asia/Shanghai）
+更新时间：2026-06-26 01:30（Asia/Shanghai）
 
 # 项目路线图
 
@@ -23,12 +23,15 @@
 - GLM/智谱 compatible 默认关闭 `thinking.type`。
 - 同一 `run_id` 多 Provider 结果会生成 `comparison.md`。
 - `/api/system/log-events` 支持 level 过滤。
+- 已落档 `exports/provider_ab_after_fix/` 的 3 个 Gemini vs GLM 人工 scorecard 汇总。
+- 已调整 Provider judgement Prompt：证据方向与行情方向冲突且缺少直接市场证据时，优先 `unclear` 或低置信 `macro_sentiment`。
+- 已补 A/B 离线复盘能力：可从已有导出结果重建 `comparison.md` 并生成批量 `summary.md`。
 
 下一步：
 
-- 复盘 `exports/provider_ab_after_fix/` 的 3 个样本，形成 Gemini vs GLM 人工 scorecard。
-- 判断是否需要小改 Provider judgement Prompt，重点是行情方向与新闻方向冲突时的 `unclear` 降级口径。
-- 如果改 Prompt，只做小 diff，并补对应测试；不要顺手改 evidence scoring 或 Dashboard compare 体验。
+- 暂不继续改 Prompt，等待后续新样本观察 `066` 规则是否减少方向冲突场景的强行归因。
+- 如果要复测新 Prompt，明确使用 `--execute --yes`，并继续把结果只写到 `exports/provider_ab*/<run_id>/`。
+- 如果 A/B 样本显著扩大，再考虑把离线 `summary.md` 做成 Dashboard 只读页；不要做自动投票。
 
 建议模型：
 
@@ -41,9 +44,9 @@
 
 候选方向：
 
-- `/system` 日志面板增加前端 level 下拉，复用已存在的 `/api/system/log-events?level=...`。
-- Provider A/B 样本扩大后，增加一个批量汇总 Markdown 或只读汇总页。
-- 对 `comparison.md` 缺失的旧导出目录，提供安全的本地重建方式；默认不重新调用 Provider API。
+- `/system` 日志面板已增加前端 level 下拉，复用 `/api/system/log-events?level=...`。
+- Provider A/B 批量汇总 Markdown 和旧导出目录 `comparison.md` 离线重建能力已完成。
+- Provider A/B 样本扩大很多后，可考虑把离线 `summary.md` 转成 Dashboard 只读页。
 - `/aggregation` 如确实需要更实时，再评估 SVG 和明细表 AJAX 重绘。
 
 边界：
@@ -76,4 +79,3 @@
 - embedding / 向量相似度。
 - 自动投票或自动替代人工 scorecard。
 - 大规模重写 evidence scoring。
-

@@ -1,23 +1,31 @@
-更新时间：2026-06-26 01:24（Asia/Shanghai）
+更新时间：2026-06-26 01:30（Asia/Shanghai）
 
 # Backlog
 
 本文记录已识别但暂未进入当前提交范围的事项。优先级会随生产状态、A/B 结果和用户目标调整。
 
-## P0：近期应处理
+## 已完成：Provider A/B 收口
 
 ### Provider A/B 人工 scorecard 落档
 
 - 背景：`exports/provider_ab_after_fix/` 的 3 个样本已完成 Gemini + GLM 真实调用。
-- 现状：6/6 JSON 稳定；主要差异集中在 `news_driven` vs `macro_sentiment`、行情方向冲突和 missing evidence 口径。
-- 下一步：把人工结论回填到各 `ab_scorecard.md`，或新增一份汇总文档。
+- 状态：已在 `docs/status/067-2026-06-26-provider-ab-scorecard-summary.md` 落档人工 scorecard 汇总。
+- 结论：6/6 JSON 稳定；主要差异集中在 `news_driven` vs `macro_sentiment`、行情方向冲突和 missing evidence 口径。
 - 边界：不重新调用 Provider API。
 
 ### 判断是否小改 judgement Prompt
 
 - 背景：ETH 上涨样本中，证据偏美元/加息利空，模型仍给出宏观归因。
-- 建议：增加规则：当证据主方向与行情方向明显相反，且缺少直接 ETH/BTC/订单流/成交量证据时，优先 `unclear` 或低置信 `macro_sentiment`，并明确 missing evidence。
-- 风险：会影响 Dashboard Provider 输出口径。
+- 状态：已在 `bfec2bf` 完成 Prompt 调整。
+- 当前观察口径：新样本应检查方向冲突场景是否降级为 `unclear` 或低置信 `macro_sentiment`，并确认 GLM 不再输出 `[#news_id]` 占位符。
+
+## P0：近期应处理
+
+### 新 Prompt 小样本观察
+
+- 背景：`066` 已调整 Provider judgement Prompt，但尚未用新真实样本复测。
+- 下一步：如果愿意消耗 Provider API，再用 2-3 个方向冲突样本小批量复测；否则继续只读观察后续自然产生的 Provider 输出。
+- 边界：真实调用必须显式 `--execute --yes`，结果只写 `exports/provider_ab*/<run_id>/`。
 - 建议模型：`GPT-5.5 高`。
 
 ## P1：体验增强
@@ -25,7 +33,7 @@
 ### `/system` 日志 level 筛选 UI
 
 - 背景：后端 `/api/system/log-events` 已支持 `level=ERROR` / `level=SHELL` 等过滤。
-- 下一步：给 `/system` 日志面板增加下拉筛选。
+- 状态：已完成，页面可选择全部、`ERROR` 或 `SHELL`。
 - 边界：只读刷新，不改变日志扫描和缓存语义。
 
 ### A/B 离线复盘能力
