@@ -1753,7 +1753,9 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "最近 monitor 错误日志" in system_template
     assert "recent_monitor_log_events" in system_template
     assert "command not found" in system_template
+    assert 'id="log-level-filter"' in system_template
     assert "/api/system/log-events?limit=8&force=true" in system_template
+    assert "encodeURIComponent(selectedLevel)" in system_template
     assert "backoff-countdown" in system_template
     assert "{% block scripts %}" in system_template
     assert "skipped_24h" in (TEMPLATE_DIR / "aggregation.html").read_text()

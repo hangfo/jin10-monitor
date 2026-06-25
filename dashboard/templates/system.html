@@ -367,6 +367,11 @@
     {% set log_events = system_health.recent_monitor_log_events %}
     <h2 style="margin-top:0;display:flex;align-items:center;gap:10px">
       <span>最近 monitor 错误日志</span>
+      <select id="log-level-filter" onchange="refreshLogEvents()" title="筛选日志级别" style="font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text)">
+        <option value="">全部</option>
+        <option value="ERROR">ERROR</option>
+        <option value="SHELL">SHELL</option>
+      </select>
       <button id="log-refresh-btn" onclick="refreshLogEvents()" title="从磁盘重新扫描（绕过 30s 缓存）" style="font-size:12px;padding:2px 10px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text)">↻ 刷新</button>
       <span id="log-refresh-status" style="font-size:11px;color:#888"></span>
       {% if log_events.exists and log_events.last_modified %}
@@ -558,13 +563,18 @@ function refreshLogEvents() {
   const btn = document.getElementById('log-refresh-btn');
   const status = document.getElementById('log-refresh-status');
   const panel = document.getElementById('log-events-panel');
+  const levelFilter = document.getElementById('log-level-filter');
   if (!btn || !panel) return;
 
   btn.disabled = true;
   btn.textContent = '读取中...';
   status.textContent = '';
 
-  fetch('/api/system/log-events?limit=8&force=true')
+  let url = '/api/system/log-events?limit=8&force=true';
+  const selectedLevel = levelFilter ? levelFilter.value : '';
+  if (selectedLevel) url += '&level=' + encodeURIComponent(selectedLevel);
+
+  fetch(url)
     .then(function (response) { return response.json(); })
     .then(function (data) {
       btn.disabled = false;
@@ -576,6 +586,7 @@ function refreshLogEvents() {
 
       const now = new Date();
       status.textContent = '已刷新 ' + String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0')
+        + (data.level ? ' · ' + data.level : '')
         + (data.file_size_kb ? ' · ' + data.file_size_kb + ' KB' : '')
         + (data.last_modified ? ' · ' + data.last_modified : '');
 
