@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- 新增 tracked Provider A/B 汇总归档：将 `exports/provider_ab_after_fix` 的离线汇总输出到 `docs/provider_ab_results.md`，保留可进 Git 的客观 scorecard 表，不提交 ignored 的原始 `exports/` 结果。
 - 修复 Provider A/B 批量汇总表缺少模型列的问题：`--summary-report` 现在在 Markdown 表格中展示 `model_label` / Provider 名称，避免 Gemini Flash、Pro 等模型变体混在同一 Provider 名下不可区分；同时补充 `--providers` help 默认基线提示和 `evidence_json` 设计注释。
 
 ## 2026-06-26

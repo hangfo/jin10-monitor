@@ -1,4 +1,4 @@
-更新时间：2026-06-26 01:30（Asia/Shanghai）
+更新时间：2026-06-26 21:19（Asia/Shanghai）
 
 # Backlog
 
@@ -40,8 +40,16 @@
 
 - 状态：已完成基础能力。
 - 用法：`scripts/run_ab_eval.py --rebuild-comparisons --summary-report` 可从已有导出结果补生成 `comparison.md` 并输出 `<output-root>/summary.md`。
+- tracked 归档：`docs/provider_ab_results.md` 保留当前 `exports/provider_ab_after_fix` 的客观汇总表，原始 `exports/` 仍不进 Git。
 - 边界：只读已有结果，不调用 Provider API，不做自动投票，不自动改 Provider 排序。
 - 后续：如果样本扩大很多，再考虑把 summary 转成 Dashboard 只读页。
+
+### 方向冲突置信度上限观察
+
+- 背景：当前 Prompt 规则是“证据方向冲突且缺少直接市场证据时”降级。Review 建议进一步要求只要方向冲突，无论是否有市场数据，`overall_confidence` 都不得高于 `0.7`。
+- 状态：暂不直接修改 Prompt。
+- 理由：如果方向冲突但存在明确 ETF 资金流、订单流或清算证据，低于或等于 `0.7` 的硬上限可能过度压制真实解释；需要新样本证明模型仍过度自信后再改。
+- 触发条件：后续 scorecard 中再次出现方向冲突且置信度过高、missing_evidence 不合理或传导链过度确定。
 
 ## P2：后续观察
 

@@ -1,4 +1,4 @@
-更新时间：2026-06-26 01:24（Asia/Shanghai）
+更新时间：2026-06-26 21:19（Asia/Shanghai）
 
 # 008 - Provider 同窗 A/B 评测计划
 
@@ -92,6 +92,9 @@ exports/provider_ab/<run_id>/
 # 离线汇总：从已有导出结果生成批量 Markdown 汇总，不调用 Provider API
 .venv/bin/python scripts/run_ab_eval.py --output-root exports/provider_ab_after_fix --summary-report
 
+# tracked 汇总归档：把客观汇总表写入 docs，原始 exports 仍保持 ignored
+.venv/bin/python scripts/run_ab_eval.py --output-root exports/provider_ab_after_fix --summary-report docs/provider_ab_results.md
+
 # 离线收口：同时补 comparison.md 并生成 <output-root>/summary.md
 .venv/bin/python scripts/run_ab_eval.py --output-root exports/provider_ab_after_fix --rebuild-comparisons --summary-report
 ```
@@ -114,6 +117,7 @@ exports/provider_ab/<run_id>/
 - `comparison.md` 只汇总客观字段和模型自报结构；关键催化覆盖、重复 `news_id`、缺失证据是否合理和最终 `pass/watch/fail` 仍以人工 scorecard 为准。
 - `--rebuild-comparisons` 和 `--summary-report` 是离线模式，只读取已有 `<provider>_result.json` / `<provider>_parsed.json` / `metadata.json`，不会导出 packet、不会调用 Provider API、不会写 `analysis_runs`、不会请求金十 REST、不会触发 Telegram。
 - `--summary-report` 未指定路径时默认写 `<output-root>/summary.md`；指定路径时写到传入的 Markdown 文件。
+- 如需把客观汇总结果纳入 Git，可指定 `--summary-report docs/provider_ab_results.md`；只归档 summary，不提交 `exports/` 下的 raw / parsed / result 原始文件。
 - 脚本复用 Dashboard 当前调用语义：`system_prompt = provider_system_prompt(...)`，`user_prompt = prompt.md`，确保结果可与 `/analyze` 后台 Provider 调用对齐。
 - 脚本不写 `analysis_runs`，不写业务历史库，不请求金十 REST，不触发 Telegram。
 
