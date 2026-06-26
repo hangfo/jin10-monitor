@@ -118,6 +118,17 @@ def test_validate_args_accepts_valid_timeout_and_skip_existing():
     assert args.skip_existing is True
 
 
+def test_providers_help_mentions_default_baseline(capsys):
+    try:
+        run_ab_eval.parse_args(["--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    help_text = capsys.readouterr().out
+    normalized = " ".join(help_text.split())
+    assert "--providers KEY" in help_text
+    assert "default when omitted: gemini compatible" in normalized
+
+
 def test_validate_args_allows_offline_modes_without_run_id():
     args = run_ab_eval.parse_args(["--rebuild-comparisons", "--summary-report"])
     ok, message = run_ab_eval.validate_args(args)
@@ -514,8 +525,38 @@ def test_write_summary_report_summarizes_existing_results(tmp_path):
     assert path == output_path
     text = output_path.read_text(encoding="utf-8")
     assert "Provider A/B Batch Summary" in text
-    assert "| ar_1 | ETH | gemini | done | news_driven | 0.8 | 2 | 0 | n1 | yes |" in text
+    assert "| model |" in text
+    assert "gemini:test" in text
+    assert "| ar_1 | ETH | gemini | gemini:test | done | news_driven | 0.8 | 2 | 0 | n1 | yes |" in text
     assert "ETH why moved?" in text
+
+
+def test_write_summary_report_model_label_distinguishes_variants(tmp_path):
+    run_dir = tmp_path / "ar_model"
+    run_dir.mkdir()
+    (run_dir / "metadata.json").write_text(
+        json.dumps({"asset": "BTC", "question": "BTC move?"}),
+        encoding="utf-8",
+    )
+    for model_label in ["gemini-2.5-pro", "gemini-2.0-flash"]:
+        key = f"gemini_{model_label.replace('-', '_').replace('.', '_')}"
+        result = run_ab_eval.EvalResult(
+            run_id="ar_model",
+            provider_key=key,
+            provider_name="Gemini",
+            status="done",
+            model_label=model_label,
+            json_parse_stable=True,
+            parsed={"judgement": "unclear", "catalysts": [], "missing_evidence": []},
+        )
+        run_ab_eval.write_result_files(run_dir, result)
+
+    output_path = tmp_path / "model_summary.md"
+    run_ab_eval.write_summary_report(output_path, [("ar_model", run_dir)])
+    text = output_path.read_text(encoding="utf-8")
+
+    assert "gemini-2.5-pro" in text
+    assert "gemini-2.0-flash" in text
 
 
 def test_main_offline_summary_and_rebuild_scan_output_root(tmp_path):

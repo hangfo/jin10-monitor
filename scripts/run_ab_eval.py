@@ -93,7 +93,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--providers",
         nargs="+",
         default=None,
-        help="provider keys to evaluate; default: gemini compatible",
+        metavar="KEY",
+        help="provider keys to evaluate; default when omitted: gemini compatible",
     )
     parser.add_argument("--db", type=Path, default=DEFAULT_ANALYSIS_DB, help="analysis sqlite path")
     parser.add_argument(
@@ -634,13 +635,13 @@ def write_summary_report(output_path: Path, packet_dirs: Sequence[tuple[str, Pat
 
     lines.extend(
         [
-            "| run_id | asset | provider | status | judgement | confidence | catalysts | missing | duplicate_news_id | JSON | elapsed | tokens | comparison | error |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| run_id | asset | provider | model | status | judgement | confidence | catalysts | missing | duplicate_news_id | JSON | elapsed | tokens | comparison | error |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for row in rows:
         lines.append(
-            "| {run_id} | {asset} | {provider} | {status} | {judgement} | {confidence} | {catalysts} | {missing} | {duplicates} | {json} | {elapsed} | {tokens} | {comparison} | {error} |".format(
+            "| {run_id} | {asset} | {provider} | {model} | {status} | {judgement} | {confidence} | {catalysts} | {missing} | {duplicates} | {json} | {elapsed} | {tokens} | {comparison} | {error} |".format(
                 **{key: str(value).replace("|", "/") for key, value in row.items()}
             )
         )
@@ -715,6 +716,8 @@ def evaluate_run(
     stdout = stdout or sys.stdout
     ensure_packet(run_id, db_path=db_path, output_dir=packet_dir, refresh=refresh_packet)
     manual_prompt, metadata, evidence_json = load_packet(packet_dir)
+    # prompt.md already embeds the fixed evidence packet. evidence_json is only
+    # used for a size diagnostic, keeping CLI calls aligned with /analyze Provider calls.
     plans = provider_plan(provider_keys)
 
     print(f"\nProvider A/B run_id={run_id}", file=stdout, flush=True)

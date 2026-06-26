@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- 修复 Provider A/B 批量汇总表缺少模型列的问题：`--summary-report` 现在在 Markdown 表格中展示 `model_label` / Provider 名称，避免 Gemini Flash、Pro 等模型变体混在同一 Provider 名下不可区分；同时补充 `--providers` help 默认基线提示和 `evidence_json` 设计注释。
+
 ## 2026-06-26
 
 - 新增项目状态摘要 068：复盘验收 Provider A/B、Prompt 口径、`/system` 日志筛选和离线复盘工具阶段，明确后续 handoff 频率策略：小改只更新 `CHANGELOG.md`，多个相关小改形成阶段后再写 status。
