@@ -1414,7 +1414,7 @@ def test_api_system_log_events_filters_level(tmp_path, monkeypatch):
 def test_api_system_log_events_filters_warning_without_mislabeling_shell(tmp_path, monkeypatch):
     log_path = tmp_path / "jin10-monitor.log"
     log_path.write_text(
-        "2026-06-23 10:00:00 [WARNING] Telegram 网络异常: ClientConnectorError()\n"
+        "2026-06-23 10:00:00 [WARNING] Telegram 正在重试\n"
         "zsh: command not found: Proxy\n",
         encoding="utf-8",
     )
@@ -1426,7 +1426,7 @@ def test_api_system_log_events_filters_warning_without_mislabeling_shell(tmp_pat
     shell = asyncio.run(endpoint(limit=10, force=True, level="SHELL"))
 
     assert [event["level"] for event in warning["events"]] == ["WARNING"]
-    assert "Telegram 网络异常" in warning["events"][0]["line"]
+    assert "Telegram 正在重试" in warning["events"][0]["line"]
     assert [event["level"] for event in shell["events"]] == ["SHELL"]
     assert "command not found" in shell["events"][0]["line"]
 

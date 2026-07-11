@@ -902,36 +902,36 @@ def evaluate_run(
                 continue
         with temporary_provider_timeout(timeout_seconds):
             provider = factory(plan.key)
-            if provider is None:
-                results.append(
-                    EvalResult(
-                        run_id=run_id,
-                        provider_key=plan.key,
-                        provider_name=plan.key,
-                        status="failed",
-                        error="provider factory returned None",
-                    )
-                )
-                continue
-            system_prompt = provider_system_prompt(plan.key, str(getattr(provider, "name", plan.key) or plan.key))
+            provider_name = str(getattr(provider, "name", plan.key) or plan.key) if provider is not None else plan.key
+            system_prompt = provider_system_prompt(plan.key, provider_name)
             hashes = write_execution_context(
                 packet_dir,
                 run_id=run_id,
                 provider_key=plan.key,
-                provider_name=str(getattr(provider, "name", plan.key) or plan.key),
+                provider_name=provider_name,
                 manual_prompt=manual_prompt,
                 evidence_json=evidence_json,
                 system_prompt=system_prompt,
                 git_state=source_git_state,
             )
-            print(f"calling {plan.key}...", file=stdout, flush=True)
-            result = run_provider(
-                run_id,
-                plan.key,
-                provider,
-                manual_prompt=manual_prompt,
-                system_prompt=system_prompt,
-            )
+            if provider is None:
+                result = EvalResult(
+                    run_id=run_id,
+                    provider_key=plan.key,
+                    provider_name=provider_name,
+                    status="failed",
+                    started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    error="provider factory returned None",
+                )
+            else:
+                print(f"calling {plan.key}...", file=stdout, flush=True)
+                result = run_provider(
+                    run_id,
+                    plan.key,
+                    provider,
+                    manual_prompt=manual_prompt,
+                    system_prompt=system_prompt,
+                )
         write_result_files(packet_dir, result)
         append_attempt_history(
             packet_dir,

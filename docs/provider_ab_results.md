@@ -48,4 +48,5 @@
 - 本轮证明的是“当前 Prompt 下的新执行能够在方向冲突时降级”，不是旧 Prompt 与新 Prompt 的同 packet 因果对照。
 - 两个样本都是方向冲突场景，尚缺强方向一致样本来验证新规则不会过度压低合理的 `news_driven`。
 - `ar_20260711_192040_1ecbdd` 的结构化行情上下文因 Binance `HTTP 451` 不可用，不能把模型结论视为结合完整价格/成交量数据后的判断。
+- 真实调用发生时源码 HEAD 为 `71e361d`；`attempt_history.jsonl` 可复现性记录在后续 `5e70c0e` 才上线，因此本轮历史调用没有该文件，也不做事后伪造回填。下一轮调用开始才以逐 attempt 的 commit/hash 快照为审计依据。
 - 在新自然样本出现前，不据此继续修改 judgement Prompt 或 evidence scoring。

@@ -1,8 +1,14 @@
-更新时间：2026-07-11 22:53（Asia/Shanghai）
+更新时间：2026-07-12 01:18（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
+
+## 2026-07-12
+
+- 修复 `/system` WARNING 日志门控：`MONITOR_LOG_MARKERS` 现在显式接纳纯 WARNING 行，并移除会误收描述性 INFO/DEBUG 文本的裸 `Exception` marker；精确 Python 异常类名继续由 `_EXCEPTION_NAME_RE` 捕获。
+- 补齐 Provider A/B factory 失败审计：当已选 Provider 在实例化阶段返回 `None` 时，也会覆盖最新 result 并追加 attempt history，避免旧成功结果残留在 comparison 中造成误判。
+- 明确 2026-07-11 Provider 复测的审计边界：真实调用运行于 `71e361d`，早于 `attempt_history.jsonl` 在 `5e70c0e` 上线，因此只记录已验证的源码版本，不事后伪造历史 attempt。
 
 ## 2026-07-11
 

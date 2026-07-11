@@ -36,11 +36,16 @@ REST_HEADLINE_LABELS = {
 MONITOR_LOG_MARKERS = (
     "[ERROR]",
     " ERROR ",
+    "[WARNING]",
+    " WARNING ",
     "command not found",
     "Traceback",
-    "Exception",
 )
-_EXCEPTION_NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.]*(?:Error|Exception)(?:Group)?(?:\s*[:(]|$)")
+# Exact exception class names are matched by _EXCEPTION_NAME_RE below. A bare
+# "Exception" marker would also capture descriptive INFO/DEBUG log messages.
+_EXCEPTION_NAME_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:[A-Za-z][A-Za-z0-9_.]*)?(?:Error|Exception)(?:Group)?(?:\s*[:(]|$)"
+)
 _LOG_TIMESTAMP_RE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}\s+)?\d{2}:\d{2}:\d{2}")
 _LOG_TS_PREFIX_RE = re.compile(r"^((?:\d{4}-\d{2}-\d{2}\s+)?\d{2}:\d{2}:\d{2})")
 _LOG_EVENTS_CACHE: dict[str, Any] = {}

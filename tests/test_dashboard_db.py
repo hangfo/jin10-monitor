@@ -466,6 +466,8 @@ def test_query_recent_monitor_log_events_captures_exception_suffix(tmp_path):
                 "aiohttp.ClientConnectorError: Cannot connect to host",
                 "asyncio.TimeoutError",
                 "RuntimeError: db locked",
+                "Exception: base exception",
+                "ExceptionGroup: grouped failure",
                 "2026-06-22 08:01:00 INFO recovered",
             ]
         ),
@@ -478,6 +480,8 @@ def test_query_recent_monitor_log_events_captures_exception_suffix(tmp_path):
     assert any("ClientConnectorError" in line for line in lines)
     assert any("TimeoutError" in line for line in lines)
     assert any("RuntimeError" in line for line in lines)
+    assert any("Exception: base exception" in line for line in lines)
+    assert any("ExceptionGroup: grouped failure" in line for line in lines)
     assert all(event["level"] == "ERROR" for event in result["events"])
 
 
@@ -516,6 +520,38 @@ def test_query_recent_monitor_log_events_metadata_fields(tmp_path):
     assert result["file_size_kb"] > 0
     assert result["last_modified"]
     assert result["events"][0]["ts"] == "2026-06-22 09:00:00"
+
+
+def test_query_recent_monitor_log_events_captures_pure_warning_lines(tmp_path):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text(
+        "2026-06-26 10:00:00 [WARNING] Telegram 重试中\n"
+        "2026-06-26 10:01:00 WARNING 心跳发送失败\n"
+        "2026-06-26 10:02:00 INFO normal line\n",
+        encoding="utf-8",
+    )
+
+    result = db.query_recent_monitor_log_events(path=log_path)
+
+    assert [event["level"] for event in result["events"]] == ["WARNING", "WARNING"]
+    assert "心跳发送失败" in result["events"][0]["line"]
+    assert "Telegram 重试中" in result["events"][1]["line"]
+
+
+def test_query_recent_monitor_log_events_ignores_descriptive_exception_text(tmp_path):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text(
+        "2026-06-26 10:00:00 INFO Exception handling improved in v2\n"
+        "2026-06-26 10:00:01 DEBUG caught exception and recovered\n"
+        "2026-06-26 10:00:02 CustomException: real failure\n",
+        encoding="utf-8",
+    )
+
+    result = db.query_recent_monitor_log_events(path=log_path)
+
+    assert len(result["events"]) == 1
+    assert result["events"][0]["level"] == "ERROR"
+    assert "CustomException: real failure" in result["events"][0]["line"]
 
 
 def test_query_feed_page_applies_offset_limit_and_filters(dashboard_history_db):

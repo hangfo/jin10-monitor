@@ -303,6 +303,31 @@ def test_evaluate_run_execute_records_provider_failure(tmp_path, monkeypatch):
     assert "quota exceeded" in attempts[0]["error"]
 
 
+def test_evaluate_run_records_provider_factory_none_as_attempt(tmp_path, monkeypatch):
+    db_path = tmp_path / "analysis.sqlite3"
+    run_id = create_analysis_run(db_path)
+    output_dir = tmp_path / "exports" / run_id
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    results = run_ab_eval.evaluate_run(
+        run_id,
+        db_path=db_path,
+        packet_dir=output_dir,
+        provider_keys=["gemini"],
+        execute=True,
+        refresh_packet=False,
+        provider_factory=lambda _key: None,
+    )
+
+    assert results[0].status == "failed"
+    assert results[0].error == "provider factory returned None"
+    latest = json.loads((output_dir / "gemini_result.json").read_text(encoding="utf-8"))
+    assert latest["status"] == "failed"
+    attempts = [json.loads(line) for line in (output_dir / "attempt_history.jsonl").read_text().splitlines()]
+    assert attempts[0]["status"] == "failed"
+    assert attempts[0]["error"] == "provider factory returned None"
+
+
 def test_temporary_provider_timeout_restores_env(monkeypatch):
     monkeypatch.setenv("PROVIDER_TIMEOUT_SECONDS", "99")
 
