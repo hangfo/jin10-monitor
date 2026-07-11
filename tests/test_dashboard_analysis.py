@@ -1411,6 +1411,26 @@ def test_api_system_log_events_filters_level(tmp_path, monkeypatch):
     assert all("command not found" not in event["line"] for event in data["events"])
 
 
+def test_api_system_log_events_filters_warning_without_mislabeling_shell(tmp_path, monkeypatch):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text(
+        "2026-06-23 10:00:00 [WARNING] Telegram 网络异常: ClientConnectorError()\n"
+        "zsh: command not found: Proxy\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MONITOR_LOG_PATH", str(log_path))
+    db._LOG_EVENTS_CACHE.clear()
+
+    endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", "") == "/api/system/log-events")
+    warning = asyncio.run(endpoint(limit=10, force=True, level="WARNING"))
+    shell = asyncio.run(endpoint(limit=10, force=True, level="SHELL"))
+
+    assert [event["level"] for event in warning["events"]] == ["WARNING"]
+    assert "Telegram 网络异常" in warning["events"][0]["line"]
+    assert [event["level"] for event in shell["events"]] == ["SHELL"]
+    assert "command not found" in shell["events"][0]["line"]
+
+
 def test_query_latest_published_at_respects_current_keyword_filter(tmp_path, monkeypatch):
     history_path = tmp_path / "history.sqlite3"
     conn = create_history_db(history_path)
@@ -1754,6 +1774,7 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "recent_monitor_log_events" in system_template
     assert "command not found" in system_template
     assert 'id="log-level-filter"' in system_template
+    assert '<option value="WARNING">WARNING</option>' in system_template
     assert "/api/system/log-events?limit=8&force=true" in system_template
     assert "encodeURIComponent(selectedLevel)" in system_template
     assert "backoff-countdown" in system_template

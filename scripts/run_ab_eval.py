@@ -9,9 +9,11 @@ tokens or hit external services.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import json
 import re
+import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -255,6 +257,136 @@ def load_packet(packet_dir: Path) -> tuple[str, dict[str, Any], str]:
     return prompt, metadata, evidence
 
 
+def sha256_text(value: str) -> str:
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+
+
+def current_git_state() -> dict[str, Any]:
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=BASE_DIR,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=BASE_DIR,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"commit": "", "dirty": None}
+    return {
+        "commit": commit.stdout.strip() if commit.returncode == 0 else "",
+        "dirty": bool(status.stdout.strip()) if status.returncode == 0 else None,
+    }
+
+
+def public_provider_config(provider_key: str) -> dict[str, str]:
+    env_names = {
+        "gemini": ("GEMINI_MODEL", "GEMINI_MAX_TOKENS", "GEMINI_THINKING_BUDGET"),
+        "compatible": ("COMPAT_LLM_MODEL", "COMPAT_LLM_MAX_TOKENS", "COMPAT_LLM_THINKING_TYPE"),
+        "openai": ("OPENAI_MODEL", "OPENAI_MAX_TOKENS"),
+        "anthropic": ("ANTHROPIC_MODEL", "ANTHROPIC_MAX_TOKENS"),
+    }
+    return {
+        name: os.getenv(name, "").strip()
+        for name in env_names.get(str(provider_key or "").strip().lower(), ())
+        if os.getenv(name, "").strip()
+    }
+
+
+def write_execution_context(
+    packet_dir: Path,
+    *,
+    run_id: str,
+    provider_key: str,
+    provider_name: str,
+    manual_prompt: str,
+    evidence_json: str,
+    system_prompt: str,
+    git_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    prefix = safe_filename(provider_key)
+    user_prompt_sha256 = sha256_text(manual_prompt)
+    evidence_packet_sha256 = sha256_text(evidence_json)
+    system_prompt_sha256 = sha256_text(system_prompt)
+    user_prompt_path = packet_dir / f"prompt_{user_prompt_sha256[:12]}.md"
+    evidence_packet_path = packet_dir / f"evidence_packet_{evidence_packet_sha256[:12]}.json"
+    system_prompt_path = packet_dir / f"{prefix}_system_prompt_{system_prompt_sha256[:12]}.txt"
+    if not user_prompt_path.exists():
+        user_prompt_path.write_text(manual_prompt, encoding="utf-8")
+    if not evidence_packet_path.exists():
+        evidence_packet_path.write_text(evidence_json + "\n", encoding="utf-8")
+    if not system_prompt_path.exists():
+        system_prompt_path.write_text(system_prompt, encoding="utf-8")
+
+    path = packet_dir / "execution_context.json"
+    context = read_json_dict(path)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    resolved_git_state = git_state or current_git_state()
+    effective_timeout = os.getenv("PROVIDER_TIMEOUT_SECONDS", "").strip()
+    context.setdefault("run_id", run_id)
+    context.setdefault("created_at", now)
+    context["updated_at"] = now
+    context["git"] = resolved_git_state
+    context["user_prompt_file"] = "prompt.md"
+    context["user_prompt_snapshot_file"] = user_prompt_path.name
+    context["user_prompt_sha256"] = user_prompt_sha256
+    context["evidence_packet_file"] = "evidence_packet.json"
+    context["evidence_packet_snapshot_file"] = evidence_packet_path.name
+    context["evidence_packet_sha256"] = evidence_packet_sha256
+    providers = context.get("providers") if isinstance(context.get("providers"), dict) else {}
+    provider_config = public_provider_config(provider_key)
+    if effective_timeout:
+        provider_config["PROVIDER_TIMEOUT_SECONDS"] = effective_timeout
+    providers[provider_key] = {
+        "provider_name": provider_name,
+        "system_prompt_file": system_prompt_path.name,
+        "system_prompt_sha256": system_prompt_sha256,
+        "config": provider_config,
+    }
+    context["providers"] = providers
+    path.write_text(json.dumps(context, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {
+        "source_git_commit": resolved_git_state["commit"],
+        "source_git_dirty": resolved_git_state["dirty"],
+        "effective_timeout_seconds": effective_timeout or None,
+        "user_prompt_snapshot_file": user_prompt_path.name,
+        "user_prompt_sha256": user_prompt_sha256,
+        "evidence_packet_snapshot_file": evidence_packet_path.name,
+        "evidence_packet_sha256": evidence_packet_sha256,
+        "system_prompt_snapshot_file": system_prompt_path.name,
+        "system_prompt_sha256": system_prompt_sha256,
+    }
+
+
+def append_attempt_history(
+    packet_dir: Path,
+    result: EvalResult,
+    *,
+    timeout_seconds: float | None,
+    hashes: dict[str, Any],
+) -> Path:
+    path = packet_dir / "attempt_history.jsonl"
+    entry = result.to_public_dict()
+    entry.update(
+        {
+            "recorded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "timeout_override_seconds": timeout_seconds,
+            **hashes,
+        }
+    )
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+    return path
+
+
 def read_json_dict(path: Path) -> dict[str, Any]:
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
@@ -396,6 +528,7 @@ def run_provider(
     provider: Any,
     *,
     manual_prompt: str,
+    system_prompt: str | None = None,
 ) -> EvalResult:
     from dashboard.app import provider_system_prompt
 
@@ -408,7 +541,8 @@ def run_provider(
     )
     start = time.monotonic()
     try:
-        completion = provider.complete(provider_system_prompt(provider_key, result.provider_name), manual_prompt)
+        resolved_system_prompt = system_prompt or provider_system_prompt(provider_key, result.provider_name)
+        completion = provider.complete(resolved_system_prompt, manual_prompt)
         result.elapsed_seconds = time.monotonic() - start
         result.raw_output = str(completion.text or "")
         result.model_label = str(completion.model_label or "")
@@ -754,9 +888,11 @@ def evaluate_run(
         return []
 
     from dashboard.providers.base import get_provider
+    from dashboard.app import provider_system_prompt
 
     factory = provider_factory or get_provider
     results: list[EvalResult] = []
+    source_git_state = current_git_state()
     for plan in runnable:
         if skip_existing:
             result_path = packet_dir / f"{safe_filename(plan.key)}_result.json"
@@ -777,9 +913,32 @@ def evaluate_run(
                     )
                 )
                 continue
+            system_prompt = provider_system_prompt(plan.key, str(getattr(provider, "name", plan.key) or plan.key))
+            hashes = write_execution_context(
+                packet_dir,
+                run_id=run_id,
+                provider_key=plan.key,
+                provider_name=str(getattr(provider, "name", plan.key) or plan.key),
+                manual_prompt=manual_prompt,
+                evidence_json=evidence_json,
+                system_prompt=system_prompt,
+                git_state=source_git_state,
+            )
             print(f"calling {plan.key}...", file=stdout, flush=True)
-            result = run_provider(run_id, plan.key, provider, manual_prompt=manual_prompt)
+            result = run_provider(
+                run_id,
+                plan.key,
+                provider,
+                manual_prompt=manual_prompt,
+                system_prompt=system_prompt,
+            )
         write_result_files(packet_dir, result)
+        append_attempt_history(
+            packet_dir,
+            result,
+            timeout_seconds=timeout_seconds,
+            hashes=hashes,
+        )
         results.append(result)
         if result.status == "done":
             print(

@@ -79,6 +79,14 @@ def test_get_market_adapter_returns_binance_singleton(monkeypatch):
     assert adapter.name == "binance"
 
 
+def test_binance_adapter_defaults_to_market_data_only_endpoint(monkeypatch):
+    monkeypatch.delenv("BINANCE_SPOT_BASE_URL", raising=False)
+
+    adapter = BinanceMarketAdapter()
+
+    assert adapter.base_url == "https://data-api.binance.vision"
+
+
 def test_binance_adapter_fetches_and_normalizes_klines(monkeypatch):
     captured = []
 

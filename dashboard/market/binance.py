@@ -15,7 +15,9 @@ from typing import Any
 from .base import BaseMarketAdapter, Kline, MarketAdapterError
 
 
-DEFAULT_BASE_URL = "https://api.binance.com"
+# Binance documents this host for unauthenticated public market data. Using the
+# trading API host can return HTTP 451 from otherwise valid network locations.
+DEFAULT_BASE_URL = "https://data-api.binance.vision"
 BEIJING_TZ = timezone(timedelta(hours=8))
 ALLOWED_SYMBOLS = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"}
 ALLOWED_INTERVALS = {"1m": 60, "5m": 300}

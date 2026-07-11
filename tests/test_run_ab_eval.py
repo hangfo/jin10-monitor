@@ -256,6 +256,20 @@ def test_evaluate_run_execute_writes_raw_parsed_and_scorecard(tmp_path, monkeypa
     eval_results = json.loads((output_dir / "eval_results.json").read_text(encoding="utf-8"))
     assert eval_results["results"][0]["model_label"] == "gemini:fake"
     assert "自动 Provider A/B 结果" in (output_dir / "ab_scorecard.md").read_text(encoding="utf-8")
+    context = json.loads((output_dir / "execution_context.json").read_text(encoding="utf-8"))
+    system_prompt = (output_dir / context["providers"]["gemini"]["system_prompt_file"]).read_text(encoding="utf-8")
+    assert system_prompt == provider.calls[0][0]
+    assert context["run_id"] == run_id
+    assert context["user_prompt_sha256"] == run_ab_eval.sha256_text("dashboard prompt")
+    assert context["providers"]["gemini"]["system_prompt_sha256"] == run_ab_eval.sha256_text(system_prompt)
+    assert (output_dir / context["user_prompt_snapshot_file"]).read_text(encoding="utf-8") == "dashboard prompt"
+    assert (output_dir / context["evidence_packet_snapshot_file"]).exists()
+    assert "GEMINI_API_KEY" not in json.dumps(context)
+    attempts = [json.loads(line) for line in (output_dir / "attempt_history.jsonl").read_text().splitlines()]
+    assert len(attempts) == 1
+    assert attempts[0]["status"] == "done"
+    assert attempts[0]["user_prompt_sha256"] == context["user_prompt_sha256"]
+    assert attempts[0]["system_prompt_snapshot_file"] == context["providers"]["gemini"]["system_prompt_file"]
 
 
 def test_evaluate_run_execute_records_provider_failure(tmp_path, monkeypatch):
@@ -284,6 +298,9 @@ def test_evaluate_run_execute_records_provider_failure(tmp_path, monkeypatch):
     assert "quota exceeded" in results[0].error
     assert "quota exceeded" in (output_dir / "gemini_raw.txt").read_text(encoding="utf-8")
     assert not (output_dir / "gemini_parsed.json").exists()
+    attempts = [json.loads(line) for line in (output_dir / "attempt_history.jsonl").read_text().splitlines()]
+    assert attempts[0]["status"] == "failed"
+    assert "quota exceeded" in attempts[0]["error"]
 
 
 def test_temporary_provider_timeout_restores_env(monkeypatch):
@@ -399,6 +416,47 @@ def test_evaluate_run_skip_existing_reruns_failed_result(tmp_path, monkeypatch):
 
     assert calls == ["gemini"]
     assert results[0].status == "done"
+
+
+def test_append_attempt_history_preserves_failure_then_retry(tmp_path):
+    hashes = {
+        "user_prompt_sha256": "user-hash",
+        "evidence_packet_sha256": "evidence-hash",
+        "system_prompt_sha256": "system-hash",
+    }
+    failed = run_ab_eval.EvalResult(
+        run_id="ar_retry",
+        provider_key="compatible",
+        provider_name="GLM",
+        status="failed",
+        error="timeout",
+    )
+    done = run_ab_eval.EvalResult(
+        run_id="ar_retry",
+        provider_key="compatible",
+        provider_name="GLM",
+        status="done",
+        model_label="GLM:test",
+        json_parse_stable=True,
+    )
+
+    run_ab_eval.append_attempt_history(tmp_path, failed, timeout_seconds=120, hashes=hashes)
+    run_ab_eval.append_attempt_history(tmp_path, done, timeout_seconds=180, hashes=hashes)
+
+    attempts = [json.loads(line) for line in (tmp_path / "attempt_history.jsonl").read_text().splitlines()]
+    assert [attempt["status"] for attempt in attempts] == ["failed", "done"]
+    assert [attempt["timeout_override_seconds"] for attempt in attempts] == [120, 180]
+    assert all(attempt["system_prompt_sha256"] == "system-hash" for attempt in attempts)
+
+
+def test_public_provider_config_excludes_secrets(monkeypatch):
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-test")
+    monkeypatch.setenv("GEMINI_MAX_TOKENS", "4096")
+    monkeypatch.setenv("GEMINI_API_KEY", "must-not-leak")
+
+    config = run_ab_eval.public_provider_config("gemini")
+
+    assert config == {"GEMINI_MODEL": "gemini-test", "GEMINI_MAX_TOKENS": "4096"}
 
 
 def test_write_comparison_summarizes_multiple_provider_results(tmp_path):

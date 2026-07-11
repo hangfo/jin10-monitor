@@ -1,4 +1,4 @@
-更新时间：2026-06-26 21:19（Asia/Shanghai）
+更新时间：2026-07-11 22:53（Asia/Shanghai）
 
 # 008 - Provider 同窗 A/B 评测计划
 
@@ -111,6 +111,10 @@ exports/provider_ab/<run_id>/
   - `<provider>_raw.txt`
   - `<provider>_parsed.json`
   - `<provider>_result.json`
+  - `<provider>_system_prompt_<sha256前缀>.txt`
+  - `prompt_<sha256前缀>.md` / `evidence_packet_<sha256前缀>.json`（真实执行输入的不可变快照）
+  - `execution_context.json`（Prompt/evidence/system hash、Git 状态与非敏感 Provider 配置）
+  - `attempt_history.jsonl`（append-only 失败与重试历史）
   - `eval_results.json`
   - `comparison.md`（同一 `run_id` 至少有两个 Provider 结果时生成）
   - `ab_scorecard.md` 自动结果区块

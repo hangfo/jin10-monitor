@@ -127,6 +127,18 @@ def _line_is_monitor_error(line: str) -> bool:
     return bool(_EXCEPTION_NAME_RE.search(line))
 
 
+def _classify_monitor_log_level(line: str) -> str:
+    if "[WARNING]" in line or " WARNING " in line:
+        return "WARNING"
+    if "[ERROR]" in line or " ERROR " in line:
+        return "ERROR"
+    if "command not found" in line:
+        return "SHELL"
+    if "Traceback" in line or _EXCEPTION_NAME_RE.search(line):
+        return "ERROR"
+    return "ERROR"
+
+
 def _extract_log_timestamp(line: str) -> str:
     match = _LOG_TS_PREFIX_RE.match(line)
     return match.group(1) if match else ""
@@ -181,7 +193,7 @@ def query_recent_monitor_log_events(limit: int = 8, *, path: Optional[Path] = No
                 i -= 1
                 continue
 
-        level = "ERROR" if "[ERROR]" in clean or " ERROR " in clean else "SHELL"
+        level = _classify_monitor_log_level(clean)
         ts = _extract_log_timestamp(clean)
 
         if "Traceback" in clean:

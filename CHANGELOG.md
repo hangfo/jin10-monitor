@@ -1,14 +1,20 @@
-更新时间：2026-06-26 01:30（Asia/Shanghai）
+更新时间：2026-07-11 22:53（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
-- 新增 tracked Provider A/B 汇总归档：将 `exports/provider_ab_after_fix` 的离线汇总输出到 `docs/provider_ab_results.md`，保留可进 Git 的客观 scorecard 表，不提交 ignored 的原始 `exports/` 结果。
-- 修复 Provider A/B 批量汇总表缺少模型列的问题：`--summary-report` 现在在 Markdown 表格中展示 `model_label` / Provider 名称，避免 Gemini Flash、Pro 等模型变体混在同一 Provider 名下不可区分；同时补充 `--providers` help 默认基线提示和 `evidence_json` 设计注释。
+## 2026-07-11
+
+- 归档 2026-07-11 新 Prompt 方向冲突复测：补齐两个固定 packet 的人工 scorecard，并在 `docs/provider_ab_results.md` 记录 5 次免费调用、GLM 首次超时/单次重试、对抗性检查和当前归因限制；不把旧导出结果当作新 Prompt 结论。
+- 增强 Provider A/B 可复现性：真实执行会保存每个 Provider 实际 system prompt、用户 Prompt / evidence packet SHA256、Git commit/dirty 状态和非敏感模型配置，并以 append-only `attempt_history.jsonl` 保留失败与重试历史；不改变 Provider 请求内容、默认参数或调用次数。
+- 修正 `/system` monitor 日志分类：显式 `[WARNING]` 事件独立标为 `WARNING`，`SHELL` 只保留 `command not found` 等 shell 错误，并在 level 下拉增加 WARNING；扫描范围、缓存和只读边界不变。
+- 修复 Dashboard 可选行情上下文的 Binance `HTTP 451`：默认基址从受地域限制的交易主站切换到 Binance 官方公共市场数据端点 `data-api.binance.vision`，继续允许 `BINANCE_SPOT_BASE_URL` 覆盖，不改变缓存、超时、支持标的或 K 线语义。
 
 ## 2026-06-26
 
+- 新增 tracked Provider A/B 汇总归档：将 `exports/provider_ab_after_fix` 的离线汇总输出到 `docs/provider_ab_results.md`，保留可进 Git 的客观 scorecard 表，不提交 ignored 的原始 `exports/` 结果。
+- 修复 Provider A/B 批量汇总表缺少模型列的问题：`--summary-report` 现在在 Markdown 表格中展示 `model_label` / Provider 名称，避免 Gemini Flash、Pro 等模型变体混在同一 Provider 名下不可区分；同时补充 `--providers` help 默认基线提示和 `evidence_json` 设计注释。
 - 新增项目状态摘要 068：复盘验收 Provider A/B、Prompt 口径、`/system` 日志筛选和离线复盘工具阶段，明确后续 handoff 频率策略：小改只更新 `CHANGELOG.md`，多个相关小改形成阶段后再写 status。
 - 增强 Provider A/B 离线复盘能力：`scripts/run_ab_eval.py` 新增 `--rebuild-comparisons` 和 `--summary-report [PATH]`，可从已有导出结果补生成 `comparison.md` 并输出批量汇总 Markdown；该模式不调用 Provider API、不写 `analysis_runs`、不请求金十 REST、不触发 Telegram。
 - 增强 `/system` 最近 monitor 错误日志面板：新增 level 下拉筛选，可在前端选择全部、`ERROR` 或 `SHELL` 并复用 `/api/system/log-events?level=...` 只读刷新，不改变日志扫描、缓存、REST、Telegram 或业务库边界。

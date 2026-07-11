@@ -1,4 +1,4 @@
-更新时间：2026-06-02 19:52（Asia/Shanghai）
+更新时间：2026-07-11 22:53（Asia/Shanghai）
 
 # 006 - Binance 行情叠加最小实施计划
 
@@ -32,6 +32,7 @@
 第一版数据源：
 
 - Binance Spot public REST。
+- 公共行情默认基址使用 Binance 官方 market-data-only endpoint：`https://data-api.binance.vision`；仍可用 `BINANCE_SPOT_BASE_URL` 显式覆盖。
 - 优先使用 Spot `GET /api/v3/klines`。
 - 可选使用 Spot `GET /api/v3/ticker/price` 做当前价格轻量查询。
 
@@ -58,6 +59,8 @@ API 版本选择：
 
 ```bash
 MARKET_ADAPTER=binance
+# 可选覆盖；默认即为官方只读行情端点
+BINANCE_SPOT_BASE_URL=https://data-api.binance.vision
 ```
 
 未配置时：

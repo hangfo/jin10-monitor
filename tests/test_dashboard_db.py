@@ -431,6 +431,7 @@ def test_query_recent_monitor_log_events_reads_error_tail(tmp_path):
                 "00:01:00 [INFO] normal line",
                 "00:02:00 [ERROR] Telegram 超时，送达状态未知",
                 "scripts/run_monitor.sh: line 1: Proxy: command not found",
+                "00:03:00 [WARNING] Telegram 网络异常: ClientConnectorError()",
             ]
         ),
         encoding="utf-8",
@@ -440,9 +441,10 @@ def test_query_recent_monitor_log_events_reads_error_tail(tmp_path):
 
     assert result["exists"] is True
     assert result["path"] == str(log_path)
-    assert [event["level"] for event in result["events"]] == ["SHELL", "ERROR"]
-    assert "command not found" in result["events"][0]["line"]
-    assert "Telegram 超时" in result["events"][1]["line"]
+    assert [event["level"] for event in result["events"]] == ["WARNING", "SHELL", "ERROR"]
+    assert "网络异常" in result["events"][0]["line"]
+    assert "command not found" in result["events"][1]["line"]
+    assert "Telegram 超时" in result["events"][2]["line"]
 
 
 def test_query_recent_monitor_log_events_handles_missing_file(tmp_path):
@@ -476,6 +478,7 @@ def test_query_recent_monitor_log_events_captures_exception_suffix(tmp_path):
     assert any("ClientConnectorError" in line for line in lines)
     assert any("TimeoutError" in line for line in lines)
     assert any("RuntimeError" in line for line in lines)
+    assert all(event["level"] == "ERROR" for event in result["events"])
 
 
 def test_query_recent_monitor_log_events_aggregates_traceback_block(tmp_path):

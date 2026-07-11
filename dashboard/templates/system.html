@@ -370,6 +370,7 @@
       <select id="log-level-filter" onchange="refreshLogEvents()" title="筛选日志级别" style="font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text)">
         <option value="">全部</option>
         <option value="ERROR">ERROR</option>
+        <option value="WARNING">WARNING</option>
         <option value="SHELL">SHELL</option>
       </select>
       <button id="log-refresh-btn" onclick="refreshLogEvents()" title="从磁盘重新扫描（绕过 30s 缓存）" style="font-size:12px;padding:2px 10px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text)">↻ 刷新</button>
@@ -399,7 +400,7 @@
         {% endfor %}
       </tbody>
     </table>
-    <div class="meta" style="margin-top:10px">只读扫描日志尾部 256 KB，筛选 ERROR、command not found、Traceback、Exception 及 Python 异常类名；Traceback 块自动聚合上下文。结果缓存 30s，不触发补拉、REST 请求或 Telegram 发送。</div>
+    <div class="meta" style="margin-top:10px">只读扫描日志尾部 256 KB，区分 ERROR、WARNING、SHELL command not found、Traceback、Exception 及 Python 异常类名；Traceback 块自动聚合上下文。结果缓存 30s，不触发补拉、REST 请求或 Telegram 发送。</div>
     {% else %}
     <div class="empty">最近日志尾部没有匹配的错误行。</div>
     <div class="meta" style="margin-top:6px">日志文件：<span class="mono">{{ log_events.path }}</span>{% if log_events.file_size_kb %} · {{ log_events.file_size_kb }} KB{% endif %}{% if log_events.last_modified %} · 最后写入 {{ log_events.last_modified }}{% endif %}</div>

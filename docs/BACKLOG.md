@@ -24,7 +24,8 @@
 ### 新 Prompt 小样本观察
 
 - 背景：`066` 已调整 Provider judgement Prompt，但尚未用新真实样本复测。
-- 下一步：如果愿意消耗 Provider API，再用 2-3 个方向冲突样本小批量复测；否则继续只读观察后续自然产生的 Provider 输出。
+- 状态：已用两个方向冲突固定 packet 完成 Gemini + GLM/compatible 小批量真实复测；成功输出均降级为 `unclear` 或低置信 `macro_sentiment`，结构稳定，结果归档在 `docs/provider_ab_results.md`。
+- 下一步：等待宏观密集期自然产生一个方向冲突样本和一个强方向一致样本，再验证 Gemini 因果措辞与新规则是否过度压低合理的 `news_driven`；当前不继续修改 Prompt。
 - 边界：真实调用必须显式 `--execute --yes`，结果只写 `exports/provider_ab*/<run_id>/`。
 - 建议模型：`GPT-5.5 高`。
 
@@ -32,8 +33,8 @@
 
 ### `/system` 日志 level 筛选 UI
 
-- 背景：后端 `/api/system/log-events` 已支持 `level=ERROR` / `level=SHELL` 等过滤。
-- 状态：已完成，页面可选择全部、`ERROR` 或 `SHELL`。
+- 背景：后端 `/api/system/log-events` 支持 level 过滤。
+- 状态：已完成，页面可选择全部、`ERROR`、`WARNING` 或 `SHELL`；Telegram 等显式 WARNING 不再误标为 SHELL。
 - 边界：只读刷新，不改变日志扫描和缓存语义。
 
 ### A/B 离线复盘能力
