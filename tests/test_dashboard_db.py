@@ -468,6 +468,9 @@ def test_query_recent_monitor_log_events_captures_exception_suffix(tmp_path):
                 "RuntimeError: db locked",
                 "Exception: base exception",
                 "ExceptionGroup: grouped failure",
+                "Error: cannot connect",
+                "notAnError: valid custom exception name",
+                "*privateError: decorative text",
                 "2026-06-22 08:01:00 INFO recovered",
             ]
         ),
@@ -482,6 +485,9 @@ def test_query_recent_monitor_log_events_captures_exception_suffix(tmp_path):
     assert any("RuntimeError" in line for line in lines)
     assert any("Exception: base exception" in line for line in lines)
     assert any("ExceptionGroup: grouped failure" in line for line in lines)
+    assert any(line == "Error: cannot connect" for line in lines)
+    assert any(line == "notAnError: valid custom exception name" for line in lines)
+    assert not any("*privateError" in line for line in lines)
     assert all(event["level"] == "ERROR" for event in result["events"])
 
 
@@ -509,6 +515,61 @@ def test_query_recent_monitor_log_events_aggregates_traceback_block(tmp_path):
     assert tracebacks[0]["level"] == "ERROR"
     assert "TimeoutError" in tracebacks[0]["line"]
     assert "→" in tracebacks[0]["line"]
+
+
+def test_query_recent_monitor_log_events_traceback_keeps_final_exception_after_raise(tmp_path):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "2026-07-14 10:00:00 [ERROR] Telegram send failed",
+                "Traceback (most recent call last):",
+                '  File "jin10_monitor.py", line 1402, in send_telegram',
+                "    await session.post(url, json=params, timeout=30)",
+                '  File "aiohttp/client.py", line 560, in _request',
+                "    raise ServerTimeoutError()",
+                "aiohttp.ServerTimeoutError: Server timeout error",
+                "2026-07-14 10:01:00 INFO recovered",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = db.query_recent_monitor_log_events(path=log_path)
+    tracebacks = [event for event in result["events"] if "Traceback" in event["line"]]
+
+    assert len(tracebacks) == 1
+    assert "aiohttp.ServerTimeoutError: Server timeout error" in tracebacks[0]["line"]
+    assert "INFO recovered" not in tracebacks[0]["line"]
+
+
+def test_query_recent_monitor_log_events_traceback_keeps_final_exception_in_long_stack(tmp_path):
+    log_path = tmp_path / "jin10-monitor.log"
+    frames = [
+        f'  File "module_{index}.py", line {index}, in call_{index}\n    await call_{index + 1}()'
+        for index in range(12)
+    ]
+    log_path.write_text(
+        "\n".join(
+            [
+                "2026-07-14 11:00:00 [ERROR] deep failure",
+                "Traceback (most recent call last):",
+                *frames,
+                "    raise RuntimeError()",
+                "RuntimeError: final failure detail",
+                "2026-07-14 11:01:00 INFO recovered",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = db.query_recent_monitor_log_events(path=log_path)
+    tracebacks = [event for event in result["events"] if "Traceback" in event["line"]]
+
+    assert len(tracebacks) == 1
+    assert "RuntimeError: final failure detail" in tracebacks[0]["line"]
+    assert "INFO recovered" not in tracebacks[0]["line"]
+    assert not any(event["line"] == "RuntimeError: final failure detail" for event in result["events"])
 
 
 def test_query_recent_monitor_log_events_metadata_fields(tmp_path):

@@ -44,10 +44,11 @@ MONITOR_LOG_MARKERS = (
 # Exact exception class names are matched by _EXCEPTION_NAME_RE below. A bare
 # "Exception" marker would also capture descriptive INFO/DEBUG log messages.
 _EXCEPTION_NAME_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:[A-Za-z][A-Za-z0-9_.]*)?(?:Error|Exception)(?:Group)?(?:\s*[:(]|$)"
+    r"(?<![A-Za-z0-9_.*])(?:[A-Za-z][A-Za-z0-9_.]*)?(?:Error|Exception)(?:Group)?(?:\s*[:(]|$)"
 )
 _LOG_TIMESTAMP_RE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}\s+)?\d{2}:\d{2}:\d{2}")
 _LOG_TS_PREFIX_RE = re.compile(r"^((?:\d{4}-\d{2}-\d{2}\s+)?\d{2}:\d{2}:\d{2})")
+_TRACEBACK_SCAN_LIMIT = 80
 _LOG_EVENTS_CACHE: dict[str, Any] = {}
 _LOG_EVENTS_CACHE_TTL = 30
 
@@ -193,8 +194,15 @@ def query_recent_monitor_log_events(limit: int = 8, *, path: Optional[Path] = No
             continue
 
         if "Traceback" not in clean and _EXCEPTION_NAME_RE.search(clean):
-            previous_context = "\n".join(line.strip() for line in lines[max(0, i - 5):i])
-            if "Traceback" in previous_context:
+            belongs_to_traceback = False
+            for previous_raw in reversed(lines[max(0, i - _TRACEBACK_SCAN_LIMIT):i]):
+                previous_clean = previous_raw.strip()
+                if "Traceback" in previous_clean:
+                    belongs_to_traceback = True
+                    break
+                if _LOG_TIMESTAMP_RE.match(previous_clean):
+                    break
+            if belongs_to_traceback:
                 i -= 1
                 continue
 
@@ -203,19 +211,24 @@ def query_recent_monitor_log_events(limit: int = 8, *, path: Optional[Path] = No
 
         if "Traceback" in clean:
             block = [clean]
+            terminal_exception_index: Optional[int] = None
             j = i + 1
-            while j < len(lines) and len(block) < 6:
-                next_clean = lines[j].strip()
+            while j < len(lines) and (j - i) <= _TRACEBACK_SCAN_LIMIT:
+                raw_next = lines[j]
+                next_clean = raw_next.strip()
                 if _LOG_TIMESTAMP_RE.match(next_clean) and len(block) >= 2:
                     break
                 if next_clean:
                     block.append(next_clean)
-                    if _EXCEPTION_NAME_RE.search(next_clean) and len(block) >= 2:
-                        break
+                    if _EXCEPTION_NAME_RE.search(next_clean) and not raw_next.startswith((" ", "\t")):
+                        terminal_exception_index = len(block) - 1
                 j += 1
-            display = " → ".join(block[:5])
-            if len(block) > 5:
-                display += f" (...+{len(block) - 5}行)"
+            if terminal_exception_index is not None:
+                block = block[:terminal_exception_index + 1]
+            if len(block) <= 4:
+                display = " → ".join(block)
+            else:
+                display = " → ".join(block[:3]) + f" → (...{len(block) - 4}行) → {block[-1]}"
             events.append({"level": "ERROR", "ts": ts, "line": display})
             i -= 1
             continue

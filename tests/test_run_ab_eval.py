@@ -326,6 +326,11 @@ def test_evaluate_run_records_provider_factory_none_as_attempt(tmp_path, monkeyp
     attempts = [json.loads(line) for line in (output_dir / "attempt_history.jsonl").read_text().splitlines()]
     assert attempts[0]["status"] == "failed"
     assert attempts[0]["error"] == "provider factory returned None"
+    context = json.loads((output_dir / "execution_context.json").read_text(encoding="utf-8"))
+    assert context["run_id"] == run_id
+    assert context["providers"]["gemini"]["provider_name"] == "gemini"
+    assert len(context["user_prompt_sha256"]) == 64
+    assert len(context["providers"]["gemini"]["system_prompt_sha256"]) == 64
 
 
 def test_temporary_provider_timeout_restores_env(monkeypatch):

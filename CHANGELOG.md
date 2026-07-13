@@ -1,8 +1,10 @@
-更新时间：2026-07-12 01:18（Asia/Shanghai）
+更新时间：2026-07-14 01:42（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
+
+- 修复 `/system` Traceback 聚合在缩进的 `raise XxxError()` 代码行提前截止的问题：现在会继续扫描并优先展示最终异常类型与消息，避免将 `*privateError` 类装饰文本误判为异常，同时补强长调用栈和 Provider factory 早期失败的审计契约测试。
 
 ## 2026-07-12
 
