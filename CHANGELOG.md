@@ -1,13 +1,12 @@
-更新时间：2026-07-14 23:20（Asia/Shanghai）
+更新时间：2026-07-14 23:27（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
 
-- 补强 `/system` Traceback 边界：链式异常按各自的最终异常分开展示，交错 WARNING 保持独立且不混入 Traceback，并验证超过 80 行时最终异常仍以独立 ERROR 保留；同时校验 Provider factory 早期失败的快照、SHA256 和密钥隔离审计契约。
-
 ## 2026-07-14
 
+- 补强 `/system` Traceback 边界：链式异常按各自的最终异常分开展示，交错 WARNING 保持独立且不混入 Traceback，并验证超过 80 行时最终异常仍以独立 ERROR 保留；同时校验 Provider factory 早期失败的快照、SHA256 和密钥隔离审计契约。
 - 修复 `/system` Traceback 聚合在缩进的 `raise XxxError()` 代码行提前截止的问题：现在会继续扫描并优先展示最终异常类型与消息，避免将 `*privateError` 类装饰文本误判为异常，同时补强长调用栈和 Provider factory 早期失败的审计契约测试。
 
 ## 2026-07-12
