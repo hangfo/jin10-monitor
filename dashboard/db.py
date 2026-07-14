@@ -49,6 +49,11 @@ _EXCEPTION_NAME_RE = re.compile(
 _LOG_TIMESTAMP_RE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}\s+)?\d{2}:\d{2}:\d{2}")
 _LOG_TS_PREFIX_RE = re.compile(r"^((?:\d{4}-\d{2}-\d{2}\s+)?\d{2}:\d{2}:\d{2})")
 _TRACEBACK_SCAN_LIMIT = 80
+_TRACEBACK_CHAIN_SEPARATORS = (
+    "During handling of the above exception, another exception occurred:",
+    "The above exception was the direct cause of the following exception:",
+)
+_TRACEBACK_INTERLEAVED_LEVEL_RE = re.compile(r"^\[(?:DEBUG|INFO|WARNING|ERROR|CRITICAL)\](?:\s|$)")
 _LOG_EVENTS_CACHE: dict[str, Any] = {}
 _LOG_EVENTS_CACHE_TTL = 30
 
@@ -218,6 +223,11 @@ def query_recent_monitor_log_events(limit: int = 8, *, path: Optional[Path] = No
                 next_clean = raw_next.strip()
                 if _LOG_TIMESTAMP_RE.match(next_clean) and len(block) >= 2:
                     break
+                if terminal_exception_index is not None and next_clean in _TRACEBACK_CHAIN_SEPARATORS:
+                    break
+                if _TRACEBACK_INTERLEAVED_LEVEL_RE.match(next_clean):
+                    j += 1
+                    continue
                 if next_clean:
                     block.append(next_clean)
                     if _EXCEPTION_NAME_RE.search(next_clean) and not raw_next.startswith((" ", "\t")):

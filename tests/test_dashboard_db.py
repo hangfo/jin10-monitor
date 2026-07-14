@@ -471,6 +471,7 @@ def test_query_recent_monitor_log_events_captures_exception_suffix(tmp_path):
                 "Error: cannot connect",
                 "notAnError: valid custom exception name",
                 "*privateError: decorative text",
+                ".privateError: decorative text",
                 "2026-06-22 08:01:00 INFO recovered",
             ]
         ),
@@ -488,6 +489,7 @@ def test_query_recent_monitor_log_events_captures_exception_suffix(tmp_path):
     assert any(line == "Error: cannot connect" for line in lines)
     assert any(line == "notAnError: valid custom exception name" for line in lines)
     assert not any("*privateError" in line for line in lines)
+    assert not any(".privateError" in line for line in lines)
     assert all(event["level"] == "ERROR" for event in result["events"])
 
 
@@ -570,6 +572,88 @@ def test_query_recent_monitor_log_events_traceback_keeps_final_exception_in_long
     assert "RuntimeError: final failure detail" in tracebacks[0]["line"]
     assert "INFO recovered" not in tracebacks[0]["line"]
     assert not any(event["line"] == "RuntimeError: final failure detail" for event in result["events"])
+
+
+def test_query_recent_monitor_log_events_splits_chained_tracebacks(tmp_path):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "Traceback (most recent call last):",
+                '  File "a.py", line 1, in process',
+                "ValueError: original error",
+                "",
+                "During handling of the above exception, another exception occurred:",
+                "",
+                "Traceback (most recent call last):",
+                '  File "b.py", line 2, in handle',
+                "RuntimeError: chained error",
+                "2026-07-14 10:00:00 INFO recovered",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = db.query_recent_monitor_log_events(path=log_path, limit=20)
+    tracebacks = [event for event in result["events"] if "Traceback" in event["line"]]
+    value_event = next(event for event in tracebacks if "ValueError: original error" in event["line"])
+    runtime_event = next(event for event in tracebacks if "RuntimeError: chained error" in event["line"])
+
+    assert len(tracebacks) == 2
+    assert "RuntimeError: chained error" not in value_event["line"]
+    assert "ValueError: original error" not in runtime_event["line"]
+
+
+def test_query_recent_monitor_log_events_keeps_interleaved_warning_outside_traceback(tmp_path):
+    log_path = tmp_path / "jin10-monitor.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "2026-07-14 10:00:00 [ERROR] send failed",
+                "Traceback (most recent call last):",
+                '  File "x.py", line 1, in send',
+                "[WARNING] Retry in progress",
+                "RuntimeError: actual error",
+                "2026-07-14 10:01:00 INFO recovered",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = db.query_recent_monitor_log_events(path=log_path, limit=20)
+    tracebacks = [event for event in result["events"] if "Traceback" in event["line"]]
+    warnings = [event for event in result["events"] if event["level"] == "WARNING"]
+
+    assert len(tracebacks) == 1
+    assert "RuntimeError: actual error" in tracebacks[0]["line"]
+    assert "[WARNING]" not in tracebacks[0]["line"]
+    assert [event["line"] for event in warnings] == ["[WARNING] Retry in progress"]
+
+
+def test_query_recent_monitor_log_events_traceback_scan_limit_degrades_to_standalone_error(tmp_path):
+    log_path = tmp_path / "jin10-monitor.log"
+    frames = [f'  File "module_{index}.py", line {index}, in call_{index}' for index in range(85)]
+    log_path.write_text(
+        "\n".join(
+            [
+                "2026-07-14 11:00:00 [ERROR] deep failure",
+                "Traceback (most recent call last):",
+                *frames,
+                "RuntimeError: overflow exception",
+                "2026-07-14 11:01:00 INFO recovered",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = db.query_recent_monitor_log_events(path=log_path, limit=20)
+    tracebacks = [event for event in result["events"] if "Traceback" in event["line"]]
+    standalone = [event for event in result["events"] if event["line"] == "RuntimeError: overflow exception"]
+
+    assert len(tracebacks) == 1
+    assert "RuntimeError: overflow exception" not in tracebacks[0]["line"]
+    assert len(standalone) == 1
+    assert standalone[0]["level"] == "ERROR"
 
 
 def test_query_recent_monitor_log_events_metadata_fields(tmp_path):

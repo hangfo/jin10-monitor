@@ -329,8 +329,23 @@ def test_evaluate_run_records_provider_factory_none_as_attempt(tmp_path, monkeyp
     context = json.loads((output_dir / "execution_context.json").read_text(encoding="utf-8"))
     assert context["run_id"] == run_id
     assert context["providers"]["gemini"]["provider_name"] == "gemini"
-    assert len(context["user_prompt_sha256"]) == 64
-    assert len(context["providers"]["gemini"]["system_prompt_sha256"]) == 64
+    prompt_snapshot = output_dir / context["user_prompt_snapshot_file"]
+    evidence_snapshot = output_dir / context["evidence_packet_snapshot_file"]
+    system_prompt_snapshot = output_dir / context["providers"]["gemini"]["system_prompt_file"]
+    assert run_ab_eval.sha256_text(prompt_snapshot.read_text(encoding="utf-8")) == context["user_prompt_sha256"]
+    assert (
+        run_ab_eval.sha256_text(evidence_snapshot.read_text(encoding="utf-8").removesuffix("\n"))
+        == context["evidence_packet_sha256"]
+    )
+    assert (
+        run_ab_eval.sha256_text(system_prompt_snapshot.read_text(encoding="utf-8"))
+        == context["providers"]["gemini"]["system_prompt_sha256"]
+    )
+    assert "commit" in context["git"]
+    assert "dirty" in context["git"]
+    assert "GEMINI_API_KEY" not in context["providers"]["gemini"]["config"]
+    assert "test-key" not in json.dumps(context)
+    assert not (output_dir / "gemini_parsed.json").exists()
 
 
 def test_temporary_provider_timeout_restores_env(monkeypatch):
