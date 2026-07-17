@@ -32,9 +32,18 @@
 
 - 背景：`066` 已调整 Provider judgement Prompt，但尚未用新真实样本复测。
 - 状态：已用两个方向冲突固定 packet 完成 Gemini + GLM/compatible 小批量真实复测；成功输出均降级为 `unclear` 或低置信 `macro_sentiment`，结构稳定，结果归档在 `docs/provider_ab_results.md`。
-- 下一步：等待宏观密集期自然产生一个方向冲突样本和一个强方向一致样本，再验证 Gemini 因果措辞与新规则是否过度压低合理的 `news_driven`；当前不继续修改 Prompt。
+- 状态：2026-07-11 至 2026-07-17 已自然产生一个方向冲突样本和多个强方向一致样本；15 个完成态 run 的只读审计已记录在 `docs/provider_ab_results.md`。
+- 结论：Gemini 在 CPI/PPI 强一致样本中仍能输出高置信 `news_driven`，没有被新规则过度压低；方向冲突和低质量证据样本仍存在偏积极归因，Provider 间置信度跨度也较大。
+- 下一步：先收敛 evidence packet 的确定性、消息数量敏感度和置信度校准，再决定是否修改 Prompt；当前不继续修改 judgement Prompt 或 evidence scoring。
 - 边界：真实调用必须显式 `--execute --yes`，结果只写 `exports/provider_ab*/<run_id>/`。
 - 建议模型：`GPT-5.5 高`。
+
+### 分析结论收敛与置信度校准
+
+- 背景：同一自然窗口内，消息数量和边缘证据组成会改变结论，Gemini、GLM 与人工结果的置信度跨度可达到 `0.40 ~ 0.86`；单纯输出 `unclear` 不能满足“给出最可能解释并说明反证”的产品需求。
+- 下一步设计：固定 evidence packet 的排序与数量，保存 packet 指纹；对同一窗口做 leave-one-out / top-K 敏感度审计；将“方向、证据强度、Provider 一致性、结论稳定性”拆成独立字段，再生成校准后的展示置信度和质量标签。
+- 验收标准：相同输入重复构建得到相同 packet；移除低相关边缘消息不改变主结论；置信度能区分方向冲突、强一致和证据不足；结论即使不确定也必须给出主假设、备选假设和最关键缺失证据。
+- 边界：先做离线只读回放和纯函数实现，不调用 Provider、不改业务历史库、不自动覆盖已有 `analysis_runs`。
 
 ## P1：体验增强
 

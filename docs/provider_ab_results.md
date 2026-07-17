@@ -50,3 +50,21 @@
 - `ar_20260711_192040_1ecbdd` 的结构化行情上下文因 Binance `HTTP 451` 不可用，不能把模型结论视为结合完整价格/成交量数据后的判断。
 - 真实调用发生时源码 HEAD 为 `71e361d`；`attempt_history.jsonl` 可复现性记录在后续 `5e70c0e` 才上线，因此本轮历史调用没有该文件，也不做事后伪造回填。下一轮调用开始才以逐 attempt 的 commit/hash 快照为审计依据。
 - 在新自然样本出现前，不据此继续修改 judgement Prompt 或 evidence scoring。
+
+## 2026-07-18 自然样本只读审计
+
+边界：本轮只读检查 2026-07-11 既有手动测试之后保存到 `data/dashboard_analysis.sqlite3` 的自然样本；没有新调用 Provider、没有写 `analysis_runs` 或业务历史库、没有请求金十 REST，也没有触发 Telegram。
+
+- 新增完成态 run：15 个。
+- 自然窗口：5 个，每个窗口均包含 Gemini、GLM/compatible 和人工 ChatGPT Business 结果。
+- 完整性：15/15 JSON 可解析，15/15 catalyst 只引用已选证据；未发现重复或越界 `news_id`，未发现 `[#news_id]` 字面占位符。
+
+| 窗口 | 场景 | Gemini | GLM/compatible | 人工结果 | 审计结论 |
+| --- | --- | --- | --- | --- | --- |
+| `2026-07-11 22:20 ~ 23:20` | ETH 上涨，证据主方向偏空/混合 | `macro_sentiment 0.65` | `macro_sentiment 0.55` | `unclear 0.39` | 方向冲突样本，Provider 仍存在偏积极归因，记为 `watch`。 |
+| `2026-07-14 20:20 ~ 22:20` | CPI 降温后 ETH 大涨 | `news_driven 0.85` | `macro_sentiment 0.60` | `news_driven 0.87` | 强方向一致样本；新规则没有过度压低 Gemini 的合理归因。 |
+| `2026-07-15 20:30 ~ 21:30` | PPI 降温后 ETH 上涨 | `news_driven 0.80` | `macro_sentiment 0.50` | `news_driven 0.88` | 第二个强方向一致样本，但 GLM 继续系统性保守。 |
+| `2026-07-16 15:55 ~ 16:55` | ETH 下跌，证据间接且混合 | `macro_sentiment 0.65` | `macro_sentiment 0.55` | `unclear 0.36` | 低证据质量样本，显示置信度与证据强度尚未稳定对齐。 |
+| `2026-07-17 20:30 ~ 21:35` | 地缘升级、油价上涨与 ETH 下跌 | `macro_sentiment 0.80` | `macro_sentiment 0.40` | `news_driven 0.86` | 方向一致但 Provider 置信度跨度过大，适合做校准样本。 |
+
+结论：等待的“方向冲突 + 强方向一致”自然样本对已经出现，但现有结果仍受 evidence packet 的消息数量、边缘消息组成和 Provider 风格影响。下一步优先设计确定性 evidence packet、证据集敏感度审计和保存后的置信度校准/质量标签；在这些非 Prompt 层机制能够量化问题前，不立即修改 judgement Prompt 或 evidence scoring。
