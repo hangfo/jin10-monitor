@@ -423,23 +423,15 @@
 
     function updateNewsChartTime(klines) {
       const newsTime = parseMarketTime(marketPanel.dataset.newsTime);
-      const candleTimes = klines
-        .map((item) => parseMarketTime(item.open_time))
-        .filter((time) => time !== null);
-      if (!newsTime || candleTimes.length === 0) {
+      const windowStart = parseMarketTime(marketInputText("market-start"));
+      const windowEnd = parseMarketTime(marketInputText("market-end"));
+      if (!newsTime || !windowStart || !windowEnd || newsTime < windowStart || newsTime > windowEnd) {
         newsChartTime = null;
         return;
       }
       const intervalMinutes = Number.parseInt(document.getElementById("market-interval").value, 10);
       const intervalSeconds = Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes * 60 : 60;
-      const firstTime = candleTimes[0];
-      const lastTime = candleTimes[candleTimes.length - 1];
-      if (newsTime < firstTime || newsTime >= lastTime + intervalSeconds) {
-        newsChartTime = null;
-        return;
-      }
-      const index = indexAtOrBeforeNews(klines);
-      newsChartTime = index >= 0 ? parseMarketTime(klines[index].open_time) : null;
+      newsChartTime = Math.floor(newsTime / intervalSeconds) * intervalSeconds;
     }
 
     function marketInputText(inputId) {
@@ -623,6 +615,12 @@
           color: close >= open ? "rgba(23, 99, 58, 0.45)" : "rgba(157, 34, 29, 0.45)",
         });
       });
+      if (newsChartTime !== null && !candleData.some((item) => item.time === newsChartTime)) {
+        candleData.push({time: newsChartTime});
+        volumeData.push({time: newsChartTime});
+        candleData.sort((left, right) => left.time - right.time);
+        volumeData.sort((left, right) => left.time - right.time);
+      }
       candleSeries.setData(candleData);
       volumeSeries.setData(volumeData);
       chart.timeScale().fitContent();

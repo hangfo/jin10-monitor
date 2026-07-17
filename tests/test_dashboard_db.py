@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from dashboard.app import (
+    default_market_window,
     datetime_local_value,
     feed_params,
     normalize_datetime_input,
@@ -837,6 +838,30 @@ def test_datetime_local_helpers_normalize_browser_values():
     assert normalize_datetime_input("2026-05-24T21:30") == "2026-05-24 21:30:00"
     assert normalize_datetime_input("2026-05-24 21:30:45") == "2026-05-24 21:30:45"
     assert datetime_local_value("2026-05-24 21:30:45") == "2026-05-24T21:30"
+
+
+def test_default_market_window_keeps_complete_historical_window():
+    assert default_market_window(
+        datetime(2026, 5, 24, 21, 0, 30),
+        15,
+        now=datetime(2026, 5, 24, 22, 0, 45),
+    ) == (datetime(2026, 5, 24, 20, 45), datetime(2026, 5, 24, 21, 16))
+
+
+def test_default_market_window_clamps_recent_item_to_current_minute():
+    assert default_market_window(
+        datetime(2026, 5, 24, 21, 58, 43),
+        5,
+        now=datetime(2026, 5, 24, 22, 0, 45),
+    ) == (datetime(2026, 5, 24, 21, 53), datetime(2026, 5, 24, 22, 0))
+
+
+def test_default_market_window_falls_back_to_trailing_window_for_future_source_timestamp():
+    assert default_market_window(
+        datetime(2026, 5, 24, 22, 10, 0),
+        5,
+        now=datetime(2026, 5, 24, 22, 0, 45),
+    ) == (datetime(2026, 5, 24, 21, 55), datetime(2026, 5, 24, 22, 0))
 
 
 def test_validate_datetime_window_accepts_past_iso_values():

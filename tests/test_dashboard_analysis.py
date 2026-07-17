@@ -1867,7 +1867,10 @@ def test_item_template_has_user_triggered_market_overlay():
     assert "indexAtOrBeforeNews" in item_template
     assert "fallbackIndex" not in item_template
     assert "intervalMinutes * 60" in item_template
-    assert "newsTime < firstTime || newsTime >= lastTime + intervalSeconds" in item_template
+    assert "newsTime < windowStart || newsTime > windowEnd" in item_template
+    assert "Math.floor(newsTime / intervalSeconds) * intervalSeconds" in item_template
+    assert "candleData.push({time: newsChartTime})" in item_template
+    assert "volumeData.push({time: newsChartTime})" in item_template
     assert "subscribeVisibleLogicalRangeChange(scheduleNewsLineUpdate)" in item_template
     assert "if (newsLineFrame !== null) return" in item_template
     assert "window.requestAnimationFrame" in item_template

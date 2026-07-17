@@ -574,6 +574,16 @@ def ceil_to_minute(value):
     return rounded
 
 
+def default_market_window(center: datetime, minutes: int, *, now: datetime | None = None) -> tuple[datetime, datetime]:
+    window_minutes = max(1, int(minutes))
+    available_end = floor_to_minute(now or datetime.now())
+    start = floor_to_minute(center - timedelta(minutes=window_minutes))
+    end = min(ceil_to_minute(center + timedelta(minutes=window_minutes)), available_end)
+    if start >= end:
+        start = end - timedelta(minutes=window_minutes)
+    return start, end
+
+
 def form_bool(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -714,17 +724,14 @@ def create_app() -> FastAPI:
         published_at = str(center.get("published_at") or "")
         center_dt = parse_history_datetime(published_at)
         if center_dt:
-            window_start = (center_dt - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
-            window_end = (center_dt + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
-            market_start_dt = floor_to_minute(center_dt - timedelta(minutes=minutes))
-            market_end_dt = ceil_to_minute(center_dt + timedelta(minutes=minutes))
+            market_start_dt, market_end_dt = default_market_window(center_dt, minutes)
             market_start = market_start_dt.strftime("%Y-%m-%d %H:%M:%S")
             market_end = market_end_dt.strftime("%Y-%m-%d %H:%M:%S")
             analyze_url = "/analyze?" + urlencode(
                 {
                     "from_item_id": message_id,
-                    "window_start": window_start,
-                    "window_end": window_end,
+                    "window_start": market_start,
+                    "window_end": market_end,
                 }
             )
         return templates.TemplateResponse(
