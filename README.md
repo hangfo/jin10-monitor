@@ -112,7 +112,15 @@ HIGH_PRIORITY_FILE=config/high_priority.txt
 python run_dashboard.py
 ```
 
-默认监听 `http://127.0.0.1:8765/`，页面包括快讯流、单条上下文、Telegram 投递状态、系统健康、手工 AI 分析、截图上传和分析历史。Dashboard 只读打开业务 SQLite，不触发 REST、WebSocket、补拉或 Telegram 发送，也不接管 launchd 常驻监控服务。
+默认监听 `http://127.0.0.1:8765/`，页面包括快讯流、单条上下文、Telegram 投递状态、系统健康、手工 AI 分析、截图上传、分析历史和分析稳定性。Dashboard 只读打开业务 SQLite，不触发 REST、WebSocket、补拉或 Telegram 发送，也不接管 launchd 常驻监控服务。
+
+分析详情可“克隆冻结证据包”，把完全相同的证据、选择状态和 Prompt 复制为新草稿；对比页只有在证据与 Prompt 双指纹一致时才标记为严格 A/B。Provider 原始置信度仅保留作审计，页面另以本地可复算规则展示证据质量、主假设、反证、缺口与翻转条件。`/analyze/stability` 会对最近结果做 Top-K 和单条剔除压力测试；这些计算不重新调用模型，也不代表模型重跑后的答案。
+
+也可在终端输出同一份只读 JSON 审计：
+
+```bash
+python scripts/audit_analysis_stability.py --limit 50
+```
 
 如端口被占用，可以改端口：
 

@@ -1,8 +1,12 @@
-更新时间：2026-07-17 23:30（Asia/Shanghai）
+更新时间：2026-07-18 01:30（Asia/Shanghai）
 
 # Changelog
 
 ## Unreleased
+
+- 收敛 Dashboard 分析对照：保存证据包与 Prompt SHA-256、支持克隆完全冻结输入并只在双指纹一致时认定严格 A/B；默认核心证据上限从 10 收到 8 条并优先主题多样性，不修改 evidence scoring 权重。
+- 新增独立于 Provider 自报置信度的证据质量/交易就绪度：按本地相关度、引用有效性、方向一致性和行情吻合度复算 A-D 等级，方向冲突、内部冲突或 `unclear` 最高为 C，并展示主假设、反证、缺口、翻转条件和行动边界。
+- 新增 `/analyze/stability` 与 `scripts/audit_analysis_stability.py`：以 SQLite 只读模式执行 Top-4/6/8 和单条剔除压力测试、同窗口输入可比性审计；不调用 Provider、不写业务库、不改历史分析结果。
 
 ## 2026-07-18
 

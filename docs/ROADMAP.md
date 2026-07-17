@@ -1,4 +1,4 @@
-更新时间：2026-06-26 01:30（Asia/Shanghai）
+更新时间：2026-07-18 01:30（Asia/Shanghai）
 
 # 项目路线图
 
@@ -26,10 +26,12 @@
 - 已落档 `exports/provider_ab_after_fix/` 的 3 个 Gemini vs GLM 人工 scorecard 汇总。
 - 已调整 Provider judgement Prompt：证据方向与行情方向冲突且缺少直接市场证据时，优先 `unclear` 或低置信 `macro_sentiment`。
 - 已补 A/B 离线复盘能力：可从已有导出结果重建 `comparison.md` 并生成批量 `summary.md`。
+- 已增加冻结证据包/Prompt 双指纹、克隆草稿和严格 A/B 门控；旧样本输入不同不再误标为 Provider 差异。
+- 已增加独立证据质量等级与 Top-K/leave-one-out 只读稳定性审计，不把 Provider 自报置信度平均成伪精确概率。
 
 下一步：
 
-- 暂不继续改 Prompt，等待后续新样本观察 `066` 规则是否减少方向冲突场景的强行归因。
+- 暂不继续改 Prompt；后续自然样本统一从同一个冻结 run 克隆，再观察方向冲突与强一致场景。
 - 如果要复测新 Prompt，明确使用 `--execute --yes`，并继续把结果只写到 `exports/provider_ab*/<run_id>/`。
 - 如果 A/B 样本显著扩大，再考虑把离线 `summary.md` 做成 Dashboard 只读页；不要做自动投票。
 
