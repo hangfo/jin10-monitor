@@ -1345,6 +1345,7 @@ def test_render_answer_localizes_known_english_summary():
     assert "判断无法确认：证据方向与价格走势冲突。" in rendered
     assert "无法确认" in rendered
     assert "Judgement unclear" not in rendered
+    assert "Provider 原始综合置信度" in rendered
 
 
 def test_parse_answer_unparseable_stores_raw_text():

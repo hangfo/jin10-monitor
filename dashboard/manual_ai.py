@@ -271,7 +271,7 @@ def render_answer_with_links(answer_parsed: dict[str, Any]) -> str:
         parts.append(
             '<div class="answer-meta">'
             f'判断类型：<strong>{html.escape(judgement_label(judgement))}</strong> '
-            f'综合置信度：<strong>{confidence:.0%}</strong>'
+            f'Provider 原始综合置信度：<strong>{confidence:.0%}</strong>'
             "</div>"
         )
 
