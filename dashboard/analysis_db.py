@@ -107,6 +107,14 @@ def open_analysis_db(path: Optional[Path] = None) -> sqlite3.Connection:
     return conn
 
 
+def open_analysis_db_readonly(path: Optional[Path] = None) -> sqlite3.Connection:
+    db_path = analysis_db_path(path).resolve()
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only = ON")
+    return conn
+
+
 def init_analysis_db(path: Optional[Path] = None) -> None:
     with open_analysis_db(path) as conn:
         conn.executescript(SCHEMA_SQL)
@@ -347,7 +355,7 @@ def estimate_provider_completion_seconds(provider_name: str, *, path: Optional[P
     provider = str(provider_name or "").strip()
     if not provider:
         return None
-    with open_analysis_db(path) as conn:
+    with open_analysis_db_readonly(path) as conn:
         rows = conn.execute(
             """
             SELECT provider_elapsed_ms
@@ -597,6 +605,31 @@ def get_runs_for_compare(run_ids: list[str], path: Optional[Path] = None) -> lis
         run["answer_parsed"] = parse_json_dict(run.get("answer_json"))
         runs_by_id[str(run.get("id") or "")] = run
     return [runs_by_id[run_id] for run_id in clean_ids if run_id in runs_by_id]
+
+
+def list_completed_runs_with_packets(limit: int = 50, path: Optional[Path] = None) -> list[dict[str, Any]]:
+    """Return recent completed inputs for read-only local stability analysis."""
+
+    safe_limit = max(1, min(int(limit), 200))
+    with open_analysis_db_readonly(path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM analysis_runs
+            WHERE status = 'done'
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        ).fetchall()
+    runs: list[dict[str, Any]] = []
+    for row in rows:
+        run = row_to_dict(row)
+        run["evidence_packet"] = parse_json_list(run.get("evidence_packet_json"))
+        run["answer_parsed"] = parse_json_dict(run.get("answer_json"))
+        run["evidence_fingerprint"] = str(run.get("evidence_fingerprint") or evidence_fingerprint(run["evidence_packet"]))
+        run["prompt_fingerprint"] = str(run.get("prompt_fingerprint") or prompt_fingerprint(run.get("manual_prompt") or ""))
+        runs.append(run)
+    return runs
 
 
 def delete_run(

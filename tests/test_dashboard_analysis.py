@@ -320,6 +320,71 @@ def test_quality_grade_penalizes_unselected_and_duplicate_citations():
     assert any("重复引用" in reason for reason in quality["reasons"])
 
 
+def test_packet_sensitivity_is_deterministic_and_does_not_mutate_run():
+    packet = [
+        {"news_id": f"n{index}", "selected": index < 4, "relevance_score": 0.8 - index * 0.03}
+        for index in range(8)
+    ]
+    run = {
+        "evidence_packet": packet,
+        "manual_prompt": "涨跌：100 (+2.00%)",
+        "answer_parsed": {
+            "judgement": "news_driven",
+            "catalysts": [
+                {"news_id": f"n{index}", "direction": "bullish", "impact_path": f"path {index}"}
+                for index in range(4)
+            ],
+        },
+    }
+    original = json.loads(json.dumps(run))
+    first = analysis_quality.assess_packet_sensitivity(run)
+    second = analysis_quality.assess_packet_sensitivity(run)
+
+    assert first == second
+    assert [item["size"] for item in first["top_k"]] == [4, 6, 8]
+    assert len(first["leave_one_out"]) == 4
+    assert run == original
+
+
+def test_saved_run_stability_separates_strict_and_mixed_input_cohorts():
+    base = {
+        "asset": "BTC",
+        "window_start": "2026-07-18 09:00:00",
+        "window_end": "2026-07-18 10:00:00",
+        "question": "why",
+        "evidence_packet": [{"news_id": "n1", "selected": True}],
+        "manual_prompt": "same",
+        "judgement": "news_driven",
+    }
+    strict = [
+        {**base, "id": "a", "overall_confidence": 0.2},
+        {**base, "id": "b", "overall_confidence": 0.8},
+    ]
+    strict_summary = analysis_quality.summarize_saved_run_stability(strict)
+    assert strict_summary["strict_cohort_count"] == 1
+    assert round(strict_summary["cohorts"][0]["confidence_range"], 2) == 0.6
+
+    mixed = strict + [{**base, "id": "c", "manual_prompt": "changed", "overall_confidence": 0.5}]
+    mixed_summary = analysis_quality.summarize_saved_run_stability(mixed)
+    assert mixed_summary["strict_cohort_count"] == 0
+    assert mixed_summary["cohorts"][0]["prompt_version_count"] == 2
+
+
+def test_list_completed_runs_with_packets_excludes_drafts(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    done_id = analysis_db.create_run("done", "BTC", "", "", [], path=db_path)
+    analysis_db.create_run("draft", "BTC", "", "", [], path=db_path)
+    analysis_db.save_answer(
+        done_id, "answer", answer_json={"judgement": "unclear"}, judgement="unclear", path=db_path,
+    )
+    rows = analysis_db.list_completed_runs_with_packets(path=db_path)
+
+    assert [row["id"] for row in rows] == [done_id]
+    assert rows[0]["evidence_packet"] == []
+    assert rows[0]["answer_parsed"]["judgement"] == "unclear"
+
+
 def test_delete_run_can_be_limited_to_drafts(tmp_path):
     db_path = tmp_path / "analysis.sqlite3"
     analysis_db.init_analysis_db(db_path)
@@ -1497,6 +1562,8 @@ def test_dashboard_bugfix_routes_are_registered():
     assert "/aggregation" in paths
     assert "/api/aggregation/stats" in paths
     assert "/api/system/log-events" in paths
+    assert "/analyze/stability" in paths
+    assert paths.index("/analyze/stability") < paths.index("/analyze/{run_id}")
 
 
 def test_api_aggregation_stats_returns_readonly_report(monkeypatch):
@@ -1632,7 +1699,9 @@ def test_analyze_nav_active_rules_do_not_double_highlight_history():
     assert "request.url.path == '/analyze/history'" in base_template
     assert "not request.url.path.startswith('/analyze/history')" in base_template
     assert "not request.url.path.startswith('/analyze/compare')" in base_template
+    assert "not request.url.path.startswith('/analyze/stability')" in base_template
     assert "/analyze/compare" in base_template
+    assert "/analyze/stability" in base_template
     assert ".pill.none" in base_template
     assert ".pill.normal" in base_template
     assert "tr.row-normal" in base_template
@@ -1646,6 +1715,7 @@ def test_analyze_compare_template_loads():
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
 
     assert env.get_template("analyze_compare.html") is not None
+    assert env.get_template("analyze_stability.html") is not None
 
 
 def test_analyze_template_has_optional_market_context_controls():

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}分析稳定性{% endblock %}
+
+{% block head %}
+<style>
+  .audit-grid { display:grid; gap:12px; grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .audit-metric { border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
+  .audit-value { font-size:24px; font-weight:800; }
+  .audit-row { border-bottom:1px solid var(--border-soft); padding:12px 0; }
+  .audit-row:last-child { border-bottom:0; }
+  .stable { color:var(--sent-fg); }
+  .fragile { color:var(--fail-fg); }
+  @media (max-width:800px) { .audit-grid { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div><h1>分析稳定性</h1><div class="meta">只读、离线计算；不调用 Provider，不改证据权重，不写业务库。</div></div>
+  <a class="button-link secondary" href="/analyze/history">分析历史</a>
+</div>
+
+<div class="audit-grid" style="margin-bottom:16px">
+  <div class="audit-metric"><div class="meta">最近完成分析</div><div class="audit-value">{{ run_rows | length }}</div></div>
+  <div class="audit-metric"><div class="meta">可对照窗口</div><div class="audit-value">{{ audit.cohort_count }}</div></div>
+  <div class="audit-metric"><div class="meta">严格同输入窗口</div><div class="audit-value">{{ audit.strict_cohort_count }} / {{ audit.cohort_count }}</div></div>
+</div>
+
+<div class="card card-body" style="margin-bottom:16px">
+  <h2 style="margin-top:0">同窗口可比性</h2>
+  {% for cohort in audit.cohorts %}
+  <div class="audit-row">
+    <strong>{{ cohort.asset }} · {{ cohort.window_start[5:16] }} - {{ cohort.window_end[5:16] }}</strong>
+    <span class="{{ 'stable' if cohort.strictly_comparable else 'fragile' }}">{{ '严格可比' if cohort.strictly_comparable else '输入混杂' }}</span>
+    <div class="meta">
+      {{ cohort.run_count }} 次 · 证据版本 {{ cohort.evidence_version_count }} · Prompt 版本 {{ cohort.prompt_version_count }} · 判断类型 {{ cohort.judgement_count }} · Provider 原始置信度跨度 {{ "%.0f%%"|format(cohort.confidence_range * 100) }}
+    </div>
+    <div>{% for run_id in cohort.run_ids %}<a class="mono" href="/analyze/{{ run_id }}">{{ run_id }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</div>
+  </div>
+  {% else %}<div class="empty">最近记录中没有相同标的、窗口和问题的重复分析。</div>{% endfor %}
+</div>
+
+<div class="card card-body">
+  <h2 style="margin-top:0">Top-K / 单条剔除压力测试</h2>
+  <p class="meta">沿用已保存答案，仅改变证据可见集合并重算本地质量。它衡量证据依赖性，不代表模型重新回答后的结果。</p>
+  {% for row in run_rows %}
+  <div class="audit-row">
+    <strong><a href="/analyze/{{ row.run.id }}">{{ row.run.asset }} · {{ (row.run.created_at or '')[:16] }}</a></strong>
+    <span class="{{ 'stable' if row.sensitivity.label == '稳定' else 'fragile' if row.sensitivity.label == '脆弱' else '' }}">{{ row.sensitivity.label }}</span>
+    <div class="meta">
+      基线 {{ row.quality.grade }}/{{ row.quality.score }} · 波动范围 {{ row.sensitivity.score_range }} 分 ·
+      Top-4/6/8 {% for item in row.sensitivity.top_k %}{{ item.grade }}/{{ item.score }}{% if not loop.last %} / {% endif %}{% endfor %} ·
+      单条剔除 {{ row.sensitivity.leave_one_out | length }} 组
+    </div>
+  </div>
+  {% else %}<div class="empty">暂无已完成分析。</div>{% endfor %}
+</div>
+{% endblock %}

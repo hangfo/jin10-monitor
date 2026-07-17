@@ -523,9 +523,10 @@
       </a>
       <a class="nav-link {{ 'active' if request.url.path.startswith('/telegram-status') }}" href="/telegram-status">投递状态</a>
       <a class="nav-link {{ 'active' if request.url.path.startswith('/system') }}" href="/system">系统</a>
-      <a class="nav-link {{ 'active' if request.url.path == '/analyze' or (request.url.path.startswith('/analyze') and not request.url.path.startswith('/analyze/history') and not request.url.path.startswith('/analyze/compare')) }}" href="/analyze">分析</a>
+      <a class="nav-link {{ 'active' if request.url.path == '/analyze' or (request.url.path.startswith('/analyze') and not request.url.path.startswith('/analyze/history') and not request.url.path.startswith('/analyze/compare') and not request.url.path.startswith('/analyze/stability')) }}" href="/analyze">分析</a>
       <a class="nav-link {{ 'active' if request.url.path == '/analyze/history' }}" href="/analyze/history">分析历史</a>
       <a class="nav-link {{ 'active' if request.url.path.startswith('/analyze/compare') }}" href="/analyze/compare" title="对比两次历史分析">对比</a>
+      <a class="nav-link {{ 'active' if request.url.path.startswith('/analyze/stability') }}" href="/analyze/stability" title="只读离线证据敏感性审计">稳定性</a>
       <a class="nav-link {{ 'active' if request.url.path.startswith('/aggregation') }}" href="/aggregation">聚合报告</a>
     </nav>
     <main>

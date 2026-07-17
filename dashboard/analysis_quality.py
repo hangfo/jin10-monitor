@@ -220,3 +220,98 @@ def assess_run_quality(run: dict[str, Any]) -> dict[str, Any]:
         "decision_rule": missing[0] if missing else "等待新增独立证据或价格/成交量确认",
         "action": action,
     }
+
+
+def assess_packet_sensitivity(run: dict[str, Any]) -> dict[str, Any]:
+    """Stress a saved answer against deterministic packet subsets without an LLM call."""
+
+    packet = [dict(item) for item in (run.get("evidence_packet") or []) if isinstance(item, dict)]
+    originally_selected = [
+        str(item.get("news_id") or item.get("id") or "")
+        for item in packet if item.get("selected", True)
+    ]
+
+    def assess_with_ids(selected_ids: set[str]) -> dict[str, Any]:
+        variant = dict(run)
+        variant["evidence_packet"] = [
+            {**item, "selected": str(item.get("news_id") or item.get("id") or "") in selected_ids}
+            for item in packet
+        ]
+        return assess_run_quality(variant)
+
+    top_k: list[dict[str, Any]] = []
+    ranked_ids = [str(item.get("news_id") or item.get("id") or "") for item in packet]
+    for size in (4, 6, 8):
+        selected_ids = {news_id for news_id in ranked_ids[:size] if news_id}
+        quality = assess_with_ids(selected_ids)
+        top_k.append({"size": size, "score": quality["score"], "grade": quality["grade"]})
+
+    leave_one_out: list[dict[str, Any]] = []
+    original_set = {news_id for news_id in originally_selected if news_id}
+    for news_id in originally_selected[:8]:
+        quality = assess_with_ids(original_set - {news_id})
+        leave_one_out.append({"news_id": news_id, "score": quality["score"], "grade": quality["grade"]})
+
+    baseline = assess_run_quality(run)
+    scores = [baseline["score"], *(item["score"] for item in top_k), *(item["score"] for item in leave_one_out)]
+    score_range = max(scores) - min(scores) if scores else 0
+    grade_changes = any(item["grade"] != baseline["grade"] for item in [*top_k, *leave_one_out])
+    label = "脆弱" if score_range >= 20 or grade_changes else "稳定" if score_range < 10 else "需复核"
+    return {
+        "baseline_score": baseline["score"],
+        "baseline_grade": baseline["grade"],
+        "top_k": top_k,
+        "leave_one_out": leave_one_out,
+        "score_range": score_range,
+        "grade_changes": grade_changes,
+        "label": label,
+    }
+
+
+def summarize_saved_run_stability(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize comparability and output spread for saved analysis cohorts."""
+
+    cohorts: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    for run in runs:
+        key = (
+            str(run.get("asset") or ""),
+            str(run.get("window_start") or ""),
+            str(run.get("window_end") or ""),
+            str(run.get("question") or ""),
+        )
+        cohorts.setdefault(key, []).append(run)
+
+    rows: list[dict[str, Any]] = []
+    for key, cohort in cohorts.items():
+        if len(cohort) < 2:
+            continue
+        fingerprints = {
+            str(run.get("evidence_fingerprint") or evidence_fingerprint(run.get("evidence_packet") or []))
+            for run in cohort
+        }
+        prompt_fingerprints = {
+            str(run.get("prompt_fingerprint") or prompt_fingerprint(run.get("manual_prompt") or ""))
+            for run in cohort
+        }
+        confidences = [float(run.get("overall_confidence") or 0) for run in cohort]
+        judgements = {str(run.get("judgement") or "") for run in cohort}
+        rows.append(
+            {
+                "asset": key[0],
+                "window_start": key[1],
+                "window_end": key[2],
+                "question": key[3],
+                "run_count": len(cohort),
+                "strictly_comparable": len(fingerprints) == 1 and len(prompt_fingerprints) == 1,
+                "evidence_version_count": len(fingerprints),
+                "prompt_version_count": len(prompt_fingerprints),
+                "judgement_count": len(judgements),
+                "confidence_range": max(confidences) - min(confidences),
+                "run_ids": [str(run.get("id") or "") for run in cohort],
+            }
+        )
+    return {
+        "cohort_count": len(rows),
+        "strict_cohort_count": sum(1 for row in rows if row["strictly_comparable"]),
+        "cohorts": rows,
+    }

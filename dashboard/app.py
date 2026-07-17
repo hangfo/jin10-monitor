@@ -27,6 +27,7 @@ from .analysis_db import (
     get_runs_for_compare,
     get_screenshot,
     init_analysis_db,
+    list_completed_runs_with_packets,
     list_runs,
     mark_provider_running,
     estimate_provider_completion_seconds,
@@ -37,7 +38,12 @@ from .analysis_db import (
     save_provider_error,
     save_screenshot,
 )
-from .analysis_quality import assess_run_quality, compare_analysis_runs
+from .analysis_quality import (
+    assess_packet_sensitivity,
+    assess_run_quality,
+    compare_analysis_runs,
+    summarize_saved_run_stability,
+)
 from .db import (
     DEFAULT_HOURS,
     HOURS_OPTIONS,
@@ -1084,6 +1090,26 @@ def create_app() -> FastAPI:
                 "status_filter_label": status_filter_label,
                 "analysis_status_options": ANALYSIS_STATUS_OPTIONS,
                 "known_assets": known_assets(),
+                "nav": query_nav_summary(),
+            },
+        )
+
+    @app.get("/analyze/stability")
+    async def analyze_stability(request: Request):
+        init_analysis_db()
+        runs = list_completed_runs_with_packets(limit=50)
+        audit = summarize_saved_run_stability(runs)
+        run_rows = [
+            {"run": run, "quality": assess_run_quality(run), "sensitivity": assess_packet_sensitivity(run)}
+            for run in runs[:20]
+        ]
+        return templates.TemplateResponse(
+            request,
+            "analyze_stability.html",
+            {
+                "health": history_health(),
+                "audit": audit,
+                "run_rows": run_rows,
                 "nav": query_nav_summary(),
             },
         )
