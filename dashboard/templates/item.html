@@ -233,11 +233,11 @@
       </div>
       <div class="filter-group">
         <label for="market-start">开始</label>
-        <input id="market-start" type="datetime-local" class="mono" value="{{ datetime_local_value(market_start) }}" step="60">
+        <input id="market-start" type="datetime-local" class="mono" required data-time-group="market-window" data-time-role="start" value="{{ datetime_local_value(market_start) }}" step="60">
       </div>
       <div class="filter-group">
         <label for="market-end">结束</label>
-        <input id="market-end" type="datetime-local" class="mono" value="{{ datetime_local_value(market_end) }}" step="60">
+        <input id="market-end" type="datetime-local" class="mono" required data-time-group="market-window" data-time-role="end" value="{{ datetime_local_value(market_end) }}" step="60">
       </div>
       <button type="button" id="market-load">刷新行情</button>
     </div>
@@ -610,6 +610,12 @@
     }
 
     async function loadMarketData() {
+      const timeValidation = window.dashboardDateTime.validateDateTimeGroup("market-window", true);
+      if (!timeValidation.ok) {
+        marketStatus.textContent = timeValidation.message;
+        marketResult.hidden = true;
+        return;
+      }
       const symbol = document.getElementById("market-symbol").value;
       const interval = document.getElementById("market-interval").value;
       const start = marketInputText("market-start");

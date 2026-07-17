@@ -45,7 +45,7 @@ pytest
 - `python jin10_monitor.py --telegram-status`：只读查看最近需要关注的 Telegram 投递状态。
 - `python run_dashboard.py`：启动独立本地只读 Dashboard，默认打开 `http://127.0.0.1:8765/`。
 - `python jin10_monitor.py --lookup-date 2026-05-02 --lookup-start 20:05 --lookup-end 20:20`：直接从金十 REST 回溯指定时间窗口。
-- `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --no-catch-up-telegram`：手动补拉指定离线窗口，只入库不发 Telegram。
+- `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55"`：手动补拉任意历史窗口；默认按 60 分钟分片、只入库、不发 Telegram，支持重复执行去重。
 - `python jin10_monitor.py --catch-up --from "2026-05-06 23:35" --to "2026-05-06 23:55" --catch-up-telegram --catch-up-max-send 10`：手动补拉并最多补发 10 条 Telegram；`--catch-up-max-store` 范围 `20-5000`，`--catch-up-max-send` 范围 `0-300`，`--catch-up-send-interval` 范围 `0-10` 秒，`--catch-up-window-minutes` 可将手动补拉拆成子窗口。
 - `python jin10_monitor.py`：常驻运行，WebSocket + REST 双路。
 
@@ -66,9 +66,9 @@ pytest
 - `AGGREGATION_WINDOW_SECONDS`：聚合窗口秒数，默认 180，范围 `0-3600`；设为 `0` 可关闭窗口。
 - `AGGREGATION_BYPASS_IMPORTANT`：T3 金十重要消息是否绕过聚合直推，默认 `1`。
 - `AUTO_CATCHUP`：启动时是否自动补拉离线窗口，默认 `1`。
-- `CATCHUP_TELEGRAM`：补拉是否允许发送 Telegram，默认 `1`。自动补拉只发送一条摘要，不逐条发送历史消息。
-- `CATCHUP_MAX_HOURS`：自动补拉最多回看小时数，默认 24，范围 `1-168`。
-- `CATCHUP_MAX_STORE`：补拉最多入库条数，默认 1000，范围 `20-5000`。
+- `CATCHUP_TELEGRAM`：自动补拉是否允许发送 Telegram 摘要，默认 `1`；自动补拉永不逐条发送历史消息。手动补拉默认不发 Telegram，只有显式传 `--catch-up-telegram` 才按既有筛选规则发送。
+- `AUTO_CATCHUP_WINDOW_MINUTES`：自动补拉分片分钟数，默认 60，范围 `5-1440`。启动补拉从上次入库游标覆盖到本次启动时间，不再按小时截断；失败或子窗口达到入库上限时保留独立断点，下次启动继续。
+- `CATCHUP_MAX_STORE`：每个补拉子窗口最多入库条数，默认 1000，范围 `20-5000`；达到上限会视为未完整而保留断点，不会误报补拉完成。
 - `CATCHUP_MAX_SEND`：手动补拉最多补发 Telegram 条数，默认 120，范围 `0-300`；设为 `0` 可关闭逐条补发。
 - `CATCHUP_SEND_INTERVAL`：手动补发 Telegram 的发送间隔，默认 0.5 秒，范围 `0-10` 秒；设为 `0` 表示不等待。
 - `AUTO_CATCHUP_GAP_SECONDS`：常驻进程检测到 REST 轮询停顿超过该秒数后，会自动补拉一次摘要，默认 300，范围 `0-86400`；设为 `0` 可关闭。

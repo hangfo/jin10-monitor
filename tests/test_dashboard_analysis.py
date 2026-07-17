@@ -1804,6 +1804,25 @@ def test_item_template_shows_published_at_to_second():
     assert '{{ (item.published_at or "")[:19] }}' in item_template
 
 
+def test_all_dashboard_datetime_pickers_use_shared_pair_validation():
+    base_template = (TEMPLATE_DIR / "base.html").read_text()
+    analyze_template = (TEMPLATE_DIR / "analyze.html").read_text()
+    item_template = (TEMPLATE_DIR / "item.html").read_text()
+
+    assert analyze_template.count('type="datetime-local"') == 2
+    assert item_template.count('<input id="market-') == 2
+    assert analyze_template.count('data-time-group="analysis-window"') == 2
+    assert item_template.count('data-time-group="market-window"') == 2
+    assert 'data-max-window-minutes="10080"' in analyze_template
+    assert 'data-time-role="start"' in analyze_template
+    assert 'data-time-role="end"' in item_template
+    assert "validateDateTimeGroup" in base_template
+    assert "input.max = maximum" in base_template
+    assert "开始时间必须早于结束时间" in base_template
+    assert "都不能超过当前时间" in base_template
+    assert 'validateDateTimeGroup("market-window", true)' in item_template
+
+
 def test_item_template_has_user_triggered_market_overlay():
     item_template = (TEMPLATE_DIR / "item.html").read_text()
     vendor_path = TEMPLATE_DIR.parent / "static" / "vendor" / "lightweight-charts"

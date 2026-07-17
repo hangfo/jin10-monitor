@@ -96,6 +96,7 @@ CONFIDENCE_HELP = (
     "置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。"
     "≥75% 较可信；50-75% 仅供参考；<50% 证据不足。"
 )
+ANALYSIS_MAX_WINDOW = timedelta(days=7)
 
 
 def compact_text(*parts: object, limit: int = 120) -> str:
@@ -526,6 +527,34 @@ def normalize_datetime_input(value: object) -> str:
     return parsed.strftime("%Y-%m-%d %H:%M:%S") if parsed else text
 
 
+def validate_datetime_window(
+    start_value: object,
+    end_value: object,
+    *,
+    now: datetime | None = None,
+    max_duration: timedelta | None = None,
+    label: str = "时间窗口",
+) -> tuple[str, str]:
+    start = normalize_datetime_input(start_value)
+    end = normalize_datetime_input(end_value)
+    start_dt = parse_history_datetime(start)
+    end_dt = parse_history_datetime(end)
+    if not start or not end:
+        raise ValueError(f"{label}的开始和结束时间都不能为空")
+    if not start_dt or not end_dt:
+        raise ValueError(f"{label}格式无效")
+    current = (now or datetime.now()).replace(microsecond=0)
+    if start_dt > current or end_dt > current:
+        raise ValueError(f"{label}不能晚于当前时间")
+    if start_dt >= end_dt:
+        raise ValueError(f"{label}开始时间必须早于结束时间")
+    if max_duration is not None and end_dt - start_dt > max_duration:
+        max_days = max_duration.total_seconds() / 86400
+        limit_text = f"{int(max_days)} 天" if max_days >= 1 and max_days.is_integer() else str(max_duration)
+        raise ValueError(f"{label}跨度不能超过 {limit_text}")
+    return start_dt.strftime("%Y-%m-%d %H:%M:%S"), end_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def datetime_local_value(value: object) -> str:
     parsed = parse_history_datetime(value)
     if parsed:
@@ -824,8 +853,28 @@ def create_app() -> FastAPI:
         form = await read_urlencoded_form(request)
         question = form.get("question", "").strip()
         asset = form.get("asset", "BTC").strip() or "BTC"
-        window_start = normalize_datetime_input(form.get("window_start", ""))
-        window_end = normalize_datetime_input(form.get("window_end", ""))
+        try:
+            window_start, window_end = validate_datetime_window(
+                form.get("window_start", ""),
+                form.get("window_end", ""),
+                max_duration=ANALYSIS_MAX_WINDOW,
+                label="分析时间窗口",
+            )
+        except ValueError as exc:
+            return templates.TemplateResponse(
+                request,
+                "analyze.html",
+                {
+                    "health": history_health(),
+                    "prefill": dict(form),
+                    "known_assets": known_assets(),
+                    "market_default_enabled": market_context_default_enabled(),
+                    "step": "input",
+                    "form_error": str(exc),
+                    "nav": query_nav_summary(),
+                },
+                status_code=400,
+            )
         from_item_id = form.get("from_item_id", "").strip()
         screenshot_id = form.get("screenshot_id", "").strip()
         screenshot_description = form.get("screenshot_description", "").strip()
@@ -870,11 +919,18 @@ def create_app() -> FastAPI:
     @app.post("/analyze/generate-prompt")
     async def analyze_generate_prompt(request: Request):
         form = await read_urlencoded_form(request)
-        init_analysis_db()
         question = form.get("question", "").strip()
         asset = form.get("asset", "BTC").strip() or "BTC"
-        window_start = normalize_datetime_input(form.get("window_start", ""))
-        window_end = normalize_datetime_input(form.get("window_end", ""))
+        try:
+            window_start, window_end = validate_datetime_window(
+                form.get("window_start", ""),
+                form.get("window_end", ""),
+                max_duration=ANALYSIS_MAX_WINDOW,
+                label="分析时间窗口",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        init_analysis_db()
         from_item_id = form.get("from_item_id", "").strip()
         screenshot_id = form.get("screenshot_id", "").strip()
         screenshot_description = form.get("screenshot_description", "").strip()
@@ -1199,6 +1255,22 @@ def create_app() -> FastAPI:
         interval = str(query.get("interval", "1m") or "1m")[:12]
         start = str(query.get("start", "") or "")[:32]
         end = str(query.get("end", "") or "")[:32]
+        try:
+            start, end = validate_datetime_window(start, end, label="行情时间窗口")
+        except ValueError as exc:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "invalid time window",
+                    "detail": str(exc),
+                    "symbol": symbol,
+                    "interval": interval,
+                    "start": start,
+                    "end": end,
+                    "klines": [],
+                },
+                status_code=400,
+            )
         adapter_name = configured_market_adapter_name()
         adapter = get_market_adapter(adapter_name)
         if not adapter:

@@ -876,6 +876,93 @@ def test_catch_up_windowed_clears_checkpoint_after_complete(temp_history_db, mon
     assert state_value(conn, "catch_up_checkpoint_target_end") == ""
 
 
+def test_catch_up_windowed_keeps_checkpoint_when_sub_window_is_truncated(temp_history_db, monkeypatch):
+    calls = []
+
+    def fake_catch_up_window(start_dt, end_dt, **kwargs):
+        calls.append((start_dt, end_dt))
+        return {
+            "ok": True,
+            "source": kwargs["source"],
+            "window": {"start": str(start_dt), "end": str(end_dt)},
+            "pages": 1,
+            "scanned": 100,
+            "stored": 100,
+            "push_candidates": 0,
+            "priority_counts": {},
+            "already_stored": 0,
+            "already_delivered": 0,
+            "send_candidates": [],
+            "summary_items": [],
+            "seen_item_ids": [],
+            "truncated": len(calls) == 1,
+            "error": "",
+        }
+
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+    result = jm.catch_up_windowed(
+        datetime(2026, 5, 17, 10, 0, 0),
+        datetime(2026, 5, 17, 11, 0, 0),
+        source="catchup_manual",
+        max_store=100,
+        max_send=0,
+        window_minutes=30,
+        checkpoint_enabled=True,
+    )
+
+    assert result["ok"] is False
+    assert result["truncated"] is True
+    assert "达到入库上限" in result["error"]
+    assert result["checkpoint"]["next_start"] == "2026-05-17 10:00:00"
+    assert state_value(jm.get_db(), "catch_up_checkpoint") == "2026-05-17 10:00:00"
+
+
+def test_run_auto_catch_up_resumes_older_automatic_checkpoint(temp_history_db, monkeypatch):
+    conn = jm.get_db()
+    jm.set_state(conn, "last_ingested_at", "2026-05-17 10:00:00")
+    jm.save_catchup_checkpoint(
+        conn,
+        next_start=datetime(2026, 5, 17, 8, 30, 0),
+        original_start=datetime(2026, 5, 17, 8, 0, 0),
+        target_end=datetime(2026, 5, 17, 9, 0, 0),
+        window_minutes=30,
+        keys=jm.AUTO_CATCHUP_CHECKPOINT_KEYS,
+    )
+    conn.commit()
+    calls = []
+
+    def fake_catch_up_window(start_dt, end_dt, **kwargs):
+        calls.append((start_dt, end_dt))
+        return {
+            "ok": True,
+            "source": kwargs["source"],
+            "window": {"start": str(start_dt), "end": str(end_dt)},
+            "pages": 1,
+            "scanned": 0,
+            "stored": 0,
+            "push_candidates": 0,
+            "priority_counts": {},
+            "already_stored": 0,
+            "already_delivered": 0,
+            "send_candidates": [],
+            "summary_items": [],
+            "seen_item_ids": [],
+            "truncated": False,
+            "error": "",
+        }
+
+    monkeypatch.setattr(jm, "AUTO_CATCHUP_WINDOW_MINUTES", 60)
+    monkeypatch.setattr(jm, "CATCHUP_TELEGRAM", False)
+    monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
+    result = asyncio.run(jm.run_auto_catch_up(object(), datetime(2026, 5, 17, 10, 10, 0)))
+
+    assert result["ok"] is True
+    assert result["resumed_from_checkpoint"] is True
+    assert calls[0][0] == datetime(2026, 5, 17, 8, 30, 0)
+    assert calls[-1][1] == datetime(2026, 5, 17, 10, 10, 0)
+    assert state_value(conn, "auto_catch_up_checkpoint") == ""
+
+
 def test_resolve_catchup_cli_window_uses_resume_checkpoint(temp_history_db):
     conn = jm.get_db()
     jm.save_catchup_checkpoint(
@@ -1042,7 +1129,6 @@ def test_catchup_summary_delivery_detail_includes_counts_and_detail():
 
 
 def test_format_catchup_summary_message_escapes_text_and_marks_gap(monkeypatch):
-    monkeypatch.setattr(jm, "CATCHUP_MAX_HOURS", 12)
     monkeypatch.setattr(jm, "CATCHUP_MAX_STORE", 3)
     result = {
         "trigger": "gap",
@@ -1065,7 +1151,6 @@ def test_format_catchup_summary_message_escapes_text_and_marks_gap(monkeypatch):
                 "text": "A < B & C",
             },
         ],
-        "limited_by_max_hours": True,
         "truncated": True,
     }
 
@@ -1077,7 +1162,6 @@ def test_format_catchup_summary_message_escapes_text_and_marks_gap(monkeypatch):
     assert "已存在未重复入库：1 条" in message
     assert "分级：⚡ 1 / 🚨 1 / 📰 0" in message
     assert "1. ⚡ 2026-05-17 10:02:00 A &lt; B &amp; C" in message
-    assert "已按 CATCHUP_MAX_HOURS=12 截断较早窗口。" in message
     assert "入库达到 CATCHUP_MAX_STORE=3 上限，窗口可能未完全覆盖。" in message
 
 
@@ -1109,6 +1193,12 @@ def test_run_catch_up_does_not_send_when_telegram_disabled(temp_history_db, monk
     assert result["telegram_skipped"] == 0
     assert not jm.has_any_delivery(conn, "manual-disabled", channel="telegram")
     assert telegram_status(conn, "manual-disabled") is None
+
+
+def test_manual_catchup_telegram_requires_explicit_opt_in():
+    assert jm.manual_catchup_telegram_enabled(None) is False
+    assert jm.manual_catchup_telegram_enabled(False) is False
+    assert jm.manual_catchup_telegram_enabled(True) is True
 
 
 def test_run_catch_up_passes_manual_window_limits_to_catch_up_window(temp_history_db, monkeypatch):
@@ -1419,6 +1509,25 @@ def test_run_auto_catch_up_skips_without_last_ingested_at(temp_history_db, monke
     }
 
 
+def test_run_auto_catch_up_skips_overlapping_trigger_without_rest(temp_history_db, monkeypatch):
+    def fail_catch_up_window(*args, **kwargs):
+        raise AssertionError("overlapping auto catch-up must not start another REST scan")
+
+    monkeypatch.setattr(jm, "catch_up_window", fail_catch_up_window)
+    assert jm.AUTO_CATCHUP_RUN_LOCK.acquire(blocking=False)
+    try:
+        result = asyncio.run(jm.run_auto_catch_up(object(), datetime(2026, 5, 17, 10, 10, 0), trigger="gap"))
+    finally:
+        jm.AUTO_CATCHUP_RUN_LOCK.release()
+
+    assert result == {
+        "ok": True,
+        "skipped": True,
+        "reason": "自动补拉已在运行",
+        "trigger": "gap",
+    }
+
+
 def test_run_auto_catch_up_returns_error_for_invalid_last_ingested_at(temp_history_db, monkeypatch):
     conn = jm.get_db()
     jm.set_state(conn, "last_ingested_at", "not-a-date")
@@ -1457,7 +1566,7 @@ def test_run_auto_catch_up_skips_when_no_offline_window(temp_history_db, monkeyp
     }
 
 
-def test_run_auto_catch_up_limits_window_by_max_hours(temp_history_db, monkeypatch):
+def test_run_auto_catch_up_covers_entire_offline_window_in_chunks(temp_history_db, monkeypatch):
     conn = jm.get_db()
     jm.set_state(conn, "last_ingested_at", "2026-05-17 00:00:00")
     conn.commit()
@@ -1479,19 +1588,20 @@ def test_run_auto_catch_up_limits_window_by_max_hours(temp_history_db, monkeypat
             "summary_items": [],
         }
 
-    monkeypatch.setattr(jm, "CATCHUP_MAX_HOURS", 2)
+    monkeypatch.setattr(jm, "AUTO_CATCHUP_WINDOW_MINUTES", 60)
     monkeypatch.setattr(jm, "CATCHUP_TELEGRAM", False)
     monkeypatch.setattr(jm, "catch_up_window", fake_catch_up_window)
 
     result = asyncio.run(jm.run_auto_catch_up(object(), datetime(2026, 5, 17, 10, 10, 0), trigger="startup"))
 
     assert result["ok"] is True
-    assert result["limited_by_max_hours"] is True
-    assert len(calls) == 1
-    assert calls[0][0] == datetime(2026, 5, 17, 8, 10, 0)
-    assert calls[0][1] == datetime(2026, 5, 17, 10, 10, 0)
-    assert calls[0][2]["source"] == "catchup_auto"
-    assert calls[0][2]["max_send"] == 0
+    assert result["resumed_from_checkpoint"] is False
+    assert len(calls) == 11
+    assert calls[0][0] == datetime(2026, 5, 16, 23, 58, 0)
+    assert calls[-1][1] == datetime(2026, 5, 17, 10, 10, 0)
+    assert all(call[2]["source"] == "catchup_auto" for call in calls)
+    assert all(call[2]["max_send"] == 0 for call in calls)
+    assert state_value(conn, "auto_catch_up_checkpoint") == ""
 
 
 def test_run_auto_catch_up_remembers_seen_item_ids(temp_history_db, monkeypatch):

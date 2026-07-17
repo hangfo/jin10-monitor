@@ -3,7 +3,13 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from dashboard.app import datetime_local_value, feed_params, normalize_datetime_input, parse_int
+from dashboard.app import (
+    datetime_local_value,
+    feed_params,
+    normalize_datetime_input,
+    parse_int,
+    validate_datetime_window,
+)
 from dashboard import db
 
 
@@ -831,6 +837,41 @@ def test_datetime_local_helpers_normalize_browser_values():
     assert normalize_datetime_input("2026-05-24T21:30") == "2026-05-24 21:30:00"
     assert normalize_datetime_input("2026-05-24 21:30:45") == "2026-05-24 21:30:45"
     assert datetime_local_value("2026-05-24 21:30:45") == "2026-05-24T21:30"
+
+
+def test_validate_datetime_window_accepts_past_iso_values():
+    assert validate_datetime_window(
+        "2026-05-24T20:00",
+        "2026-05-24T21:30",
+        now=datetime(2026, 5, 24, 22, 0, 0),
+        max_duration=timedelta(days=7),
+        label="分析时间窗口",
+    ) == ("2026-05-24 20:00:00", "2026-05-24 21:30:00")
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "message"),
+    [
+        ("", "2026-05-24T21:30", "都不能为空"),
+        ("bad", "2026-05-24T21:30", "格式无效"),
+        ("2026-05-24T22:01", "2026-05-24T22:02", "不能晚于当前时间"),
+        ("2026-05-24T21:30", "2026-05-24T21:30", "必须早于"),
+        ("2026-05-24T21:31", "2026-05-24T21:30", "必须早于"),
+    ],
+)
+def test_validate_datetime_window_rejects_invalid_boundaries(start, end, message):
+    with pytest.raises(ValueError, match=message):
+        validate_datetime_window(start, end, now=datetime(2026, 5, 24, 22, 0, 0))
+
+
+def test_validate_datetime_window_rejects_excessive_analysis_span():
+    with pytest.raises(ValueError, match="跨度不能超过 7 天"):
+        validate_datetime_window(
+            "2026-05-01T00:00",
+            "2026-05-09T00:00",
+            now=datetime(2026, 5, 24, 22, 0, 0),
+            max_duration=timedelta(days=7),
+        )
 
 
 def test_feed_params_normalizes_query_values():

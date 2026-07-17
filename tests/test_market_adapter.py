@@ -280,6 +280,31 @@ def test_market_klines_api_degrades_when_unconfigured(monkeypatch):
     assert body["klines"] == []
 
 
+@pytest.mark.parametrize(
+    ("start", "end", "detail"),
+    [
+        ("2999-01-01 20:00:00", "2999-01-01 20:01:00", "不能晚于当前时间"),
+        ("2024-06-01 20:01:00", "2024-06-01 20:00:00", "必须早于结束时间"),
+        ("bad", "2024-06-01 20:00:00", "格式无效"),
+    ],
+)
+def test_market_klines_api_rejects_invalid_time_before_adapter_call(monkeypatch, start, end, detail):
+    def fail_adapter(*args, **kwargs):
+        raise AssertionError("invalid time must not reach market adapter lookup")
+
+    endpoint = market_klines_endpoint()
+    monkeypatch.setitem(endpoint.__globals__, "get_market_adapter", fail_adapter)
+    response = asyncio.run(
+        endpoint(FakeRequest(urllib.parse.urlencode({"symbol": "BTCUSDT", "start": start, "end": end})))
+    )
+
+    body = response_json(response)
+    assert response.status_code == 400
+    assert body["error"] == "invalid time window"
+    assert detail in body["detail"]
+    assert body["klines"] == []
+
+
 def test_market_klines_api_uses_configured_binance_adapter(monkeypatch):
     base._ADAPTER_CACHE.clear()
     monkeypatch.setenv("MARKET_ADAPTER", "binance")

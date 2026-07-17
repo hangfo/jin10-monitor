@@ -111,10 +111,10 @@ AGGREGATION_WINDOW_SECONDS = env_range_int("AGGREGATION_WINDOW_SECONDS", 180, 0,
 AGGREGATION_BYPASS_IMPORTANT = os.getenv("AGGREGATION_BYPASS_IMPORTANT", "1").lower() not in {"0", "false", "no", "off"}
 AUTO_CATCHUP = os.getenv("AUTO_CATCHUP", "1").lower() not in {"0", "false", "no", "off"}
 CATCHUP_TELEGRAM = os.getenv("CATCHUP_TELEGRAM", "1").lower() not in {"0", "false", "no", "off"}
-CATCHUP_MAX_HOURS = env_range_int("CATCHUP_MAX_HOURS", 24, 1, 168)
 CATCHUP_MAX_STORE = env_range_int("CATCHUP_MAX_STORE", 1000, 20, 5000)
 CATCHUP_MAX_SEND = env_range_int("CATCHUP_MAX_SEND", 120, 0, 300)
 CATCHUP_SEND_INTERVAL = env_range_float("CATCHUP_SEND_INTERVAL", 0.5, 0.0, 10.0)
+AUTO_CATCHUP_WINDOW_MINUTES = env_range_int("AUTO_CATCHUP_WINDOW_MINUTES", 60, 5, 1440)
 AUTO_CATCHUP_GAP_SECONDS = env_range_int("AUTO_CATCHUP_GAP_SECONDS", 300, 0, 86400)
 HEALTH_HEARTBEAT_INTERVAL_S = env_range_int("HEALTH_HEARTBEAT_INTERVAL_S", 6 * 3600, 0, 7 * 86400)
 SHOW_DELAY_IF_SECONDS = env_range_int("SHOW_DELAY_IF_SECONDS", 60, 0, 3600)
@@ -125,6 +125,7 @@ CURSOR_FUTURE_GRACE_SECONDS = 120
 AUTO_CATCHUP_START_BUFFER_SECONDS = 120
 AUTO_CATCHUP_SUMMARY_COOLDOWN_SECONDS = 1800
 SQLITE_BUSY_TIMEOUT_MS = 5000
+AUTO_CATCHUP_RUN_LOCK = threading.Lock()
 
 PRIORITY_IMPORTANT = "T3_IMPORTANT"
 PRIORITY_HIGH = "T2_HIGH"
@@ -1940,10 +1941,20 @@ CATCHUP_CHECKPOINT_KEYS = {
     "target_end": "catch_up_checkpoint_target_end",
     "window_minutes": "catch_up_checkpoint_window_minutes",
 }
+AUTO_CATCHUP_CHECKPOINT_KEYS = {
+    "next_start": "auto_catch_up_checkpoint",
+    "original_start": "auto_catch_up_checkpoint_original_start",
+    "target_end": "auto_catch_up_checkpoint_target_end",
+    "window_minutes": "auto_catch_up_checkpoint_window_minutes",
+}
 
 
-def catchup_checkpoint_values(conn: sqlite3.Connection) -> dict[str, str]:
-    return {name: get_state(conn, key) for name, key in CATCHUP_CHECKPOINT_KEYS.items()}
+def catchup_checkpoint_values(
+    conn: sqlite3.Connection,
+    *,
+    keys: dict[str, str] = CATCHUP_CHECKPOINT_KEYS,
+) -> dict[str, str]:
+    return {name: get_state(conn, key) for name, key in keys.items()}
 
 
 def save_catchup_checkpoint(
@@ -1953,15 +1964,20 @@ def save_catchup_checkpoint(
     original_start: datetime,
     target_end: datetime,
     window_minutes: int,
+    keys: dict[str, str] = CATCHUP_CHECKPOINT_KEYS,
 ) -> None:
-    set_state(conn, CATCHUP_CHECKPOINT_KEYS["next_start"], format_cursor_datetime(next_start))
-    set_state(conn, CATCHUP_CHECKPOINT_KEYS["original_start"], format_cursor_datetime(original_start))
-    set_state(conn, CATCHUP_CHECKPOINT_KEYS["target_end"], format_cursor_datetime(target_end))
-    set_state(conn, CATCHUP_CHECKPOINT_KEYS["window_minutes"], int(window_minutes))
+    set_state(conn, keys["next_start"], format_cursor_datetime(next_start))
+    set_state(conn, keys["original_start"], format_cursor_datetime(original_start))
+    set_state(conn, keys["target_end"], format_cursor_datetime(target_end))
+    set_state(conn, keys["window_minutes"], int(window_minutes))
 
 
-def clear_catchup_checkpoint(conn: sqlite3.Connection) -> None:
-    for key in CATCHUP_CHECKPOINT_KEYS.values():
+def clear_catchup_checkpoint(
+    conn: sqlite3.Connection,
+    *,
+    keys: dict[str, str] = CATCHUP_CHECKPOINT_KEYS,
+) -> None:
+    for key in keys.values():
         delete_state(conn, key)
 
 
@@ -1984,6 +2000,7 @@ def merge_catchup_results(
     end_dt: datetime,
     max_send: int,
     window_minutes: int,
+    source: str,
     stopped_early: bool = False,
     checkpoint: Optional[dict[str, str]] = None,
 ) -> dict:
@@ -2004,6 +2021,10 @@ def merge_catchup_results(
                 first_error = str(result.get("error") or "子窗口补拉失败")
             # 失败窗口没有可靠的入库/候选发送数据；后续成功窗口仍可继续聚合。
             continue
+        if result.get("truncated"):
+            ok = False
+            if not first_error:
+                first_error = "子窗口达到入库上限，保留断点等待缩小窗口后继续"
         counts = result.get("priority_counts") or {}
         for priority in priority_counts:
             priority_counts[priority] += int(counts.get(priority) or 0)
@@ -2015,7 +2036,7 @@ def merge_catchup_results(
         send_candidates = send_candidates[:max_send]
     return {
         "ok": ok,
-        "source": "catchup_manual",
+        "source": source,
         "window": {
             "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
             "end": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
@@ -2050,6 +2071,7 @@ def catch_up_windowed(
     window_minutes: int,
     max_consecutive_errors: int = 2,
     checkpoint_enabled: bool = False,
+    checkpoint_keys: dict[str, str] = CATCHUP_CHECKPOINT_KEYS,
 ) -> dict:
     windows = split_catchup_windows(start_dt, end_dt, window_minutes)
     results = []
@@ -2064,6 +2086,7 @@ def catch_up_windowed(
             original_start=start_dt,
             target_end=end_dt,
             window_minutes=window_minutes,
+            keys=checkpoint_keys,
         )
         conn.commit()
     for window_start, window_end in windows:
@@ -2075,7 +2098,7 @@ def catch_up_windowed(
             max_send=max_send,
         )
         results.append(result)
-        if not result.get("ok"):
+        if not result.get("ok") or result.get("truncated"):
             checkpoint_blocked = True
             consecutive_errors += 1
             if consecutive_errors >= max(1, max_consecutive_errors):
@@ -2091,14 +2114,20 @@ def catch_up_windowed(
                 original_start=start_dt,
                 target_end=end_dt,
                 window_minutes=window_minutes,
+                keys=checkpoint_keys,
             )
             conn.commit()
     if len(results) == 1 and window_minutes <= 0:
         return results[0]
-    checkpoint = catchup_checkpoint_values(get_db()) if checkpoint_enabled and window_minutes > 0 else {}
-    if checkpoint_enabled and window_minutes > 0 and not stopped_early and all(result.get("ok") for result in results):
+    checkpoint = (
+        catchup_checkpoint_values(get_db(), keys=checkpoint_keys)
+        if checkpoint_enabled and window_minutes > 0
+        else {}
+    )
+    all_complete = all(result.get("ok") and not result.get("truncated") for result in results)
+    if checkpoint_enabled and window_minutes > 0 and not stopped_early and all_complete:
         conn = get_db()
-        clear_catchup_checkpoint(conn)
+        clear_catchup_checkpoint(conn, keys=checkpoint_keys)
         conn.commit()
         checkpoint = {}
     return merge_catchup_results(
@@ -2107,6 +2136,7 @@ def catch_up_windowed(
         end_dt=end_dt,
         max_send=max_send,
         window_minutes=window_minutes,
+        source=source,
         stopped_early=stopped_early,
         checkpoint=checkpoint,
     )
@@ -2317,8 +2347,6 @@ def format_catchup_summary_message(result: dict) -> str:
                 f"{index}. {icon} {escape(str(row.get('time', '')))} "
                 f"{escape(str(row.get('text', '')))}"
             )
-    if result.get("limited_by_max_hours"):
-        lines.append(f"已按 CATCHUP_MAX_HOURS={CATCHUP_MAX_HOURS} 截断较早窗口。")
     if result.get("truncated"):
         lines.append(f"入库达到 CATCHUP_MAX_STORE={CATCHUP_MAX_STORE} 上限，窗口可能未完全覆盖。")
     return "\n".join(lines)
@@ -2404,6 +2432,28 @@ async def run_auto_catch_up(
     trigger: str = "startup",
     start_cursor: Optional[str] = None,
 ) -> dict:
+    """Serialize startup/gap recovery so checkpoint writers and Jin10 REST scans cannot overlap."""
+    if not AUTO_CATCHUP_RUN_LOCK.acquire(blocking=False):
+        log.info("自动补拉已在运行，跳过重叠的 %s 触发", trigger)
+        return {"ok": True, "skipped": True, "reason": "自动补拉已在运行", "trigger": trigger}
+    try:
+        return await _run_auto_catch_up(
+            session,
+            end_at,
+            trigger=trigger,
+            start_cursor=start_cursor,
+        )
+    finally:
+        AUTO_CATCHUP_RUN_LOCK.release()
+
+
+async def _run_auto_catch_up(
+    session: aiohttp.ClientSession,
+    end_at: datetime,
+    *,
+    trigger: str = "startup",
+    start_cursor: Optional[str] = None,
+) -> dict:
     """Store a missed window; auto mode sends one compact Telegram summary, not every item."""
     conn = get_db()
     last_at = start_cursor if start_cursor is not None else get_state(conn, "last_ingested_at")
@@ -2439,12 +2489,16 @@ async def run_auto_catch_up(
         start_dt = history_dt
 
     start_dt = start_dt - timedelta(seconds=AUTO_CATCHUP_START_BUFFER_SECONDS)
-
-    limited_by_max_hours = False
-    floor_dt = end_at - timedelta(hours=max(1, CATCHUP_MAX_HOURS))
-    if start_dt < floor_dt:
-        start_dt = floor_dt
-        limited_by_max_hours = True
+    auto_checkpoint = catchup_checkpoint_values(conn, keys=AUTO_CATCHUP_CHECKPOINT_KEYS)
+    checkpoint_start = parse_cursor_datetime(auto_checkpoint.get("next_start", ""))
+    resumed_from_checkpoint = bool(checkpoint_start and checkpoint_start < start_dt)
+    if resumed_from_checkpoint:
+        start_dt = checkpoint_start
+        log.warning(
+            "检测到未完成自动补拉断点，从 %s 继续覆盖到本次启动时间 %s",
+            format_cursor_datetime(start_dt),
+            format_cursor_datetime(end_at),
+        )
 
     if end_at <= start_dt:
         return {
@@ -2459,18 +2513,21 @@ async def run_auto_catch_up(
         }
 
     result = await asyncio.to_thread(
-        catch_up_window,
+        catch_up_windowed,
         start_dt,
         end_at,
         source="catchup_auto",
         max_store=CATCHUP_MAX_STORE,
         max_send=0,
+        window_minutes=AUTO_CATCHUP_WINDOW_MINUTES,
+        checkpoint_enabled=True,
+        checkpoint_keys=AUTO_CATCHUP_CHECKPOINT_KEYS,
     )
     if result.get("ok"):
         for fid in result.get("seen_item_ids") or []:
             remember_seen_id(str(fid))
     result["trigger"] = trigger
-    result["limited_by_max_hours"] = limited_by_max_hours
+    result["resumed_from_checkpoint"] = resumed_from_checkpoint
     result["telegram_summary_sent"] = False
     result["telegram_summary_skipped"] = False
     result["telegram_skip_reason"] = ""
@@ -2881,23 +2938,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--catch-up", action="store_true", help="手动补拉离线窗口消息")
     parser.add_argument("--from", dest="catchup_from", help="补拉开始时间 YYYY-MM-DD HH:MM[:SS]")
     parser.add_argument("--to", dest="catchup_to", help="补拉结束时间 YYYY-MM-DD HH:MM[:SS]")
-    parser.add_argument("--catch-up-telegram", dest="catchup_telegram", action="store_true", default=None, help="补拉后发送 Telegram")
-    parser.add_argument("--no-catch-up-telegram", dest="catchup_telegram", action="store_false", help="补拉只入库和终端显示，不发送 Telegram")
+    parser.add_argument("--catch-up-telegram", dest="catchup_telegram", action="store_true", default=None, help="显式允许按既有筛选规则发送历史 Telegram；默认不发送")
+    parser.add_argument("--no-catch-up-telegram", dest="catchup_telegram", action="store_false", help="补拉只入库和终端显示，不发送 Telegram（默认）")
     parser.add_argument("--catch-up-max-store", type=int, default=CATCHUP_MAX_STORE, help="补拉最多入库条数，范围 20-5000")
     parser.add_argument("--catch-up-max-send", type=int, default=CATCHUP_MAX_SEND, help="补拉最多发送 Telegram 条数，范围 0-300")
     parser.add_argument("--catch-up-send-interval", type=float, default=CATCHUP_SEND_INTERVAL, help="补拉 Telegram 发送间隔秒数，范围 0-10")
-    parser.add_argument("--catch-up-window-minutes", type=int, default=0, help="手动补拉按多少分钟拆分子窗口；0 表示不拆分")
+    parser.add_argument("--catch-up-window-minutes", type=int, default=None, help="手动补拉子窗口分钟数，默认 60；0 表示不拆分")
     parser.add_argument("--resume", dest="catchup_resume", action="store_true", help="从上次手动分窗口补拉断点继续")
     return parser.parse_args()
 
 
 def normalized_catchup_limits(args: argparse.Namespace) -> dict[str, Any]:
+    raw_window_minutes = getattr(args, "catch_up_window_minutes", None)
+    default_window_minutes = 0 if getattr(args, "catchup_resume", False) else 60
     return {
         "max_store": clamp_int_value("--catch-up-max-store", args.catch_up_max_store, 20, 5000),
         "max_send": clamp_int_value("--catch-up-max-send", args.catch_up_max_send, 0, 300),
         "send_interval": clamp_float_value("--catch-up-send-interval", args.catch_up_send_interval, 0.0, 10.0),
-        "window_minutes": clamp_int_value("--catch-up-window-minutes", getattr(args, "catch_up_window_minutes", 0), 0, 1440),
+        "window_minutes": clamp_int_value(
+            "--catch-up-window-minutes",
+            default_window_minutes if raw_window_minutes is None else raw_window_minutes,
+            0,
+            1440,
+        ),
     }
+
+
+def manual_catchup_telegram_enabled(explicit_value: Optional[bool]) -> bool:
+    """Historical recovery is store-only unless an operator explicitly opts into Telegram."""
+    return bool(explicit_value) if explicit_value is not None else False
 
 
 def resolve_catchup_cli_window(
@@ -2957,7 +3026,11 @@ if __name__ == "__main__":
             start_dt, end_dt = resolve_catchup_cli_window(args, conn, catchup_limits)
             if end_dt <= start_dt:
                 raise SystemExit("--to 必须晚于 --from / last_ingested_at")
-            telegram_enabled = CATCHUP_TELEGRAM if args.catchup_telegram is None else bool(args.catchup_telegram)
+            if end_dt > datetime.now().replace(microsecond=0):
+                raise SystemExit("--to 不能晚于当前时间")
+            telegram_enabled = manual_catchup_telegram_enabled(args.catchup_telegram)
+            if not telegram_enabled:
+                catchup_limits["max_send"] = 0
             result = asyncio.run(run_catch_up(
                 start_dt,
                 end_dt,

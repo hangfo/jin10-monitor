@@ -150,7 +150,7 @@ def test_normalized_catchup_limits_clamps_cli_values(caplog):
         "max_store": 20,
         "max_send": 300,
         "send_interval": 0.0,
-        "window_minutes": 0,
+        "window_minutes": 60,
     }
     assert "--catch-up-max-store=1 低于下限 20" in caplog.text
     assert "--catch-up-max-send=999 高于上限 300" in caplog.text
@@ -168,7 +168,7 @@ def test_normalized_catchup_limits_preserves_cli_zero_values():
         "max_store": 20,
         "max_send": 0,
         "send_interval": 0.0,
-        "window_minutes": 0,
+        "window_minutes": 60,
     }
 
 

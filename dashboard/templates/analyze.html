@@ -294,6 +294,7 @@
 
   {% if step == 'input' or not step %}
   <div class="card card-body">
+    {% if form_error %}<div class="error-banner"><strong>时间校验失败：</strong>{{ form_error }}</div>{% endif %}
     <form method="post" action="/analyze/preview">
       <div class="analysis-grid">
         <div class="filter-group full-row">
@@ -314,12 +315,12 @@
         </div>
         <div class="filter-group">
           <span class="filter-label">时间窗口开始 *</span>
-          <input id="window-start" type="datetime-local" name="window_start" required value="{{ datetime_local_value(prefill.get('window_start', '')) }}" style="width:100%">
+          <input id="window-start" type="datetime-local" name="window_start" required data-time-group="analysis-window" data-time-role="start" data-max-window-minutes="10080" value="{{ datetime_local_value(prefill.get('window_start', '')) }}" style="width:100%">
         </div>
         <div class="filter-group">
           <span class="filter-label">时间窗口结束 *</span>
-          <input id="window-end" type="datetime-local" name="window_end" required value="{{ datetime_local_value(prefill.get('window_end', '')) }}" style="width:100%">
-          <div class="datetime-help">可直接用下方快捷窗口，也可点开时间框选择。</div>
+          <input id="window-end" type="datetime-local" name="window_end" required data-time-group="analysis-window" data-time-role="end" data-max-window-minutes="10080" value="{{ datetime_local_value(prefill.get('window_end', '')) }}" style="width:100%">
+          <div class="datetime-help">不能晚于当前时间；开始必须早于结束；单次分析最长 7 天。</div>
         </div>
         <div class="filter-group full-row">
           <span class="filter-label">快捷时间窗口</span>
@@ -401,6 +402,7 @@
       const start = new Date(end.getTime() - minutes * 60000);
       document.getElementById("window-start").value = toLocalInputValue(start);
       document.getElementById("window-end").value = toLocalInputValue(end);
+      window.dashboardDateTime.validateDateTimeGroup("analysis-window");
     }
 
     document.querySelectorAll("[data-minutes]").forEach((button) => {

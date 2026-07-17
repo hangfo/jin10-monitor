@@ -451,6 +451,76 @@
       {% endif %}
       {% block content %}{% endblock %}
     </main>
+    <script>
+      (() => {
+        function localDateTimeValue(date) {
+          const offsetMs = date.getTimezoneOffset() * 60000;
+          return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+        }
+
+        function updateDateTimeMaximums() {
+          const maximum = localDateTimeValue(new Date());
+          document.querySelectorAll('input[type="datetime-local"][data-time-group]').forEach((input) => {
+            input.max = maximum;
+          });
+        }
+
+        function validateDateTimeGroup(group, report = false) {
+          const inputs = Array.from(document.querySelectorAll(`input[data-time-group="${group}"]`));
+          const start = inputs.find((input) => input.dataset.timeRole === "start");
+          const end = inputs.find((input) => input.dataset.timeRole === "end");
+          if (!start || !end) return {ok: true, message: ""};
+          start.setCustomValidity("");
+          end.setCustomValidity("");
+          const now = new Date();
+          const startAt = start.value ? new Date(start.value) : null;
+          const endAt = end.value ? new Date(end.value) : null;
+          let message = "";
+          let target = start;
+          if (!startAt || Number.isNaN(startAt.getTime()) || !endAt || Number.isNaN(endAt.getTime())) {
+            message = "开始和结束时间都必须填写且格式有效";
+          } else if (startAt > now || endAt > now) {
+            message = "开始和结束时间都不能超过当前时间";
+            target = startAt > now ? start : end;
+          } else if (startAt >= endAt) {
+            message = "开始时间必须早于结束时间";
+          } else {
+            const maxMinutes = Number(start.dataset.maxWindowMinutes || end.dataset.maxWindowMinutes || 0);
+            if (maxMinutes > 0 && endAt.getTime() - startAt.getTime() > maxMinutes * 60000) {
+              message = `时间跨度不能超过 ${maxMinutes / 1440} 天`;
+            }
+          }
+          if (message) {
+            target.setCustomValidity(message);
+            if (report) target.reportValidity();
+            return {ok: false, message};
+          }
+          return {ok: true, message: ""};
+        }
+
+        window.dashboardDateTime = {localDateTimeValue, updateDateTimeMaximums, validateDateTimeGroup};
+        updateDateTimeMaximums();
+        document.querySelectorAll('input[type="datetime-local"][data-time-group]').forEach((input) => {
+          input.addEventListener("input", () => validateDateTimeGroup(input.dataset.timeGroup));
+          input.addEventListener("change", () => validateDateTimeGroup(input.dataset.timeGroup));
+        });
+        document.querySelectorAll("form").forEach((form) => {
+          form.addEventListener("submit", (event) => {
+            const groups = new Set(
+              Array.from(form.querySelectorAll('input[type="datetime-local"][data-time-group]'))
+                .map((input) => input.dataset.timeGroup)
+            );
+            for (const group of groups) {
+              if (!validateDateTimeGroup(group, true).ok) {
+                event.preventDefault();
+                break;
+              }
+            }
+          });
+        });
+        window.setInterval(updateDateTimeMaximums, 30000);
+      })();
+    </script>
     {% block scripts %}{% endblock %}
   </body>
 </html>
