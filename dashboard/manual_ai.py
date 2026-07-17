@@ -10,8 +10,7 @@ from typing import Any
 
 PROMPT_VERSION = "v1"
 CONFIDENCE_HELP = (
-    "置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。"
-    "≥75% 较可信；50-75% 仅供参考；<50% 证据不足。"
+    "这是 Provider 对自身输出的原始主观置信度，只用于审计；不是交易信号，也不能跨 Provider 直接平均。"
 )
 JUDGEMENT_VALUES = {"news_driven", "macro_sentiment", "technical_breakout", "unclear"}
 DIRECTION_VALUES = {"bullish", "bearish", "mixed"}
@@ -255,7 +254,7 @@ def render_answer_with_links(answer_parsed: dict[str, Any]) -> str:
                 f'<span class="cat-headline">{headline}</span> '
                 f'<span class="cat-newsid"><a href="/item/{news_id}" class="news-ref" title="{news_id}">[↗ {html.escape(ref_text)}]</a></span><br>'
                 f'<span class="cat-path">{impact_path}</span><br>'
-                f'<span class="{confidence_class}" title="{html.escape(CONFIDENCE_HELP)}">置信度 {catalyst_confidence:.0%}</span>'
+                f'<span class="{confidence_class}" title="{html.escape(CONFIDENCE_HELP)}">Provider 原始置信度 {catalyst_confidence:.0%}</span>'
                 f' <span class="dir-icon">{html.escape(direction_icon)}</span>'
                 "</li>"
             )

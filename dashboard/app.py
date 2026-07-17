@@ -37,7 +37,7 @@ from .analysis_db import (
     save_provider_error,
     save_screenshot,
 )
-from .analysis_quality import compare_analysis_runs
+from .analysis_quality import assess_run_quality, compare_analysis_runs
 from .db import (
     DEFAULT_HOURS,
     HOURS_OPTIONS,
@@ -1042,6 +1042,7 @@ def create_app() -> FastAPI:
         init_analysis_db()
         runs = get_runs_for_compare(run_ids) if run_ids else []
         comparison = compare_analysis_runs(runs[0], runs[1]) if len(runs) == 2 else None
+        quality_reports = [assess_run_quality(run) for run in runs]
         return templates.TemplateResponse(
             request,
             "analyze_compare.html",
@@ -1050,6 +1051,7 @@ def create_app() -> FastAPI:
                 "runs": runs,
                 "run_ids": run_ids,
                 "comparison": comparison,
+                "quality_reports": quality_reports,
                 "nav": query_nav_summary(),
             },
         )
@@ -1093,6 +1095,7 @@ def create_app() -> FastAPI:
         answer_html = ""
         if run and run.get("answer_parsed"):
             answer_html = render_answer_with_links(run["answer_parsed"])
+        quality_report = assess_run_quality(run) if run and run.get("status") == "done" else None
         review_warning = provider_review_warning(run) if run else ""
         provider_estimate_seconds = (
             estimate_provider_completion_seconds(str(run.get("provider_name") or ""))
@@ -1107,6 +1110,7 @@ def create_app() -> FastAPI:
                 "run": run,
                 "run_id": run_id,
                 "answer_html": answer_html,
+                "quality_report": quality_report,
                 "provider_review_warning": review_warning,
                 "provider_statuses": callable_provider_statuses(),
                 "provider_error": str(request.query_params.get("provider_error", "") or ""),

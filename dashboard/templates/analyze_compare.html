@@ -116,13 +116,14 @@
     两次判断类型不同：<strong>{{ judgement_label(first.judgement) }}</strong> vs <strong>{{ judgement_label(second.judgement) }}</strong>。
     {% endif %}
     {% if confidence_diff > 0.1 %}
-    置信度相差 {{ "%.0f%%"|format(confidence_diff * 100) }}。
+    Provider 原始置信度相差 {{ "%.0f%%"|format(confidence_diff * 100) }}。
     {% endif %}
     <div class="meta" style="margin-top:6px">置信度为 Provider 原始主观输出，仅用于审计，不应直接横向平均。</div>
   </div>
 
   <div class="compare-grid">
     {% for run in runs %}
+    {% set quality = quality_reports[loop.index0] %}
     {% set parsed = run.answer_parsed or {} %}
     {% set catalysts = parsed.catalysts or [] %}
     {% set missing = parsed.missing_evidence or [] %}
@@ -137,7 +138,10 @@
 
       <p style="line-height:1.5">{{ run.question }}</p>
 
-      <div class="meta" title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。">
+      <div><strong>证据质量 {{ quality.grade }} · {{ quality.label }}</strong> <span class="meta">{{ quality.score }}/100</span></div>
+      <div class="meta" style="margin:4px 0 10px">{{ quality.action }}</div>
+
+      <div class="meta" title="Provider 对自身输出的原始主观估计，只用于审计，不可跨 Provider 直接平均。">
         Provider 原始置信度 {% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}
       </div>
       <div class="confidence-track">

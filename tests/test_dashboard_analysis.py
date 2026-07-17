@@ -247,6 +247,79 @@ def test_evidence_fingerprint_is_stable_but_order_sensitive():
     assert analysis_quality.evidence_fingerprint(first) != analysis_quality.evidence_fingerprint(list(reversed(first)))
 
 
+def test_quality_grade_rewards_valid_aligned_evidence_without_using_provider_confidence():
+    packet = [
+        {"news_id": f"n{index}", "selected": True, "relevance_score": 0.8}
+        for index in range(4)
+    ]
+    catalysts = [
+        {"news_id": f"n{index}", "direction": "bullish", "impact_path": f"path {index}"}
+        for index in range(4)
+    ]
+    base = {
+        "evidence_packet": packet,
+        "manual_prompt": "【结构化行情上下文】\n涨跌：100 (+2.00%)",
+        "answer_parsed": {"judgement": "news_driven", "catalysts": catalysts, "missing_evidence": []},
+        "overall_confidence": 0.05,
+    }
+    low_provider_confidence = analysis_quality.assess_run_quality(base)
+    base["overall_confidence"] = 0.99
+    high_provider_confidence = analysis_quality.assess_run_quality(base)
+
+    assert low_provider_confidence["grade"] == "A"
+    assert low_provider_confidence["score"] == high_provider_confidence["score"]
+    assert low_provider_confidence["alignment"] == "aligned"
+
+
+def test_quality_grade_caps_direction_conflict_and_gives_actionable_gap():
+    run = {
+        "evidence_packet": [
+            {"news_id": f"n{index}", "selected": True, "relevance_score": 0.9}
+            for index in range(4)
+        ],
+        "manual_prompt": "涨跌：100 (-3.00%)",
+        "answer_parsed": {
+            "judgement": "unclear",
+            "catalysts": [
+                {"news_id": f"n{index}", "direction": "bullish", "impact_path": f"bull path {index}"}
+                for index in range(4)
+            ],
+            "missing_evidence": ["订单流和清算数据"],
+        },
+    }
+    quality = analysis_quality.assess_run_quality(run)
+
+    assert quality["grade"] == "C"
+    assert quality["score"] == 64
+    assert quality["alignment"] == "conflict"
+    assert quality["decision_rule"] == "订单流和清算数据"
+    assert "不足以单独支持交易" in quality["action"]
+
+
+def test_quality_grade_penalizes_unselected_and_duplicate_citations():
+    run = {
+        "evidence_packet": [
+            {"news_id": "n1", "selected": True, "relevance_score": 0.9},
+            {"news_id": "n2", "selected": False, "relevance_score": 0.9},
+        ],
+        "manual_prompt": "",
+        "answer_parsed": {
+            "judgement": "news_driven",
+            "catalysts": [
+                {"news_id": "n1", "direction": "bullish"},
+                {"news_id": "n1", "direction": "bullish"},
+                {"news_id": "n2", "direction": "bullish"},
+            ],
+        },
+    }
+    quality = analysis_quality.assess_run_quality(run)
+
+    assert quality["grade"] == "D"
+    assert quality["valid_citation_count"] == 2
+    assert any("未引用已选证据" in reason for reason in quality["reasons"])
+    assert any("重复引用" in reason for reason in quality["reasons"])
+
+
 def test_delete_run_can_be_limited_to_drafts(tmp_path):
     db_path = tmp_path / "analysis.sqlite3"
     analysis_db.init_analysis_db(db_path)

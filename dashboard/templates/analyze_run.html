@@ -151,8 +151,20 @@
     color: var(--muted);
     font-size: 12px;
   }
+  .quality-grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .quality-grade {
+    font-size: 24px;
+    font-weight: 800;
+  }
   @media (max-width: 900px) {
     .run-grid {
+      grid-template-columns: 1fr;
+    }
+    .quality-grid {
       grid-template-columns: 1fr;
     }
   }
@@ -252,6 +264,24 @@
 
   <div class="run-grid">
     <div>
+      {% if quality_report %}
+      <div class="card card-body" style="margin-bottom:16px">
+        <h2 style="margin-top:0">证据质量与交易就绪度</h2>
+        <div class="quality-grade">{{ quality_report.grade }} · {{ quality_report.label }} <span class="meta">{{ quality_report.score }}/100</span></div>
+        <p class="meta">这是本地规则可复算的证据质量分，不是收益概率，也不使用 Provider 自报置信度。</p>
+        <div class="quality-grid">
+          <div><strong>主假设</strong><div class="meta">{{ quality_report.primary_hypothesis }}</div></div>
+          <div><strong>反证/冲突</strong><div class="meta">{{ quality_report.counter_evidence }}</div></div>
+          <div><strong>翻转条件</strong><div class="meta">{{ quality_report.decision_rule }}</div></div>
+          <div><strong>行动含义</strong><div class="meta">{{ quality_report.action }}</div></div>
+        </div>
+        <div class="meta" style="margin-top:10px">
+          行情方向：{% if quality_report.market_move_pct is not none %}{{ "%+.2f%%"|format(quality_report.market_move_pct) }}{% else %}不可用{% endif %}；
+          催化方向：多 {{ quality_report.direction_profile.bullish }} / 空 {{ quality_report.direction_profile.bearish }} / 混合 {{ quality_report.direction_profile.mixed }}；
+          校验：{{ quality_report.reasons | join('；') }}。
+        </div>
+      </div>
+      {% endif %}
       {% if run.status == 'done' and answer_html %}
       <div class="card card-body answer-card" style="margin-bottom:16px">
         <h2>AI 分析结论</h2>
