@@ -20,6 +20,7 @@ from fastapi.templating import Jinja2Templates
 
 from .analysis_db import (
     BASE_DIR,
+    clone_run,
     create_run,
     delete_run,
     get_run,
@@ -36,6 +37,7 @@ from .analysis_db import (
     save_provider_error,
     save_screenshot,
 )
+from .analysis_quality import compare_analysis_runs
 from .db import (
     DEFAULT_HOURS,
     HOURS_OPTIONS,
@@ -1039,6 +1041,7 @@ def create_app() -> FastAPI:
         run_ids = [run_id.strip() for run_id in raw_ids.split(",") if run_id.strip()][:2]
         init_analysis_db()
         runs = get_runs_for_compare(run_ids) if run_ids else []
+        comparison = compare_analysis_runs(runs[0], runs[1]) if len(runs) == 2 else None
         return templates.TemplateResponse(
             request,
             "analyze_compare.html",
@@ -1046,9 +1049,18 @@ def create_app() -> FastAPI:
                 "health": history_health(),
                 "runs": runs,
                 "run_ids": run_ids,
+                "comparison": comparison,
                 "nav": query_nav_summary(),
             },
         )
+
+    @app.post("/analyze/{run_id}/clone")
+    async def analyze_clone(run_id: str):
+        init_analysis_db()
+        cloned_id = clone_run(run_id)
+        if not cloned_id:
+            return RedirectResponse(f"/analyze/{run_id}?clone_error=1", status_code=303)
+        return RedirectResponse(f"/analyze/{cloned_id}?cloned_from={run_id}", status_code=303)
 
     @app.get("/analyze/history")
     async def analyze_history(request: Request):

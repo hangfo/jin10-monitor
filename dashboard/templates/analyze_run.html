@@ -171,6 +171,11 @@
     <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
       <a class="button-link secondary" href="/analyze?asset={{ (run.asset or '')|urlencode }}&window_start={{ (run.window_start or '')|urlencode }}&window_end={{ (run.window_end or '')|urlencode }}&question={{ (run.question or '')|urlencode }}">重新分析</a>
       <a class="button-link secondary" href="/analyze/compare?ids={{ run.id }}">对比</a>
+      {% if run.status != 'running' %}
+      <form method="post" action="/analyze/{{ run.id }}/clone">
+        <button type="submit" class="button-link secondary">克隆冻结证据包</button>
+      </form>
+      {% endif %}
       {% if run.status == 'draft' %}
       <form method="post" action="/analyze/{{ run.id }}/delete" onsubmit="return confirm('只删除草稿记录；已完成分析会保留用于复盘。确认删除这个草稿？')">
         <button type="submit" class="button-link secondary" style="color:var(--fail-fg)">删除</button>
@@ -191,8 +196,13 @@
       <span class="metric"><span class="metric-label">开始</span><span class="metric-value">{{ (run.provider_started_at or '')[:16] if run.provider_started_at else '—' }}</span></span>
       <span class="metric"><span class="metric-label">耗时</span><span class="metric-value">{% if run.provider_elapsed_ms %}{{ "%.1fs"|format(run.provider_elapsed_ms / 1000) }}{% elif run.status == 'running' %}进行中{% else %}—{% endif %}</span></span>
       <span class="metric"><span class="metric-label">类型</span><span class="metric-value">{{ judgement_label(run.judgement) if run.judgement else '—' }}</span></span>
-      <span class="metric"><span class="metric-label">置信度</span><span class="metric-value" title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。≥75% 较可信；50-75% 仅供参考；<50% 证据不足。">{% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}</span></span>
+      <span class="metric"><span class="metric-label">Provider 原始置信度</span><span class="metric-value" title="Provider 对自身输出的主观估计，只用于审计，不是交易信号，也不能跨 Provider 直接平均。">{% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}</span></span>
       <span class="run-id-chip">分析 ID <span class="mono">{{ run.id }}</span></span>
+    </div>
+    <div class="run-overview-line">
+      <span class="metric wide"><span class="metric-label">证据指纹</span><span class="metric-value mono" title="{{ run.evidence_fingerprint }}">{{ run.evidence_fingerprint[:12] }}</span></span>
+      <span class="metric wide"><span class="metric-label">Prompt 指纹</span><span class="metric-value mono" title="{{ run.prompt_fingerprint }}">{{ run.prompt_fingerprint[:12] }}</span></span>
+      {% if run.parent_run_id %}<span class="metric wide"><span class="metric-label">克隆自</span><a class="mono" href="/analyze/{{ run.parent_run_id }}">{{ run.parent_run_id }}</a></span>{% endif %}
     </div>
   </div>
 

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from dashboard import analysis_db, db, evidence, manual_ai
+from dashboard import analysis_db, analysis_quality, db, evidence, manual_ai
 from dashboard.app import (
     ALLOWED_SCREENSHOT_MIME_TYPES,
     app,
@@ -153,10 +153,98 @@ def test_analysis_db_roundtrip_and_cascade_delete(tmp_path):
     assert run["answer_parsed"]["judgement"] == "news_driven"
     assert run["evidence_rows"][0]["llm_confidence"] == 0.75
     assert run["evidence_rows"][0]["llm_direction"] == "bullish"
+    assert len(run["evidence_fingerprint"]) == 64
+    assert len(run["prompt_fingerprint"]) == 64
+    assert run["evidence_packet"][0]["selected"] is True
+    assert run["evidence_packet"][1]["selected"] is False
+    assert run["prompt_fingerprint"] == analysis_quality.prompt_fingerprint("prompt text")
 
     analysis_db.delete_run(run_id, path=db_path)
     with analysis_db.open_analysis_db(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM analysis_evidence").fetchone()[0] == 0
+
+
+def test_clone_run_freezes_packet_prompt_and_lineage(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    packet = [
+        {"news_id": "n1", "title": "first", "selected": True, "relevance_score": 0.81},
+        {"news_id": "n2", "title": "second", "selected": False, "relevance_score": 0.22},
+    ]
+    source_id = analysis_db.create_run(
+        "Why?", "BTC", "2026-07-18 09:00:00", "2026-07-18 10:00:00",
+        packet, manual_prompt="frozen prompt", user_context="context", path=db_path,
+    )
+    clone_id = analysis_db.clone_run(source_id, path=db_path)
+    source = analysis_db.get_run(source_id, path=db_path)
+    cloned = analysis_db.get_run(clone_id, path=db_path)
+
+    assert cloned["status"] == "draft"
+    assert cloned["parent_run_id"] == source_id
+    assert cloned["evidence_packet_json"] == source["evidence_packet_json"]
+    assert cloned["manual_prompt"] == source["manual_prompt"]
+    assert cloned["evidence_fingerprint"] == source["evidence_fingerprint"]
+    assert cloned["prompt_fingerprint"] == source["prompt_fingerprint"]
+
+
+def test_clone_run_rejects_running_source(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    run_id = analysis_db.create_run("Why?", "BTC", "", "", [], path=db_path)
+    analysis_db.mark_provider_running(run_id, provider_name="gemini", provider_label="Gemini", path=db_path)
+    assert analysis_db.clone_run(run_id, path=db_path) is None
+
+
+def test_saved_prompt_and_selection_refresh_frozen_fingerprints(tmp_path):
+    db_path = tmp_path / "analysis.sqlite3"
+    analysis_db.init_analysis_db(db_path)
+    packet = [
+        {"news_id": "n1", "selected": True},
+        {"news_id": "n2", "selected": False},
+    ]
+    run_id = analysis_db.create_run("Why?", "BTC", "", "", packet, manual_prompt="old", path=db_path)
+    assert analysis_db.save_manual_prompt(run_id, "new prompt", path=db_path) is True
+    assert analysis_db.save_answer(
+        run_id,
+        "answer",
+        manual_prompt="final prompt",
+        answer_json={"judgement": "unclear", "catalysts": []},
+        judgement="unclear",
+        evidence_selections={"n1": False, "n2": True},
+        path=db_path,
+    ) is True
+    run = analysis_db.get_run(run_id, path=db_path)
+
+    assert [item["selected"] for item in run["evidence_packet"]] == [False, True]
+    assert run["evidence_fingerprint"] == analysis_quality.evidence_fingerprint(run["evidence_packet"])
+    assert run["prompt_fingerprint"] == analysis_quality.prompt_fingerprint("final prompt")
+
+
+def test_compare_analysis_runs_requires_identical_packet_and_prompt():
+    packet = [
+        {"news_id": "n1", "selected": True, "title": "one"},
+        {"news_id": "n2", "selected": False, "title": "two"},
+    ]
+    first = {"evidence_packet": packet, "manual_prompt": "same"}
+    second = {"evidence_packet": json.loads(json.dumps(packet)), "manual_prompt": "same"}
+    comparison = analysis_quality.compare_analysis_runs(first, second)
+    assert comparison["valid_ab"] is True
+    assert comparison["candidate_jaccard"] == 1.0
+    assert comparison["selected_jaccard"] == 1.0
+
+    second["evidence_packet"][1]["selected"] = True
+    changed = analysis_quality.compare_analysis_runs(first, second)
+    assert changed["valid_ab"] is False
+    assert changed["same_evidence"] is False
+    assert changed["candidate_jaccard"] == 1.0
+    assert changed["selected_jaccard"] == 0.5
+
+
+def test_evidence_fingerprint_is_stable_but_order_sensitive():
+    first = [{"news_id": "n1", "selected": True}, {"news_id": "n2", "selected": False}]
+    same_keys_reordered = [{"selected": True, "news_id": "n1"}, {"selected": False, "news_id": "n2"}]
+    assert analysis_quality.evidence_fingerprint(first) == analysis_quality.evidence_fingerprint(same_keys_reordered)
+    assert analysis_quality.evidence_fingerprint(first) != analysis_quality.evidence_fingerprint(list(reversed(first)))
 
 
 def test_delete_run_can_be_limited_to_drafts(tmp_path):
@@ -847,6 +935,24 @@ def test_evidence_v3_default_selection_filters_low_relevance_noise(tmp_path, mon
     assert by_id["macro"]["selected"] is True
     assert by_id["noise"]["selected"] is False
     assert by_id["noise"]["selection_note"] == "低相关默认不选"
+
+
+def test_default_selection_uses_deterministic_eight_item_core_with_topic_diversity():
+    rows = []
+    for index in range(10):
+        rows.append(
+            {
+                "news_id": f"n{index}",
+                "title": "重复主题标题abcdefghijklmnop" if index < 3 else f"独立主题标题{index}abcdefghijklmnop",
+                "relevance_score": round(0.9 - index * 0.02, 3),
+                "score_reasons": [],
+            }
+        )
+    evidence.apply_default_selection(rows)
+    selected = [row["news_id"] for row in rows if row["selected"]]
+
+    assert len(selected) == 8
+    assert selected == ["n0", "n3", "n4", "n5", "n6", "n7", "n8", "n9"]
 
 
 def test_evidence_builder_returns_empty_on_bad_window():
@@ -1749,12 +1855,12 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "href=\"#answer-section\"" in analyze_template
     assert "id=\"answer-section\"" in analyze_template
     assert "本地相关度分数，不是模型置信度" in analyze_template
-    assert "建议 5-10 条" in analyze_template
+    assert "建议 4-8 条" in analyze_template
     assert "最多展示 40 条" in analyze_template
     assert "Provider 更容易超时或触发长度限制" in analyze_template
-    assert "减少到 8-10 条高分且不重复的证据" in analyze_template
+    assert "减少到不超过 8 条高分且不重复的证据" in analyze_template
     assert "' checked' if ev.selected" in analyze_template
-    assert "v3 默认只选高相关且不重复的证据" in analyze_template
+    assert "默认核心包最多 8 条" in analyze_template
     assert "选择策略：" in analyze_template
     assert "Prompt 约" in analyze_template
     assert "provider_display_label(run)" in history_template
@@ -1791,7 +1897,9 @@ def test_analyze_templates_show_selection_hints_and_asset_market_sync():
     assert "--catch-up" in ws_initial_template
     assert "parts.hour - 8" in item_template
     assert "Number(time) + 8 * 3600" in item_template
-    assert "缺失证据来自各次模型原始输出" in compare_template
+    assert "有效 A/B" in compare_template
+    assert "不能把差异归因于 Provider" in compare_template
+    assert "Provider 原始主观输出" in compare_template
     assert "run-overview" in run_template
     assert "answer-summary::before" in run_template
     assert 'content: "结论"' in run_template

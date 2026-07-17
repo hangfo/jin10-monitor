@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
+from .analysis_quality import evidence_fingerprint, prompt_fingerprint
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_ANALYSIS_DB = BASE_DIR / "data" / "dashboard_analysis.sqlite3"
@@ -41,6 +43,9 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     provider_error_at TEXT NOT NULL DEFAULT '',
     provider_elapsed_ms INTEGER NOT NULL DEFAULT 0,
     prompt_version TEXT NOT NULL DEFAULT 'v1',
+    parent_run_id TEXT NOT NULL DEFAULT '',
+    evidence_fingerprint TEXT NOT NULL DEFAULT '',
+    prompt_fingerprint TEXT NOT NULL DEFAULT '',
     evidence_count INTEGER NOT NULL DEFAULT 0,
     selected_count INTEGER NOT NULL DEFAULT 0,
     judgement TEXT NOT NULL DEFAULT '',
@@ -127,6 +132,12 @@ def ensure_analysis_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE analysis_runs ADD COLUMN provider_name TEXT NOT NULL DEFAULT ''")
     if "provider_started_at" not in columns:
         conn.execute("ALTER TABLE analysis_runs ADD COLUMN provider_started_at TEXT NOT NULL DEFAULT ''")
+    if "parent_run_id" not in columns:
+        conn.execute("ALTER TABLE analysis_runs ADD COLUMN parent_run_id TEXT NOT NULL DEFAULT ''")
+    if "evidence_fingerprint" not in columns:
+        conn.execute("ALTER TABLE analysis_runs ADD COLUMN evidence_fingerprint TEXT NOT NULL DEFAULT ''")
+    if "prompt_fingerprint" not in columns:
+        conn.execute("ALTER TABLE analysis_runs ADD COLUMN prompt_fingerprint TEXT NOT NULL DEFAULT ''")
 
 
 def now_text() -> str:
@@ -154,22 +165,26 @@ def create_run(
     manual_prompt: str = "",
     model_label: str = "manual_chatgpt_business",
     prompt_version: str = "v1",
+    parent_run_id: str = "",
     path: Optional[Path] = None,
 ) -> str:
     run_id = new_run_id()
     created_at = now_text()
     selected_count = sum(1 for item in evidence_packet if item.get("selected", True))
     packet_json = json.dumps(evidence_packet, ensure_ascii=False)
+    packet_fingerprint = evidence_fingerprint(evidence_packet)
+    saved_prompt_fingerprint = prompt_fingerprint(manual_prompt)
     with open_analysis_db(path) as conn:
         conn.execute(
             """
             INSERT INTO analysis_runs (
                 id, question, asset, window_start, window_end, from_item_id,
                 screenshot_id, user_context, evidence_packet_json, manual_prompt, model_label,
-                prompt_version, evidence_count, selected_count, status,
+                prompt_version, parent_run_id, evidence_fingerprint, prompt_fingerprint,
+                evidence_count, selected_count, status,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
             """,
             (
                 run_id,
@@ -184,6 +199,9 @@ def create_run(
                 manual_prompt,
                 model_label,
                 prompt_version,
+                parent_run_id,
+                packet_fingerprint,
+                saved_prompt_fingerprint,
                 len(evidence_packet),
                 selected_count,
                 created_at,
@@ -210,6 +228,29 @@ def create_run(
             )
         conn.commit()
     return run_id
+
+
+def clone_run(run_id: str, *, path: Optional[Path] = None) -> Optional[str]:
+    """Create a draft with the source run's exact frozen inputs, without a Provider call."""
+
+    source = get_run(run_id, path=path)
+    if not source or source.get("status") == "running":
+        return None
+    return create_run(
+        question=str(source.get("question") or ""),
+        asset=str(source.get("asset") or ""),
+        window_start=str(source.get("window_start") or ""),
+        window_end=str(source.get("window_end") or ""),
+        evidence_packet=source.get("evidence_packet") or [],
+        from_item_id=str(source.get("from_item_id") or ""),
+        screenshot_id=str(source.get("screenshot_id") or ""),
+        user_context=str(source.get("user_context") or ""),
+        manual_prompt=str(source.get("manual_prompt") or ""),
+        model_label="manual_chatgpt_business",
+        prompt_version=str(source.get("prompt_version") or "v1"),
+        parent_run_id=run_id,
+        path=path,
+    )
 
 
 def save_provider_error(
@@ -241,10 +282,10 @@ def save_manual_prompt(run_id: str, manual_prompt: str, *, path: Optional[Path] 
         cursor = conn.execute(
             """
             UPDATE analysis_runs
-            SET manual_prompt = ?, updated_at = ?
+            SET manual_prompt = ?, prompt_fingerprint = ?, updated_at = ?
             WHERE id = ? AND status = 'draft'
             """,
-            (prompt, updated_at, run_id),
+            (prompt, prompt_fingerprint(prompt), updated_at, run_id),
         )
         conn.commit()
     return cursor.rowcount == 1
@@ -345,9 +386,14 @@ def save_answer(
     selected_count: Optional[int] = None
     with open_analysis_db(path) as conn:
         expected = str(expected_status or "").strip()
+        row = conn.execute(
+            "SELECT status, evidence_packet_json FROM analysis_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        if not row:
+            return False
         if expected:
-            row = conn.execute("SELECT status FROM analysis_runs WHERE id = ?", (run_id,)).fetchone()
-            if not row or str(row["status"] or "") != expected:
+            if str(row["status"] or "") != expected:
                 return False
 
         if evidence_selections is not None:
@@ -393,6 +439,7 @@ def save_answer(
             "answer_text = ?",
             "answer_json = ?",
             "manual_prompt = ?",
+            "prompt_fingerprint = ?",
             "model_label = ?",
             "provider_error = ?",
             "provider_error_at = ?",
@@ -406,6 +453,7 @@ def save_answer(
             answer_text,
             json.dumps(answer_json, ensure_ascii=False),
             manual_prompt,
+            prompt_fingerprint(manual_prompt),
             model_label or "manual_chatgpt_business",
             "",
             "",
@@ -421,6 +469,15 @@ def save_answer(
         if selected_count is not None:
             assignments.append("selected_count = ?")
             params.append(selected_count)
+            packet = parse_json_list(row["evidence_packet_json"] if row else "[]")
+            for item in packet:
+                if not isinstance(item, dict):
+                    continue
+                news_id = str(item.get("news_id") or item.get("id") or "")
+                if news_id in evidence_selections:
+                    item["selected"] = bool(evidence_selections[news_id])
+            assignments.extend(("evidence_packet_json = ?", "evidence_fingerprint = ?"))
+            params.extend((json.dumps(packet, ensure_ascii=False), evidence_fingerprint(packet)))
         params.append(run_id)
         where = "WHERE id = ?"
         if expected:
@@ -443,6 +500,8 @@ def get_run(run_id: str, path: Optional[Path] = None) -> Optional[dict[str, Any]
         screenshot_id = str(run.get("screenshot_id") or "")
         run["screenshot"] = get_screenshot(screenshot_id, path=path) if screenshot_id else None
         run["evidence_packet"] = parse_json_list(run.get("evidence_packet_json"))
+        run["evidence_fingerprint"] = str(run.get("evidence_fingerprint") or evidence_fingerprint(run["evidence_packet"]))
+        run["prompt_fingerprint"] = str(run.get("prompt_fingerprint") or prompt_fingerprint(run.get("manual_prompt") or ""))
         run["answer_parsed"] = parse_json_dict(run.get("answer_json"))
         packet_by_id = {
             str(item.get("news_id") or item.get("id") or ""): item
@@ -533,6 +592,8 @@ def get_runs_for_compare(run_ids: list[str], path: Optional[Path] = None) -> lis
     for row in rows:
         run = row_to_dict(row)
         run["evidence_packet"] = parse_json_list(run.get("evidence_packet_json"))
+        run["evidence_fingerprint"] = str(run.get("evidence_fingerprint") or evidence_fingerprint(run["evidence_packet"]))
+        run["prompt_fingerprint"] = str(run.get("prompt_fingerprint") or prompt_fingerprint(run.get("manual_prompt") or ""))
         run["answer_parsed"] = parse_json_dict(run.get("answer_json"))
         runs_by_id[str(run.get("id") or "")] = run
     return [runs_by_id[run_id] for run_id in clean_ids if run_id in runs_by_id]

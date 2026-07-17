@@ -157,7 +157,7 @@ PRIORITY_WEIGHT = {
 MAX_EVIDENCE = 40
 CONTEXT_PADDING_MINUTES = 30
 SCORE_SCALE = 120
-DEFAULT_SELECTED_MAX = 10
+DEFAULT_SELECTED_MAX = 8
 DEFAULT_SELECTED_MIN = 4
 DEFAULT_SELECT_SCORE = 0.35
 DEFAULT_FALLBACK_SCORE = 0.25
@@ -225,6 +225,7 @@ def build_evidence_packet(
         key=lambda row: (
             row["relevance_score"],
             row.get("published_at") or "",
+            str(row.get("news_id") or row.get("id") or ""),
         ),
         reverse=True,
     )
@@ -343,14 +344,31 @@ def score_row(
 
 
 def apply_default_selection(rows: list[dict[str, Any]]) -> None:
-    selected: set[int] = set()
+    eligible: list[int] = []
     for index, row in enumerate(rows):
         score = float(row.get("relevance_score") or 0)
         summary_like = is_summary_like(row)
         if score >= DEFAULT_SELECT_SCORE and (not summary_like or score >= SUMMARY_SELECT_SCORE):
-            selected.add(index)
+            eligible.append(index)
+
+    # Use one strong item per topic before adding repeated coverage.  This
+    # keeps the core packet compact without changing relevance weights.
+    selected: set[int] = set()
+    seen_topics: set[str] = set()
+    for index in eligible:
+        row = rows[index]
+        topic = diversity_key(row) or str(row.get("news_id") or row.get("id") or index)
+        if topic in seen_topics:
+            continue
+        selected.add(index)
+        seen_topics.add(topic)
         if len(selected) >= DEFAULT_SELECTED_MAX:
             break
+    if len(selected) < DEFAULT_SELECTED_MAX:
+        for index in eligible:
+            selected.add(index)
+            if len(selected) >= DEFAULT_SELECTED_MAX:
+                break
 
     if len(selected) < DEFAULT_SELECTED_MIN:
         for index, row in enumerate(rows):

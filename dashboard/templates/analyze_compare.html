@@ -92,6 +92,23 @@
   {% set same_judgement = first.judgement == second.judgement %}
   {% set confidence_diff = ((second.overall_confidence or 0) - (first.overall_confidence or 0)) | abs %}
 
+  <div class="summary-diff {{ 'same' if comparison.valid_ab else 'diff' }}">
+    {% if comparison.valid_ab %}
+    <strong>有效 A/B：</strong>两次分析使用完全相同的冻结证据包和 Prompt，可将输出差异归因于 Provider/模型行为。
+    {% else %}
+    <strong>非严格 A/B：</strong>
+    {% if not comparison.same_evidence %}证据包不同；{% endif %}
+    {% if not comparison.same_prompt %}Prompt 不同；{% endif %}
+    当前结果只能用于观察，不能把差异归因于 Provider。
+    {% endif %}
+    <div class="meta" style="margin-top:6px">
+      候选重合 {{ "%.0f%%"|format(comparison.candidate_jaccard * 100) }} ·
+      已选重合 {{ "%.0f%%"|format(comparison.selected_jaccard * 100) }} ·
+      证据指纹 <span class="mono">{{ comparison.first_evidence_fingerprint[:10] }}</span> / <span class="mono">{{ comparison.second_evidence_fingerprint[:10] }}</span> ·
+      Prompt 指纹 <span class="mono">{{ comparison.first_prompt_fingerprint[:10] }}</span> / <span class="mono">{{ comparison.second_prompt_fingerprint[:10] }}</span>
+    </div>
+  </div>
+
   <div class="summary-diff {{ 'same' if same_judgement else 'diff' }}">
     {% if same_judgement %}
     两次判断类型相同：<strong>{{ judgement_label(first.judgement) }}</strong>。
@@ -101,9 +118,7 @@
     {% if confidence_diff > 0.1 %}
     置信度相差 {{ "%.0f%%"|format(confidence_diff * 100) }}。
     {% endif %}
-    <div class="meta" style="margin-top:6px">
-      缺失证据来自各次模型原始输出；同一 Prompt 下出现差异，表示模型复盘侧重点不同，不代表本地证据包变化。
-    </div>
+    <div class="meta" style="margin-top:6px">置信度为 Provider 原始主观输出，仅用于审计，不应直接横向平均。</div>
   </div>
 
   <div class="compare-grid">
@@ -123,7 +138,7 @@
       <p style="line-height:1.5">{{ run.question }}</p>
 
       <div class="meta" title="置信度是模型基于证据充分度、时间吻合度和因果链条清晰度给出的主观估计，不是交易信号。">
-        置信度 {% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}
+        Provider 原始置信度 {% if run.overall_confidence %}{{ "%.0f%%"|format(run.overall_confidence * 100) }}{% else %}—{% endif %}
       </div>
       <div class="confidence-track">
         <div class="confidence-bar" style="width:{{ '%.0f%%'|format((run.overall_confidence or 0) * 100) }}"></div>
