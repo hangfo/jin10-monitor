@@ -1821,6 +1821,22 @@ def test_all_dashboard_datetime_pickers_use_shared_pair_validation():
     assert "开始时间必须早于结束时间" in base_template
     assert "都不能超过当前时间" in base_template
     assert 'validateDateTimeGroup("market-window", true)' in item_template
+    assert base_template.index("window.dashboardDateTime =") < base_template.index("{% block head %}")
+    assert base_template.index("window.dashboardDateTime =") < base_template.index("{% block content %}")
+    assert 'document.addEventListener("DOMContentLoaded", initDateTimeValidation, {once: true})' in base_template
+    assert "if (initialized) return" in base_template
+
+
+def test_analyze_asset_market_mapping_runs_after_shared_datetime_helper_is_defined():
+    base_template = (TEMPLATE_DIR / "base.html").read_text()
+    analyze_template = (TEMPLATE_DIR / "analyze.html").read_text()
+
+    assert base_template.index("window.dashboardDateTime =") < base_template.index("{% block content %}")
+    assert 'BTC: "BTCUSDT"' in analyze_template
+    assert 'ETH: "ETHUSDT"' in analyze_template
+    assert 'assetSelect.addEventListener("change"' in analyze_template
+    assert "marketSymbolTouched = false" in analyze_template
+    assert "syncMarketSymbol(true)" in analyze_template
 
 
 def test_item_template_has_user_triggered_market_overlay():
@@ -1849,6 +1865,12 @@ def test_item_template_has_user_triggered_market_overlay():
     assert "scaleMargins: {top: 0.06, bottom: 0}" in item_template
     assert "newsChartTime" in item_template
     assert "indexAtOrBeforeNews" in item_template
+    assert "fallbackIndex" not in item_template
+    assert "intervalMinutes * 60" in item_template
+    assert "newsTime < firstTime || newsTime >= lastTime + intervalSeconds" in item_template
+    assert "subscribeVisibleLogicalRangeChange(scheduleNewsLineUpdate)" in item_template
+    assert "if (newsLineFrame !== null) return" in item_template
+    assert "window.requestAnimationFrame" in item_template
     assert 'type="datetime-local"' in item_template
     assert "market-window-tabs" in item_template
     assert "marketInputText" in item_template

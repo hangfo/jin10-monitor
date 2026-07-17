@@ -425,34 +425,10 @@
         }
       }
     </style>
-    {% block head %}{% endblock %}
-  </head>
-  <body>
-    <nav>
-      <a class="brand" href="/">Jin10 Monitor</a>
-      <a class="nav-link {{ 'active' if request.url.path == '/' }}" href="/">
-        快讯流
-        {% if nav.t3 %}<span class="nav-badge">{{ nav.t3 }} T3</span>{% endif %}
-      </a>
-      <a class="nav-link {{ 'active' if request.url.path.startswith('/telegram-status') }}" href="/telegram-status">投递状态</a>
-      <a class="nav-link {{ 'active' if request.url.path.startswith('/system') }}" href="/system">系统</a>
-      <a class="nav-link {{ 'active' if request.url.path == '/analyze' or (request.url.path.startswith('/analyze') and not request.url.path.startswith('/analyze/history') and not request.url.path.startswith('/analyze/compare')) }}" href="/analyze">分析</a>
-      <a class="nav-link {{ 'active' if request.url.path == '/analyze/history' }}" href="/analyze/history">分析历史</a>
-      <a class="nav-link {{ 'active' if request.url.path.startswith('/analyze/compare') }}" href="/analyze/compare" title="对比两次历史分析">对比</a>
-      <a class="nav-link {{ 'active' if request.url.path.startswith('/aggregation') }}" href="/aggregation">聚合报告</a>
-    </nav>
-    <main>
-      {% if health.status != 'ok' %}
-      <div class="error-banner">
-        <strong>历史库不可用：</strong>{{ health.status }}
-        {% if health.missing_tables %}，缺表：{{ health.missing_tables | join(', ') }}{% endif %}
-        <div class="mono">{{ health.history_db }}</div>
-      </div>
-      {% endif %}
-      {% block content %}{% endblock %}
-    </main>
     <script>
       (() => {
+        let initialized = false;
+
         function localDateTimeValue(date) {
           const offsetMs = date.getTimezoneOffset() * 60000;
           return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
@@ -498,29 +474,70 @@
           return {ok: true, message: ""};
         }
 
-        window.dashboardDateTime = {localDateTimeValue, updateDateTimeMaximums, validateDateTimeGroup};
-        updateDateTimeMaximums();
-        document.querySelectorAll('input[type="datetime-local"][data-time-group]').forEach((input) => {
-          input.addEventListener("input", () => validateDateTimeGroup(input.dataset.timeGroup));
-          input.addEventListener("change", () => validateDateTimeGroup(input.dataset.timeGroup));
-        });
-        document.querySelectorAll("form").forEach((form) => {
-          form.addEventListener("submit", (event) => {
-            const groups = new Set(
-              Array.from(form.querySelectorAll('input[type="datetime-local"][data-time-group]'))
-                .map((input) => input.dataset.timeGroup)
-            );
-            for (const group of groups) {
-              if (!validateDateTimeGroup(group, true).ok) {
-                event.preventDefault();
-                break;
-              }
-            }
+        function initDateTimeValidation() {
+          if (initialized) return;
+          initialized = true;
+          updateDateTimeMaximums();
+          document.querySelectorAll('input[type="datetime-local"][data-time-group]').forEach((input) => {
+            input.addEventListener("input", () => validateDateTimeGroup(input.dataset.timeGroup));
+            input.addEventListener("change", () => validateDateTimeGroup(input.dataset.timeGroup));
           });
-        });
-        window.setInterval(updateDateTimeMaximums, 30000);
+          document.querySelectorAll("form").forEach((form) => {
+            form.addEventListener("submit", (event) => {
+              const groups = new Set(
+                Array.from(form.querySelectorAll('input[type="datetime-local"][data-time-group]'))
+                  .map((input) => input.dataset.timeGroup)
+              );
+              for (const group of groups) {
+                if (!validateDateTimeGroup(group, true).ok) {
+                  event.preventDefault();
+                  break;
+                }
+              }
+            });
+          });
+          window.setInterval(updateDateTimeMaximums, 30000);
+        }
+
+        window.dashboardDateTime = {
+          initDateTimeValidation,
+          localDateTimeValue,
+          updateDateTimeMaximums,
+          validateDateTimeGroup,
+        };
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", initDateTimeValidation, {once: true});
+        } else {
+          initDateTimeValidation();
+        }
       })();
     </script>
+    {% block head %}{% endblock %}
+  </head>
+  <body>
+    <nav>
+      <a class="brand" href="/">Jin10 Monitor</a>
+      <a class="nav-link {{ 'active' if request.url.path == '/' }}" href="/">
+        快讯流
+        {% if nav.t3 %}<span class="nav-badge">{{ nav.t3 }} T3</span>{% endif %}
+      </a>
+      <a class="nav-link {{ 'active' if request.url.path.startswith('/telegram-status') }}" href="/telegram-status">投递状态</a>
+      <a class="nav-link {{ 'active' if request.url.path.startswith('/system') }}" href="/system">系统</a>
+      <a class="nav-link {{ 'active' if request.url.path == '/analyze' or (request.url.path.startswith('/analyze') and not request.url.path.startswith('/analyze/history') and not request.url.path.startswith('/analyze/compare')) }}" href="/analyze">分析</a>
+      <a class="nav-link {{ 'active' if request.url.path == '/analyze/history' }}" href="/analyze/history">分析历史</a>
+      <a class="nav-link {{ 'active' if request.url.path.startswith('/analyze/compare') }}" href="/analyze/compare" title="对比两次历史分析">对比</a>
+      <a class="nav-link {{ 'active' if request.url.path.startswith('/aggregation') }}" href="/aggregation">聚合报告</a>
+    </nav>
+    <main>
+      {% if health.status != 'ok' %}
+      <div class="error-banner">
+        <strong>历史库不可用：</strong>{{ health.status }}
+        {% if health.missing_tables %}，缺表：{{ health.missing_tables | join(', ') }}{% endif %}
+        <div class="mono">{{ health.history_db }}</div>
+      </div>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
     {% block scripts %}{% endblock %}
   </body>
 </html>

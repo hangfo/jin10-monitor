@@ -309,6 +309,7 @@
     let volumeSeries = null;
     let loadTimer = null;
     let newsChartTime = null;
+    let newsLineFrame = null;
 
     function formatNumber(value) {
       const parsed = Number(value);
@@ -421,10 +422,24 @@
     }
 
     function updateNewsChartTime(klines) {
+      const newsTime = parseMarketTime(marketPanel.dataset.newsTime);
+      const candleTimes = klines
+        .map((item) => parseMarketTime(item.open_time))
+        .filter((time) => time !== null);
+      if (!newsTime || candleTimes.length === 0) {
+        newsChartTime = null;
+        return;
+      }
+      const intervalMinutes = Number.parseInt(document.getElementById("market-interval").value, 10);
+      const intervalSeconds = Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes * 60 : 60;
+      const firstTime = candleTimes[0];
+      const lastTime = candleTimes[candleTimes.length - 1];
+      if (newsTime < firstTime || newsTime >= lastTime + intervalSeconds) {
+        newsChartTime = null;
+        return;
+      }
       const index = indexAtOrBeforeNews(klines);
-      const fallbackIndex = klines.length ? Math.floor(klines.length / 2) : -1;
-      const item = klines[index >= 0 ? index : fallbackIndex];
-      newsChartTime = item ? parseMarketTime(item.open_time) : null;
+      newsChartTime = index >= 0 ? parseMarketTime(klines[index].open_time) : null;
     }
 
     function marketInputText(inputId) {
@@ -525,7 +540,7 @@
           `成交量 ${formatNumber(volume ? volume.value : "")}`,
         ].join("<br>");
       });
-      chart.timeScale().subscribeVisibleTimeRangeChange(updateNewsLine);
+      chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleNewsLineUpdate);
     }
 
     function ensureVolumeDivider() {
@@ -578,6 +593,14 @@
       marketNewsLine.style.height = `${Math.max(0, Math.round(pricePaneHeight + volumeZero))}px`;
     }
 
+    function scheduleNewsLineUpdate() {
+      if (newsLineFrame !== null) return;
+      newsLineFrame = window.requestAnimationFrame(() => {
+        newsLineFrame = null;
+        updateNewsLine();
+      });
+    }
+
     function renderMarketChart(klines) {
       initMarketChart();
       const candleData = [];
@@ -603,10 +626,7 @@
       candleSeries.setData(candleData);
       volumeSeries.setData(volumeData);
       chart.timeScale().fitContent();
-      requestAnimationFrame(() => {
-        updateVolumeDivider();
-        updateNewsLine();
-      });
+      scheduleNewsLineUpdate();
     }
 
     async function loadMarketData() {
@@ -655,7 +675,7 @@
     window.addEventListener("resize", () => {
       if (chart) {
         chart.applyOptions({width: marketChartElement.clientWidth});
-        updateNewsLine();
+        scheduleNewsLineUpdate();
       }
     });
 
